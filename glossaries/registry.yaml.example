@@ -1,0 +1,18 @@
+# Glossary Registry
+#
+# Index of available standard and domain glossaries.
+# Copy this to glossaries/registry.yaml and add your glossaries.
+#
+# Tier 1: Standards (read-only, always auto-approved)
+# Tier 2: Domains (shared, auto-approved)
+# Tier 3: Project (local, human approval required)
+
+standards: []
+  # - name: standard:my-standard
+  #   file: standard-my-standard.json
+  #   tier: 1
+
+domains: []
+  # - name: domain:my-domain
+  #   file: domain-my-domain.json
+  #   tier: 2

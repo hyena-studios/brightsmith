@@ -1,0 +1,24 @@
+# Data (local, not committed)
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# DQ results (timestamped, can regenerate)
+governance/dq-results/*.json
+
+# Staging archives
+governance/tag-normalization/archive/

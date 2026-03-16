@@ -1,0 +1,27 @@
+# Domain Manifest
+#
+# This file tells the framework HOW to acquire data.
+# It does NOT define what the data means — that's discovered through EDA.
+#
+# Copy this to domain/manifest.yaml and fill in your data source details.
+
+name: my-data-source
+version: "1.0"
+description: "Description of your data source"
+
+sources:
+  - name: my_source
+    source_config: domain/sources/my_source.yaml
+    # fetcher: domain/sources/fetchers/my_fetcher.py   # optional
+    # flattener: domain/flatten/my_flattener.py         # optional
+
+# Optional hints — accelerators, not requirements.
+# If missing, the pipeline discovers these from EDA.
+hints:
+  entity_id_field: id
+  time_field: created_at
+  # glossary:
+  #   inherit:
+  #     - standard:my-standard
+  # concept_mappings: domain/concept-mappings/
+  # metrics: domain/metrics/

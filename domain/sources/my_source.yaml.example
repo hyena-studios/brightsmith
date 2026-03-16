@@ -1,0 +1,27 @@
+# Source Configuration
+#
+# Defines how to fetch and store data from a single source.
+# Copy this to domain/sources/my_source.yaml and customize.
+
+name: my_source
+namespace: raw
+table: my_source_data
+
+# Entity IDs to fetch (key: id, value: label)
+entities:
+  1: "Entity One"
+  2: "Entity Two"
+
+# Fetch methods
+fetch:
+  api:
+    url_template: "https://api.example.com/data/{entity_id}"
+    user_agent: "grist/1.0"
+
+# Dedup grain — columns that uniquely identify a row
+dedup_grain:
+  - entity_id
+  - record_id
+
+# Local cache directory
+cache_dir: data/raw/json_cache

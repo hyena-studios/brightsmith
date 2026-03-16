@@ -1,0 +1,32 @@
+[project]
+name = "grist"
+version = "0.1.0"
+description = "AI agent data pipeline framework — Raw to AI-Ready with full governance"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "duckdb>=1.0",
+    "httpx>=0.27",
+    "pyarrow>=17.0",
+    "pyiceberg[sql-sqlite]>=0.7",
+    "pytz>=2026.1.post1",
+    "pyyaml>=6.0.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "network: tests that require network access (deselected by default)",
+]
+addopts = "-m 'not network'"
