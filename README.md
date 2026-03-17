@@ -53,7 +53,7 @@ Grist was extracted from [sec_edgair](https://github.com/jcernauske/sec_edgair),
 
 ## Agent Pipeline
 
-Grist uses **23 specialized AI agents** orchestrated through a spec-driven workflow. Every piece of code, every governance artifact, every data transformation traces back to a spec.
+Grist uses **24 specialized AI agents** orchestrated through a spec-driven workflow. Every piece of code, every governance artifact, every data transformation traces back to a spec.
 
 ### Raw Zone Pipeline
 | Step | Agent | What It Does |
@@ -177,16 +177,27 @@ When `False` (dev/demo mode):
 
 ## Quick Start
 
-### Option 1: As a dependency (recommended for domain projects)
+### Option 1: Scaffolded by @setup agent (recommended)
+
+In a Claude Code session with Grist, the @setup agent bootstraps your domain project interactively:
+
+```
+You: I want to ingest SEC EDGAR XBRL company facts
+@setup: [asks a few questions about the data source, entities, fetch method]
+@setup: [creates full project structure with domain pack, ingestor skeleton,
+         first spec, governance directories, CLAUDE.md, pyproject.toml]
+You: uv sync && uv run pytest  # works on first try
+```
+
+The @setup agent creates everything you need — then the normal agent pipeline takes over starting with the first spec it drafted.
+
+### Option 2: Manual setup
 
 ```bash
-# Create your domain project
 mkdir my-sec-edgar-project && cd my-sec-edgar-project
 uv init && uv add grist@git+https://github.com/jcernauske/grist.git
 
-# Set up your domain pack
-mkdir -p domain/sources governance src/raw
-# Create domain/manifest.yaml, domain/sources/my_source.yaml
+mkdir -p domain/sources governance src/raw docs/specs
 
 # Write your ingestor
 cat > src/raw/my_ingestor.py << 'EOF'
@@ -201,10 +212,7 @@ class MyIngestor(BaseIngestor):
         ...
 EOF
 
-# Configure (optional — defaults to cwd as project root)
 export GRIST_PROJECT_NAME="my-sec-edgar"
-
-# Run DQ rules
 python -m grist.infra.dq_runner run
 ```
 
