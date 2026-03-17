@@ -11,7 +11,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import DQ_RULES_DIR, DQ_SCORECARDS_DIR
+from grist.config import DQ_RULES_DIR, DQ_SCORECARDS_DIR
 
 
 def generate_scorecard(run_result: dict, spec: str) -> Path:

@@ -15,9 +15,9 @@ import pytest
 from pyiceberg.schema import Schema
 from pyiceberg.types import IntegerType, NestedField, StringType, TimestamptzType, DateType
 
-from src.domain_loader import DomainHints, DomainManifest, SourceConfig
-from src.infra.iceberg_setup import get_catalog, read_with_duckdb
-from src.raw.base_ingestor import BaseIngestor
+from grist.domain_loader import DomainHints, DomainManifest, SourceConfig
+from grist.infra.iceberg_setup import get_catalog, read_with_duckdb
+from grist.raw.base_ingestor import BaseIngestor
 
 
 # --- Test Ingestor (minimal concrete implementation) ---

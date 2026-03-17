@@ -18,7 +18,7 @@ from pyiceberg.schema import Schema
 from pyiceberg.table import Table
 from pyiceberg.types import DateType
 
-from src.config import PROJECT_NAME
+from grist.config import PROJECT_NAME
 
 
 def get_catalog(warehouse_path: str | Path, catalog_path: str | Path) -> SqlCatalog:

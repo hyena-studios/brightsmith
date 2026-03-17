@@ -15,7 +15,7 @@ import duckdb
 import pyarrow as pa
 import pytest
 
-from src.infra.dq_runner import (
+from grist.infra.dq_runner import (
     DQValidationError,
     _extract_table_refs,
     _rewrite_sql,
@@ -192,7 +192,7 @@ class TestLoadRules:
         }
         (rules_dir / "test-spec.json").write_text(json.dumps(data, indent=2))
 
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", rules_dir):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", rules_dir):
             rules = load_rules()
             assert len(rules) == 2
             for rule in rules:
@@ -220,7 +220,7 @@ class TestLoadRules:
         (rules_dir / "spec-a.json").write_text(json.dumps(data1, indent=2))
         (rules_dir / "spec-b.json").write_text(json.dumps(data2, indent=2))
 
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", rules_dir):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", rules_dir):
             rules = load_rules(spec="spec-a")
             assert len(rules) == 1
             assert all(r["spec"] == "spec-a" for r in rules)
@@ -364,7 +364,7 @@ class TestApproveRules:
         return rules_dir
 
     def test_approve_proposed_rule(self, temp_rules_dir):
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", temp_rules_dir):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", temp_rules_dir):
             results = approve_rules(["TEST-PROP-001"])
             assert results[0]["status"] == "approved"
 
@@ -376,12 +376,12 @@ class TestApproveRules:
             assert "approved_at" in rule
 
     def test_approve_already_active_no_change(self, temp_rules_dir):
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", temp_rules_dir):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", temp_rules_dir):
             results = approve_rules(["TEST-ACT-001"])
             assert "not proposed" in results[0].get("message", "")
 
     def test_approve_nonexistent_rule(self, temp_rules_dir):
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", temp_rules_dir):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", temp_rules_dir):
             results = approve_rules(["NOPE-001"])
             assert results[0]["status"] == "not_found"
 
@@ -400,7 +400,7 @@ class TestRunRulesIntegration:
         from pyiceberg.schema import Schema
         from pyiceberg.types import DateType, DoubleType, IntegerType, NestedField, StringType
 
-        from src.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
+        from grist.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
 
         warehouse = tmp_path / "warehouse"
         catalog_db = tmp_path / "catalog.db"
@@ -481,8 +481,8 @@ class TestRunRulesIntegration:
 
     def test_run_rules_returns_all_active_results(self, iceberg_env):
         """run_rules executes active/approved rules and returns results."""
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("src.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             result = run_rules(spec="test-integration", catalog=iceberg_env["catalog"])
 
         assert result["rules_total"] == 3  # INT-SKIP is proposed, excluded
@@ -491,8 +491,8 @@ class TestRunRulesIntegration:
 
     def test_run_rules_detects_duplicate_fact_ids(self, iceberg_env):
         """INT-002 (uniqueness) should fail -- we inserted a duplicate F1."""
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("src.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             result = run_rules(spec="test-integration", catalog=iceberg_env["catalog"])
 
         int002 = next(r for r in result["results"] if r["rule_id"] == "INT-002")
@@ -501,8 +501,8 @@ class TestRunRulesIntegration:
 
     def test_run_rules_passes_valid_rules(self, iceberg_env):
         """INT-001 (no future dates) and INT-003 (positive vals) should pass."""
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("src.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             result = run_rules(spec="test-integration", catalog=iceberg_env["catalog"])
 
         int001 = next(r for r in result["results"] if r["rule_id"] == "INT-001")
@@ -513,16 +513,16 @@ class TestRunRulesIntegration:
 
     def test_run_rules_p0_gate_fails_on_duplicate(self, iceberg_env):
         """P0 gate should fail because INT-002 (P0 uniqueness) failed."""
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("src.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             result = run_rules(spec="test-integration", catalog=iceberg_env["catalog"])
 
         assert result["p0_passed"] is False
 
     def test_run_rules_skips_proposed(self, iceberg_env):
         """Proposed rules (INT-SKIP) should not be executed."""
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("src.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             result = run_rules(spec="test-integration", catalog=iceberg_env["catalog"])
 
         rule_ids = [r["rule_id"] for r in result["results"]]
@@ -530,8 +530,8 @@ class TestRunRulesIntegration:
 
     def test_run_rules_saves_results_file(self, iceberg_env):
         """Results should be written to DQ_RESULTS_DIR."""
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("src.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             run_rules(spec="test-integration", catalog=iceberg_env["catalog"])
 
         files = list(iceberg_env["results_dir"].glob("*.json"))
@@ -541,8 +541,8 @@ class TestRunRulesIntegration:
 
     def test_run_rules_priority_filter(self, iceberg_env):
         """Filtering by priority should only run matching rules."""
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("src.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             result = run_rules(spec="test-integration", priority="P1", catalog=iceberg_env["catalog"])
 
         assert result["rules_total"] == 1
@@ -563,7 +563,7 @@ class TestValidateAfterWrite:
         from pyiceberg.schema import Schema
         from pyiceberg.types import DoubleType, IntegerType, NestedField, StringType
 
-        from src.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
+        from grist.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
 
         catalog = get_catalog(tmp_path / "wh", tmp_path / "cat.db")
         schema = Schema(
@@ -601,7 +601,7 @@ class TestValidateAfterWrite:
         from pyiceberg.schema import Schema
         from pyiceberg.types import DoubleType, NestedField, StringType
 
-        from src.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
+        from grist.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
 
         catalog = get_catalog(tmp_path / "wh", tmp_path / "cat.db")
         schema = Schema(
@@ -637,16 +637,16 @@ class TestValidateAfterWrite:
         return {"catalog": catalog, "rules_dir": rules_dir, "results_dir": results_dir}
 
     def test_validate_returns_result_on_pass(self, passing_env):
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", passing_env["rules_dir"]), \
-             patch("src.infra.dq_runner.DQ_RESULTS_DIR", passing_env["results_dir"]):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", passing_env["rules_dir"]), \
+             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", passing_env["results_dir"]):
             result = validate_after_write("test-pass", catalog=passing_env["catalog"])
 
         assert result["rules_passed"] == 1
         assert result["p0_passed"] is True
 
     def test_validate_raises_on_p0_failure(self, failing_env):
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", failing_env["rules_dir"]), \
-             patch("src.infra.dq_runner.DQ_RESULTS_DIR", failing_env["results_dir"]):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", failing_env["rules_dir"]), \
+             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", failing_env["results_dir"]):
             with pytest.raises(DQValidationError) as exc_info:
                 validate_after_write("test-fail", catalog=failing_env["catalog"])
 
@@ -654,8 +654,8 @@ class TestValidateAfterWrite:
         assert len(exc_info.value.failures) == 1
 
     def test_validate_error_includes_run_result(self, failing_env):
-        with patch("src.infra.dq_runner.DQ_RULES_DIR", failing_env["rules_dir"]), \
-             patch("src.infra.dq_runner.DQ_RESULTS_DIR", failing_env["results_dir"]):
+        with patch("grist.infra.dq_runner.DQ_RULES_DIR", failing_env["rules_dir"]), \
+             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", failing_env["results_dir"]):
             with pytest.raises(DQValidationError) as exc_info:
                 validate_after_write("test-fail", catalog=failing_env["catalog"])
 

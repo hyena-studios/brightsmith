@@ -52,13 +52,13 @@ Every run MUST violate all 10:
 
 ```bash
 # Inject (requires CHAOS_MONKEY_ENABLED=True AND GRIST_ENV=dev)
-GRIST_ENV=dev python -m src.infra.chaos_monkey inject --rate 0.07 --seed 42
+GRIST_ENV=dev python -m grist.infra.chaos_monkey inject --rate 0.07 --seed 42
 
 # View latest manifest
-python -m src.infra.chaos_monkey manifest --latest
+python -m grist.infra.chaos_monkey manifest --latest
 
 # Clean up shadow zone
-python -m src.infra.chaos_monkey cleanup
+python -m grist.infra.chaos_monkey cleanup
 ```
 
 ## After Injection

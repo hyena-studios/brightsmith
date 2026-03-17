@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from src.base.concept_normalization.normalize import ConceptNormalizer
+from grist.base.concept_normalization.normalize import ConceptNormalizer
 
 
 def test_normalizer_loads_from_json(tmp_path):

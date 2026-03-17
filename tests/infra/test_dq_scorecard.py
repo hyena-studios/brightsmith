@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.infra.dq_scorecard import generate_scorecard
+from grist.infra.dq_scorecard import generate_scorecard
 
 
 @pytest.fixture
@@ -100,16 +100,16 @@ class TestScorecardGeneration:
 
     def test_creates_scorecard_file(self, tmp_path, mock_rules_dir, all_pass_results):
         scorecards_dir = tmp_path / "scorecards"
-        with patch("src.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
-             patch("src.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
+        with patch("grist.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
+             patch("grist.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
             path = generate_scorecard(all_pass_results, "test-spec")
             assert path.exists()
             assert path.name == "test-spec-scorecard.md"
 
     def test_header_shows_production_validation(self, tmp_path, mock_rules_dir, all_pass_results):
         scorecards_dir = tmp_path / "scorecards"
-        with patch("src.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
-             patch("src.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
+        with patch("grist.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
+             patch("grist.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
             path = generate_scorecard(all_pass_results, "test-spec")
             content = path.read_text()
             assert "Production Data Validation" in content
@@ -117,24 +117,24 @@ class TestScorecardGeneration:
 
     def test_all_pass_shows_100_percent(self, tmp_path, mock_rules_dir, all_pass_results):
         scorecards_dir = tmp_path / "scorecards"
-        with patch("src.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
-             patch("src.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
+        with patch("grist.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
+             patch("grist.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
             path = generate_scorecard(all_pass_results, "test-spec")
             content = path.read_text()
             assert "3/3 rules passing (100%)" in content
 
     def test_all_pass_p0_gate_pass(self, tmp_path, mock_rules_dir, all_pass_results):
         scorecards_dir = tmp_path / "scorecards"
-        with patch("src.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
-             patch("src.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
+        with patch("grist.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
+             patch("grist.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
             path = generate_scorecard(all_pass_results, "test-spec")
             content = path.read_text()
             assert "P0 Gate: PASS" in content
 
     def test_failures_listed(self, tmp_path, mock_rules_dir, mixed_results):
         scorecards_dir = tmp_path / "scorecards"
-        with patch("src.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
-             patch("src.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
+        with patch("grist.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
+             patch("grist.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
             path = generate_scorecard(mixed_results, "test-spec")
             content = path.read_text()
             assert "Failures Requiring Action" in content
@@ -143,16 +143,16 @@ class TestScorecardGeneration:
 
     def test_p0_gate_fail_on_p0_failure(self, tmp_path, mock_rules_dir, mixed_results):
         scorecards_dir = tmp_path / "scorecards"
-        with patch("src.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
-             patch("src.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
+        with patch("grist.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
+             patch("grist.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
             path = generate_scorecard(mixed_results, "test-spec")
             content = path.read_text()
             assert "P0 Gate: FAIL" in content
 
     def test_category_summary_present(self, tmp_path, mock_rules_dir, all_pass_results):
         scorecards_dir = tmp_path / "scorecards"
-        with patch("src.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
-             patch("src.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
+        with patch("grist.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
+             patch("grist.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
             path = generate_scorecard(all_pass_results, "test-spec")
             content = path.read_text()
             assert "Summary by Category" in content
@@ -161,8 +161,8 @@ class TestScorecardGeneration:
 
     def test_run_id_in_scorecard(self, tmp_path, mock_rules_dir, all_pass_results):
         scorecards_dir = tmp_path / "scorecards"
-        with patch("src.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
-             patch("src.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
+        with patch("grist.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
+             patch("grist.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
             path = generate_scorecard(all_pass_results, "test-spec")
             content = path.read_text()
             assert "abc123" in content
@@ -185,8 +185,8 @@ class TestScorecardWithErrors:
                 {"rule_id": "TEST-001", "spec": "test-spec", "passed": False, "raw_value": None, "threshold": "result = 0", "detail": None, "violations": None, "execution_time_ms": 1, "error": "Table not found: base.financial_facts", "executed_at": "2026-03-14T12:00:00Z"},
             ],
         }
-        with patch("src.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
-             patch("src.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
+        with patch("grist.infra.dq_scorecard.DQ_RULES_DIR", mock_rules_dir), \
+             patch("grist.infra.dq_scorecard.DQ_SCORECARDS_DIR", scorecards_dir):
             path = generate_scorecard(results, "test-spec")
             content = path.read_text()
             assert "ERROR" in content

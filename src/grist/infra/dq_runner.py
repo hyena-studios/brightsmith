@@ -4,12 +4,12 @@ Reads JSON rules from governance/dq-rules/, executes SQL against Iceberg tables
 via PyIceberg scan → Arrow → DuckDB, evaluates thresholds, and stores results.
 
 Usage:
-    python -m src.infra.dq_runner status [--spec NAME]
-    python -m src.infra.dq_runner approve RULE_ID [RULE_ID ...]
-    python -m src.infra.dq_runner run [--spec NAME] [--priority P0]
-    python -m src.infra.dq_runner results [--spec NAME]
-    python -m src.infra.dq_runner scorecard [--spec NAME]
-    python -m src.infra.dq_runner acknowledge --spec NAME --run RUN_ID --reason "..."
+    python -m grist.infra.dq_runner status [--spec NAME]
+    python -m grist.infra.dq_runner approve RULE_ID [RULE_ID ...]
+    python -m grist.infra.dq_runner run [--spec NAME] [--priority P0]
+    python -m grist.infra.dq_runner results [--spec NAME]
+    python -m grist.infra.dq_runner scorecard [--spec NAME]
+    python -m grist.infra.dq_runner acknowledge --spec NAME --run RUN_ID --reason "..."
 """
 
 from __future__ import annotations
@@ -25,14 +25,14 @@ from pathlib import Path
 
 import duckdb
 
-from src.config import (
+from grist.config import (
     CATALOG_PATH,
     DQ_RESULTS_DIR,
     DQ_RULES_DIR,
     REQUIRE_HUMAN_APPROVAL,
     WAREHOUSE_PATH,
 )
-from src.infra.iceberg_setup import get_catalog
+from grist.infra.iceberg_setup import get_catalog
 
 
 # ---------------------------------------------------------------------------
@@ -636,7 +636,7 @@ def main() -> None:
     elif args.command == "results":
         _print_results(args.spec)
     elif args.command == "scorecard":
-        from src.infra.dq_scorecard import generate_scorecard
+        from grist.infra.dq_scorecard import generate_scorecard
         results = get_latest_results(args.spec)
         if not results:
             print("No results found. Run `dq_runner run` first.")
@@ -667,7 +667,7 @@ def _get_all_specs() -> list[str]:
 
 def _update_readme_badges() -> None:
     """Update shields.io badges in README.md from latest DQ results."""
-    from src.config import PROJECT_ROOT
+    from grist.config import PROJECT_ROOT
 
     readme_path = PROJECT_ROOT / "README.md"
     if not readme_path.exists():

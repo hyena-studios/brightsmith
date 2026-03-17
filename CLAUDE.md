@@ -10,8 +10,8 @@ Grist is a domain-agnostic AI agent data pipeline framework that transforms raw 
 - uv for dependency management
 
 ## Key Paths
-- Source code: `src/` (organized by zone: raw, base, consumable, ai_ready)
-- Infrastructure: `src/infra/` (cross-cutting: iceberg_setup, dq_runner, dq_scorecard, lineage, staging)
+- Source code: `src/grist/` (organized by zone: raw, base, consumable, ai_ready)
+- Infrastructure: `src/grist/infra/` (cross-cutting: iceberg_setup, dq_runner, dq_scorecard, lineage, staging)
 - Data: `data/` (gitignored, organized by zone)
 - Domain pack: `domain/` (manifest.yaml, sources/, concept-mappings/)
 - Insight reports: `governance/insights/` (zone transition analysis)
@@ -128,9 +128,9 @@ Model artifacts are stored in `governance/models/` as `[spec-name]-conceptual.md
 - Data models store governance metadata as **IDs only** (`BT-XXX`) with derived flags (`is_cde`, `is_pii`) — never inline definitions. Authoritative source: `governance/business-glossary.json` (terms with `is_cde` and `is_pii` boolean flags). Documentation (README) dereferences IDs into human-readable names.
 - All model levels include `Business Term`, `Is CDE`, `Is PII` columns: conceptual on entity tables, logical on attribute tables, physical on column tables. CDE and PII flags are derived from the referenced business term.
 - DQ has three agents with distinct roles: @data-analyst (profiles data, produces EDA reports), @dq-rule-writer (writes rules from EDA evidence), @dq-engineer (executes rules, produces scorecards). No agent does another's job.
-- DQ rules follow a lifecycle: `PROPOSED → APPROVED → ACTIVE`. Rules must be executed against real Iceberg data via `python -m src.infra.dq_runner run`. P0 failures block spec completion.
+- DQ rules follow a lifecycle: `PROPOSED → APPROVED → ACTIVE`. Rules must be executed against real Iceberg data via `python -m grist.infra.dq_runner run`. P0 failures block spec completion.
 - DQ rule approval respects `REQUIRE_HUMAN_APPROVAL` — when False, proposed rules auto-advance to approved
-- DQ scorecards must be generated from real execution results (`python -m src.infra.dq_runner scorecard`), not test results
+- DQ scorecards must be generated from real execution results (`python -m grist.infra.dq_runner scorecard`), not test results
 - @governance-reviewer post-implementation check verifies: DQ rules exist, rules have been executed (results file exists), no P0 failures in latest results
 - Domain packs extend `BaseIngestor` and implement `fetch()`, `flatten()`, and `get_schema()` — the framework handles Iceberg table management, dedup, metadata enrichment, and snapshot management
 - Concept normalization uses a tiered matching engine (exact → prefix → pattern → heuristic) with discovery mode when no mappings exist

@@ -26,12 +26,12 @@ Create `src/agent/tools.py`. Each tool is a thin wrapper around an existing Gris
 
 ```python
 from langchain_core.tools import tool
-from src.domain_loader import load_manifest
-from src.infra.iceberg_setup import create_table, append_to_table, read_table
-from src.infra.dq_runner import DQRunner
-from src.infra.glossary_loader import load_glossary
-from src.base.concept_normalization.normalize import ConceptNormalizer
-from src.infra.lineage import emit_lineage_event
+from grist.domain_loader import load_manifest
+from grist.infra.iceberg_setup import create_table, append_to_table, read_table
+from grist.infra.dq_runner import DQRunner
+from grist.infra.glossary_loader import load_glossary
+from grist.base.concept_normalization.normalize import ConceptNormalizer
+from grist.infra.lineage import emit_lineage_event
 
 
 @tool
@@ -95,7 +95,7 @@ from langchain_anthropic import ChatAnthropic  # or your LLM
 from langchain_core.messages import SystemMessage
 from langgraph.prebuilt import create_react_agent
 
-from src.agent.tools import (
+from grist.agent.tools import (
     ingest_source,
     run_dq_check,
     normalize_concepts,
@@ -224,7 +224,7 @@ The main thing to adapt is the agent constructor syntax (`create_react_agent` vs
 Wrap each tool with lineage emission so agent actions are auditable:
 
 ```python
-from src.infra.lineage import emit_lineage_event
+from grist.infra.lineage import emit_lineage_event
 
 @tool
 def ingest_source(source_name: str) -> str:

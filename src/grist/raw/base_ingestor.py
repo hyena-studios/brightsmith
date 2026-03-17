@@ -29,8 +29,8 @@ from typing import Any
 from pyiceberg.exceptions import NamespaceAlreadyExistsError, TableAlreadyExistsError
 from pyiceberg.schema import Schema
 
-from src.infra.iceberg_setup import append_data, get_catalog, read_with_duckdb
-from src.domain_loader import DomainManifest, SourceConfig
+from grist.infra.iceberg_setup import append_data, get_catalog, read_with_duckdb
+from grist.domain_loader import DomainManifest, SourceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,7 @@ class BaseIngestor(ABC):
         Returns:
             {entity_id: {"rows": N, "snapshot_id": X, "skipped": Y}} summary.
         """
-        from src.config import WAREHOUSE_PATH as DEFAULT_WH, CATALOG_PATH as DEFAULT_CAT
+        from grist.config import WAREHOUSE_PATH as DEFAULT_WH, CATALOG_PATH as DEFAULT_CAT
 
         entities = entities or self.source.entities
         warehouse_path = warehouse_path or DEFAULT_WH

@@ -18,7 +18,7 @@ def get_concept_mappings_dir() -> Path | None:
     a concept_mappings path — the normalizer will operate in discovery mode.
     """
     try:
-        from src.domain_loader import load_manifest
+        from grist.domain_loader import load_manifest
         manifest = load_manifest()
         return manifest.hints.concept_mappings
     except (FileNotFoundError, Exception) as e:

@@ -163,7 +163,7 @@ Every transformation produces governance metadata:
 
 ## Human-in-the-Loop
 
-`REQUIRE_HUMAN_APPROVAL` in `src/config.py` is the single global toggle.
+`REQUIRE_HUMAN_APPROVAL` in `src/grist/config.py` is the single global toggle (or set `GRIST_REQUIRE_HUMAN_APPROVAL=false` env var).
 
 When `True`:
 - Business terms require human approval before use in models
@@ -177,25 +177,55 @@ When `False` (dev/demo mode):
 
 ## Quick Start
 
+### Option 1: As a dependency (recommended for domain projects)
+
 ```bash
-# Clone
+# Create your domain project
+mkdir my-sec-edgar-project && cd my-sec-edgar-project
+uv init && uv add grist@git+https://github.com/jcernauske/grist.git
+
+# Set up your domain pack
+mkdir -p domain/sources governance src/raw
+# Create domain/manifest.yaml, domain/sources/my_source.yaml
+
+# Write your ingestor
+cat > src/raw/my_ingestor.py << 'EOF'
+from grist.raw.base_ingestor import BaseIngestor
+
+class MyIngestor(BaseIngestor):
+    def fetch(self, entities, method, **kwargs):
+        ...
+    def flatten(self, raw_data, entity_id):
+        ...
+    def get_schema(self):
+        ...
+EOF
+
+# Configure (optional — defaults to cwd as project root)
+export GRIST_PROJECT_NAME="my-sec-edgar"
+
+# Run DQ rules
+python -m grist.infra.dq_runner run
+```
+
+### Option 2: Clone and fill in (for exploring/contributing)
+
+```bash
 git clone https://github.com/jcernauske/grist.git my-project
 cd my-project
-
-# Set up Python environment
 uv sync
 
 # Configure your data source
 cp domain/manifest.yaml.example domain/manifest.yaml
 cp domain/sources/my_source.yaml.example domain/sources/my_source.yaml
-# Edit both files with your data source details
-
-# Write your ingestor (extend BaseIngestor)
-# - implement fetch(), flatten(), get_schema()
 
 # Run tests
 uv run pytest
 ```
+
+### Framework enhancements vs domain work
+
+If you improve the framework (fix a bug in `dq_runner.py`, add a feature to `BaseIngestor`), push it to grist. If you build domain-specific artifacts (ingestors, governance, specs), those stay in your domain project. Clean separation — grist never gets polluted with domain data.
 
 ## What You Provide (Domain Pack)
 
@@ -203,7 +233,7 @@ uv run pytest
 |------|-------|---------|
 | Manifest | `domain/manifest.yaml` | How to acquire your data |
 | Source config | `domain/sources/*.yaml` | Entity IDs, fetch methods, dedup grain |
-| Ingestor | `src/raw/my_ingestor.py` | `fetch()` and `flatten()` for your API/files |
+| Ingestor | `src/raw/my_ingestor.py` | `fetch()` and `flatten()` (imports `from grist.raw import BaseIngestor`) |
 | Concept mappings | `domain/concept-mappings/*.json` | Taxonomy → business term mappings (optional — discovery mode if absent) |
 | Glossaries | `glossaries/` | Standard/domain term definitions (optional) |
 | DQ rules | `governance/dq-rules/*.json` | SQL validation rules (or let @dq-rule-writer generate from EDA) |
@@ -212,15 +242,15 @@ uv run pytest
 
 | Component | Path | Purpose |
 |-----------|------|---------|
-| Base ingestor | `src/raw/base_ingestor.py` | Abstract ingestor with dedup, metadata, snapshots |
-| Iceberg setup | `src/infra/iceberg_setup.py` | Table creation, append, read via PyIceberg + DuckDB |
-| DQ runner | `src/infra/dq_runner.py` | Execute SQL rules against Iceberg, threshold evaluation, P0 gating |
-| DQ scorecard | `src/infra/dq_scorecard.py` | Generate markdown scorecards from real results |
-| Lineage | `src/infra/lineage.py` | OpenLineage event emission to Iceberg |
-| Staging | `src/infra/staging.py` | Proposal staging, confidence-based approval gates |
-| Glossary loader | `src/infra/glossary_loader.py` | Three-tier glossary composition (standards → domains → project) |
-| Domain loader | `src/domain_loader.py` | Manifest parsing, source config, hints resolution |
-| Concept normalizer | `src/base/concept_normalization/` | Tiered matching (exact → prefix → pattern → heuristic) |
+| Base ingestor | `grist.raw.base_ingestor` | Abstract ingestor with dedup, metadata, snapshots |
+| Iceberg setup | `grist.infra.iceberg_setup` | Table creation, append, read via PyIceberg + DuckDB |
+| DQ runner | `grist.infra.dq_runner` | Execute SQL rules against Iceberg, threshold evaluation, P0 gating |
+| DQ scorecard | `grist.infra.dq_scorecard` | Generate markdown scorecards from real results |
+| Lineage | `grist.infra.lineage` | OpenLineage event emission to Iceberg |
+| Staging | `grist.infra.staging` | Proposal staging, confidence-based approval gates |
+| Glossary loader | `grist.infra.glossary_loader` | Three-tier glossary composition (standards → domains → project) |
+| Domain loader | `grist.domain_loader` | Manifest parsing, source config, hints resolution |
+| Concept normalizer | `grist.base.concept_normalization` | Tiered matching (exact → prefix → pattern → heuristic) |
 
 ## Stack
 
@@ -237,8 +267,8 @@ Every Claude Code session is logged to `docs/sessions/` for transparency and con
 
 ```
 grist/
-├── src/                           Source code by zone
-│   ├── config.py                  Global config (REQUIRE_HUMAN_APPROVAL, paths)
+├── src/grist/                     Framework package (pip-installable)
+│   ├── config.py                  Global config (env var overrides for domain projects)
 │   ├── domain_loader.py           Manifest + source config parsing
 │   ├── raw/                       Raw zone (BaseIngestor)
 │   ├── base/                      Base zone (concept normalization)

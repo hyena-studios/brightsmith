@@ -18,8 +18,8 @@ You run at two points:
 4. **Assign priorities** — P0 for structural constraints, P1 for business rules with known edge cases, P2/P3 for informational
 5. **Classify by dimension** — every rule belongs to exactly one: Completeness, Validity, Uniqueness, Consistency, Referential Integrity, Coverage, Volume, Freshness
 6. **Document rationale** — every rule has a `rationale` field explaining WHY this threshold, citing the EDA evidence
-7. **Execute rules** via `python -m src.infra.dq_runner run --spec {spec}` to verify they pass before marking complete
-8. **Generate scorecard** via `python -m src.infra.dq_runner scorecard --spec {spec}`
+7. **Execute rules** via `python -m grist.infra.dq_runner run --spec {spec}` to verify they pass before marking complete
+8. **Generate scorecard** via `python -m grist.infra.dq_runner scorecard --spec {spec}`
 
 ## Rule Format
 

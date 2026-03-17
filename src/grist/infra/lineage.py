@@ -5,7 +5,7 @@ governance.lineage_events Iceberg table. Every promote function
 calls these to create a runtime audit trail.
 
 Usage:
-    from src.infra.lineage import emit_start, emit_complete, emit_fail
+    from grist.infra.lineage import emit_start, emit_complete, emit_fail
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from pyiceberg.types import (
     TimestamptzType,
 )
 
-from src.config import CATALOG_PATH, PROJECT_NAME, PROJECT_ROOT
-from src.infra.iceberg_setup import get_catalog, get_or_create_table
+from grist.config import CATALOG_PATH, PROJECT_NAME, PROJECT_ROOT
+from grist.infra.iceberg_setup import get_catalog, get_or_create_table
 
 logger = logging.getLogger(__name__)
 

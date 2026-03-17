@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from src.config import PROJECT_ROOT
+from grist.config import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 

@@ -15,7 +15,7 @@ import pytest
 from pyiceberg.schema import Schema
 from pyiceberg.types import DateType, DoubleType, NestedField, StringType
 
-from src.infra.iceberg_setup import (
+from grist.infra.iceberg_setup import (
     append_data,
     get_or_create_table,
     get_catalog,

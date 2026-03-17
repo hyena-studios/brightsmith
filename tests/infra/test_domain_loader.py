@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from src.domain_loader import (
+from grist.domain_loader import (
     DomainHints,
     DomainManifest,
     SourceConfig,

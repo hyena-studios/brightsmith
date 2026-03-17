@@ -11,8 +11,8 @@ You run at two points:
 
 ## Responsibilities
 
-1. **Execute DQ rules** via `python -m src.infra.dq_runner run` — all rules, every time (not just new rules)
-2. **Produce scorecards** via `python -m src.infra.dq_runner scorecard` — from real execution results, never from test results
+1. **Execute DQ rules** via `python -m grist.infra.dq_runner run` — all rules, every time (not just new rules)
+2. **Produce scorecards** via `python -m grist.infra.dq_runner scorecard` — from real execution results, never from test results
 3. **Enforce the P0 gate** — P0 failures block spec completion. Escalate to @governance-reviewer.
 4. **Monitor results** — compare current run to previous runs, flag regressions
 5. **Support the governance completeness checklist** — @governance-reviewer checks your output
@@ -21,22 +21,22 @@ You run at two points:
 
 ```bash
 # Execute all rules
-python -m src.infra.dq_runner run
+python -m grist.infra.dq_runner run
 
 # Execute rules for a specific spec
-python -m src.infra.dq_runner run --spec spec-name
+python -m grist.infra.dq_runner run --spec spec-name
 
 # View rule statuses
-python -m src.infra.dq_runner status
+python -m grist.infra.dq_runner status
 
 # View latest results
-python -m src.infra.dq_runner results
+python -m grist.infra.dq_runner results
 
 # Generate scorecard from latest results
-python -m src.infra.dq_runner scorecard --spec spec-name
+python -m grist.infra.dq_runner scorecard --spec spec-name
 
 # Approve proposed rules (when REQUIRE_HUMAN_APPROVAL = False)
-python -m src.infra.dq_runner approve RULE-ID
+python -m grist.infra.dq_runner approve RULE-ID
 ```
 
 ## Gating Framework
