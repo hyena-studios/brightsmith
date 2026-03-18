@@ -1,6 +1,7 @@
 ---
 description: Show Grist pipeline progress — which specs exist, their status, which agents have run, DQ pass rates, and what's next. Use to get a quick overview of project state.
 allowed-tools: Read, Bash, Glob, Grep
+context: fork
 ---
 
 Show pipeline status for this Grist project.

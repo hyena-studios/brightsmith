@@ -2,6 +2,7 @@
 description: Scaffold a new Grist domain project. Use when starting a new data pipeline from scratch — creates directory structure, CLAUDE.md, pyproject.toml, ingestor skeleton, governance dirs, and first spec.
 argument-hint: "[data source description]"
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
+context: fork
 ---
 
 Scaffold a new Grist domain project for "$ARGUMENTS".

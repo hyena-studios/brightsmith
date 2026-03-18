@@ -2,6 +2,7 @@
 description: Run the Grist pipeline for a specific spec. Orchestrates the full agent workflow from governance review through staff engineer sign-off. Use when ready to execute a spec.
 argument-hint: "<spec-name>"
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent
+context: fork
 ---
 
 Run the Grist pipeline for spec "$ARGUMENTS".
