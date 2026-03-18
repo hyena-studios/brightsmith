@@ -1,20 +1,17 @@
 ---
 description: Scaffold a new Grist domain project. Use when starting a new data pipeline from scratch — creates directory structure, CLAUDE.md, pyproject.toml, ingestor skeleton, governance dirs, and first spec.
-argument-hint: "[project-name]"
+argument-hint: "[data source description]"
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
-Scaffold a new Grist domain project named "$ARGUMENTS".
+Scaffold a new Grist domain project for "$ARGUMENTS".
 
-Run: `python -m grist.setup init --name "$ARGUMENTS"`
+Infer everything you can from the data source description:
+- Project name (derive from source — e.g., "SEC EDGAR" → `sec-edgar-grist`)
+- API URLs, fetch methods (use your knowledge of known public APIs)
+- Seed entities (well-known defaults for the domain)
+- Domain standards (XBRL, ICD-10, etc. if recognizable)
 
-If no name was provided, ask the user for:
-1. Project name (e.g., `sec-edgar`, `medicare-claims`, `shopify-orders`)
-2. Data source description
-3. How to fetch the data (API URL, file path, etc.)
+The ONLY thing to ask the user is their **contact email** (required for API User-Agent headers).
 
-After scaffolding, tell the user:
-- What was created and where
-- Next steps: `cd <project> && uv sync`
-- Point them to the first spec in `docs/specs/`
-- Remind them that @data-analyst will discover domain context — they don't need to know everything upfront
+Then scaffold the full project using `python -m grist.setup init` and create all config files, ingestor skeleton, and first spec.

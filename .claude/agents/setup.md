@@ -13,13 +13,19 @@ You run exactly once per domain project, at the very beginning. After you're don
 
 ## What You Need From The User
 
-Ask for these, in this order. Don't ask all at once — gather iteratively:
+The user's initial message tells you what data source they want. Extract everything you can from that message — project name, data source, fetch method, entities, domain standards. **Do NOT ask follow-up questions for information you can infer or default.**
 
-1. **Project name** — what should this project be called? (e.g., `sec-edgar`, `medicare-claims`, `shopify-orders`)
-2. **Data source description** — what data are we ingesting? Plain English is fine. (e.g., "SEC EDGAR XBRL company facts API", "CSV exports from our Shopify store", "Medicare Part D prescriber data from CMS")
-3. **How to fetch it** — API URL? File path? Database connection? Bulk download? If API, any auth required?
-4. **What entities are in it** — if they know. (e.g., "20 public companies by CIK number", "all orders from 2023-2024"). It's OK if they don't know yet — that's what domain discovery is for.
-5. **Any known domain standards** — do they know what taxonomy/classification system the data uses? (e.g., "it's XBRL us-gaap", "ICD-10 codes", "just our internal SKU system"). OK if unknown.
+The ONLY thing you MUST ask for is:
+1. **Contact email** — required for API User-Agent headers (SEC, CMS, and most government APIs require identification). Ask once, use it everywhere.
+
+Everything else, infer or default:
+- **Project name** — derive from the data source (e.g., "SEC EDGAR" → `sec-edgar-grist`, "Medicare Part D" → `medicare-part-d-grist`)
+- **Data source** — the user already told you in their first message
+- **How to fetch it** — if it's a known public API (SEC EDGAR, CMS, Census, etc.), you already know the URL pattern and method. Use it.
+- **Entities** — seed with well-known defaults for the domain (e.g., SEC → Apple/Microsoft/Alphabet/Amazon/Meta by CIK; Medicare → top 5 states). The user can edit the source YAML to add more.
+- **Domain standards** — if you recognize the domain (SEC → XBRL us-gaap, healthcare → ICD-10, etc.), just use it. Don't ask.
+
+**The goal is: user says what they want, you ask for their email, you scaffold everything. One question, not five.**
 
 ## What You Create
 
@@ -242,12 +248,14 @@ Short domain project README:
 
 ## After Scaffolding
 
-Once everything is created:
+Once everything is created, tell the user concisely:
 
-1. Tell the user what was created and why
-2. Explain the next steps: "Run `uv sync` to install dependencies, then start implementing the ingestor skeleton"
-3. Point them to the first spec as the starting point for the agent pipeline
-4. Remind them that @data-analyst will discover the domain context — they don't need to know everything upfront
+1. What was created (project name, key files)
+2. Seed entities included and how to add more (edit `domain/sources/*.yaml`)
+3. Next steps: `cd {project} && uv sync`
+4. If an API requires a User-Agent, remind them to update the email in the source YAML if they haven't already
+5. Point to the first spec as the pipeline entry point
+6. Remind them @data-analyst discovers domain context — they don't need to know the taxonomy upfront
 
 ## Scope Boundaries
 
