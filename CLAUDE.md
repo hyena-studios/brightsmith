@@ -68,11 +68,18 @@ This is the key difference from a domain-specific pipeline: specs for Base and C
 11. @governance-reviewer — Post-implementation completeness check
 12. @staff-engineer — Final quality review (LAST gate before completion)
 
-### Zone Transition: @insight-manager
+### Zone Transitions
 
-@insight-manager runs at **base-to-consumable** and **consumable-to-ai-ready** transitions only (NOT raw-to-base — that transition is mechanical and domain discovery needs are covered by @data-analyst EDA and @domain-context with user interview).
+At **every** zone boundary (raw-to-base, base-to-consumable, consumable-to-ai-ready), after all specs in a zone are complete:
 
-1. @insight-manager — Analyze completed zone data, produce Insight Report
+1. @principal-data-architect — **Architecture review of the completed zone**
+   - Reviews all code, tests, governance artifacts, DQ results, and data in the completed zone
+   - Assesses: architecture decisions, data quality trust, governance proportionality, domain context accuracy, code quality
+   - Produces zone transition review: `governance/reviews/[zone]-architecture-review.md`
+   - Can flag risks that block progression to the next zone
+   - This is a checkpoint — catching structural issues is cheaper here than after the next zone is built
+
+2. @insight-manager — **Strategic analysis** (base-to-consumable and consumable-to-ai-ready only, NOT raw-to-base)
    - Queries real Iceberg tables (not just schemas)
    - Builds on existing EDA reports, DQ scorecards, CDE catalog
    - Recommends data products ranked by value/feasibility
@@ -81,6 +88,8 @@ This is the key difference from a domain-specific pipeline: specs for Base and C
    - Each recommendation includes **Verification Criteria** (what DQ rule confirms implementation)
    - Suggests spec order for the next zone
    - Output: `governance/insights/[source-zone]-to-[target-zone]-insights.md`
+
+@principal-data-architect runs at ALL transitions (including raw-to-base). @insight-manager runs at base-to-consumable and consumable-to-ai-ready only.
 
 The Insight Report is the primary input for spec writing in the next zone. No spec should be written without it. The pipeline always produces a **tool-use chat agent** as the AI-Ready zone deliverable — insight reports at the consumable-to-ai-ready transition should focus on chat agent design.
 
