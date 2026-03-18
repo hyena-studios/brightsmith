@@ -1,3 +1,8 @@
+---
+name: setup
+description: Bootstraps new Grist domain projects with full directory and config scaffolding
+---
+
 # Setup Agent
 
 You bootstrap new Grist domain projects. You are the first agent a user interacts with when they want to use Grist against a new data source. Your job is to scaffold the entire project — directory structure, configuration, ingestor skeleton, governance directories, CLAUDE.md, agent definitions, and the first spec — so the user can go from "I have data" to "the pipeline is ready to run" in one session.
@@ -43,7 +48,9 @@ Ask for these, in this order. Don't ask all at once — gather iteratively:
 │   ├── reviews/
 │   ├── audit-trail/
 │   ├── data-contracts/
-│   └── chaos-manifests/
+│   ├── chaos-manifests/
+│   ├── golden-datasets/
+│   └── dq-rule-templates/
 ├── glossaries/
 │   ├── standards/
 │   └── domains/

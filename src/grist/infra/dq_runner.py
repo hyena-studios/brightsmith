@@ -231,6 +231,7 @@ def _register_iceberg_views(
     con: duckdb.DuckDBPyConnection,
     table_refs: list[tuple[str, str]],
     catalog,
+    shadow: bool = False,
 ) -> list[str]:
     """Register Iceberg tables as DuckDB views using iceberg_scan().
 
@@ -238,13 +239,17 @@ def _register_iceberg_views(
     so DuckDB reads directly from Iceberg data files. This enables predicate
     pushdown and column pruning — no full-table materialization into memory.
 
+    When shadow=True, tables are loaded from the shadow_ namespace instead
+    of the real namespace (for chaos monkey DQ testing).
+
     Returns list of view names created.
     """
     views = []
     for ns, tbl in table_refs:
         view_name = f"{ns}_{tbl}"
+        catalog_ns = f"shadow_{ns}" if shadow else ns
         try:
-            iceberg_table = catalog.load_table(f"{ns}.{tbl}")
+            iceberg_table = catalog.load_table(f"{catalog_ns}.{tbl}")
             metadata_path = iceberg_table.metadata_location
             con.execute(
                 f"CREATE VIEW {view_name} AS "
@@ -315,6 +320,7 @@ def run_rules(
     spec: str | None = None,
     priority: str | None = None,
     catalog=None,
+    shadow: bool = False,
 ) -> dict:
     """Execute DQ rules against real Iceberg data.
 
@@ -322,6 +328,7 @@ def run_rules(
         spec: Filter to rules for this spec only.
         priority: Filter to this priority level only (e.g., "P0").
         catalog: PyIceberg catalog. If None, loads from default paths.
+        shadow: If True, resolve tables from shadow_ namespace (chaos monkey).
 
     Returns:
         Run result dict with run_id, summary stats, and per-rule results.
@@ -357,7 +364,7 @@ def run_rules(
     con.load_extension("iceberg")
     for ref in all_table_refs:
         try:
-            _register_iceberg_views(con, [ref], catalog)
+            _register_iceberg_views(con, [ref], catalog, shadow=shadow)
         except RuntimeError:
             pass  # Rule will fail with a SQL error when it references this table
 
@@ -595,6 +602,7 @@ def main() -> None:
     run_parser = subparsers.add_parser("run", help="Execute rules against real data")
     run_parser.add_argument("--spec", help="Filter by spec name")
     run_parser.add_argument("--priority", help="Filter by priority (e.g., P0)")
+    run_parser.add_argument("--shadow", action="store_true", help="Run against shadow namespace (chaos monkey)")
 
     # results
     results_parser = subparsers.add_parser("results", help="Show latest results")
@@ -624,7 +632,7 @@ def main() -> None:
             print(f"{r['rule_id']}: {msg}")
     elif args.command == "run":
         print("Executing DQ rules against Iceberg data...")
-        result = run_rules(spec=args.spec, priority=args.priority)
+        result = run_rules(spec=args.spec, priority=args.priority, shadow=args.shadow)
         print(f"\nRun {result['run_id']} complete:")
         print(f"  Total: {result['rules_total']} | Passed: {result['rules_passed']} | Failed: {result['rules_failed']}")
         print(f"  P0 gate: {'PASS' if result['p0_passed'] else 'FAIL'}")

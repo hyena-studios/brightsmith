@@ -11,7 +11,12 @@ Grist is a domain-agnostic AI agent data pipeline framework that transforms raw 
 
 ## Key Paths
 - Source code: `src/grist/` (organized by zone: raw, base, consumable, ai_ready)
-- Infrastructure: `src/grist/infra/` (cross-cutting: iceberg_setup, dq_runner, dq_scorecard, lineage, staging)
+- Infrastructure: `src/grist/infra/` (cross-cutting: iceberg_setup, dq_runner, dq_scorecard, lineage, staging, period_disambiguator)
+- Period disambiguator: `src/grist/infra/period_disambiguator.py` (temporal period classification)
+- Chaos monkey: `src/grist/infra/chaos_monkey/` (schema-agnostic adversarial DQ testing)
+- Integration test harness: `src/grist/infra/integration_test_harness.py` (golden dataset validation)
+- DQ rule templates: `governance/dq-rule-templates/` (mandatory patterns for consumable zone)
+- Golden datasets: `governance/golden-datasets/` (known-correct reference values)
 - Data: `data/` (gitignored, organized by zone)
 - Domain pack: `domain/` (manifest.yaml, sources/, concept-mappings/)
 - Insight reports: `governance/insights/` (zone transition analysis)
@@ -48,28 +53,36 @@ This is the key difference from a domain-specific pipeline: specs for Base and C
 1. @governance-reviewer — Pre-implementation review
 2. @primary-agent — Implementation (ingest raw data via BaseIngestor)
 3. @data-analyst — EDA on raw data (distributions, outliers, edge cases, threshold evidence, **domain discovery**)
-4. @domain-context — Synthesize domain knowledge from EDA into `governance/domain-context.md` (canonical domain context for all downstream agents)
+4. @domain-context — Synthesize domain knowledge from EDA into `governance/domain-context.md` (canonical domain context for all downstream agents). Includes **EDA-informed user interview**: generates 5-10 targeted questions from EDA findings (temporal patterns, grain/uniqueness, domain semantics, known edge cases, external context), presents to user, flags unanswered questions as risks with mandatory DQ rule requirements.
 5. @dq-rule-writer — Write raw DQ rules from EDA report + domain context (completeness, validity, volume, freshness)
 6. @dq-engineer — Execute rules against real data, produce scorecard
-7. @lineage-tracker — OpenLineage capture
-8. @cde-tagger — CDE mapping update (using domain context for taxonomy interpretation)
-9. @doc-generator — Dictionary + contracts update (using domain context for plain-English definitions)
-10. @governance-reviewer — Post-implementation completeness check
-11. @staff-engineer — Final quality review (LAST gate before completion)
+7. @chaos-monkey — 5-cycle adversarial hardening:
+   a. Inject corruptions into shadow copy (rates: 5%, 6%, 7%, 8%, 10%)
+   b. Run DQ rules against shadow tables (`--shadow` flag)
+   c. @chaos-monkey generates After-Action Report
+   d. If gaps found: @dq-rule-writer patches rules, return to (a)
+   e. After 5 cycles or no new gaps for 2 consecutive cycles: proceed
+8. @lineage-tracker — OpenLineage capture
+9. @cde-tagger — CDE mapping update (using domain context for taxonomy interpretation)
+10. @doc-generator — Dictionary + contracts update (using domain context for plain-English definitions)
+11. @governance-reviewer — Post-implementation completeness check
+12. @staff-engineer — Final quality review (LAST gate before completion)
 
 ### Zone Transition: @insight-manager
 
-Between zones (after all specs in a zone are complete, before the next zone's specs are written), @insight-manager runs a strategic analysis:
+@insight-manager runs at **base-to-consumable** and **consumable-to-ai-ready** transitions only (NOT raw-to-base — that transition is mechanical and domain discovery needs are covered by @data-analyst EDA and @domain-context with user interview).
 
 1. @insight-manager — Analyze completed zone data, produce Insight Report
    - Queries real Iceberg tables (not just schemas)
    - Builds on existing EDA reports, DQ scorecards, CDE catalog
    - Recommends data products ranked by value/feasibility
    - Identifies external data combination opportunities
+   - Recommends chat agent design (questions users will ask, tools needed, grounding context)
+   - Each recommendation includes **Verification Criteria** (what DQ rule confirms implementation)
    - Suggests spec order for the next zone
    - Output: `governance/insights/[source-zone]-to-[target-zone]-insights.md`
 
-The Insight Report is the primary input for spec writing in the next zone. No spec should be written without it.
+The Insight Report is the primary input for spec writing in the next zone. No spec should be written without it. The pipeline always produces a **tool-use chat agent** as the AI-Ready zone deliverable — insight reports at the consumable-to-ai-ready transition should focus on chat agent design.
 
 ### Base & Consumable Zone Pipeline (with data modeling gates)
 
@@ -88,11 +101,17 @@ The pipeline auto-detects **greenfield** vs **backfill** mode:
 7. @semantic-modeler — Generate **physical model** from approved logical
 8. @primary-agent — Implementation (must match approved physical model)
 9. @dq-engineer — Execute all rules against real data, produce scorecard
-10. @lineage-tracker — OpenLineage capture
-11. @cde-tagger — CDE mapping update
-12. @doc-generator — Dictionary + contracts update
-13. @governance-reviewer — Post-implementation completeness check (verifies models match)
-14. @staff-engineer — Final quality review (LAST gate before completion)
+10. @chaos-monkey — 5-cycle adversarial hardening:
+    a. Inject corruptions into shadow copy (rates: 5%, 6%, 7%, 8%, 10%)
+    b. Run DQ rules against shadow tables (`--shadow` flag)
+    c. @chaos-monkey generates After-Action Report
+    d. If gaps found: @dq-rule-writer patches rules, return to (a)
+    e. After 5 cycles or no new gaps for 2 consecutive cycles: proceed
+11. @lineage-tracker — OpenLineage capture
+12. @cde-tagger — CDE mapping update
+13. @doc-generator — Dictionary + contracts update
+14. @governance-reviewer — Post-implementation completeness check (verifies models match)
+15. @staff-engineer — Final quality review (LAST gate before completion)
 
 #### Backfill Mode (existing tables, missing models)
 1. @semantic-modeler — Reverse-engineer **physical model** from existing tables/code
@@ -100,10 +119,11 @@ The pipeline auto-detects **greenfield** vs **backfill** mode:
 3. @data-analyst — EDA on existing base data (profile actual data state)
 4. @dq-rule-writer — Write base DQ rules from EDA report + logical model
 5. @dq-engineer — Execute rules, produce scorecard
-6. @semantic-modeler — Abstract **conceptual model** from logical → HUMAN APPROVAL GATE
-7. @data-steward — Extract **business terms** from conceptual model → HUMAN APPROVAL GATE (project-specific terms only)
-8. @governance-reviewer — Post-backfill completeness check (verifies models and glossary are consistent with existing implementation)
-9. @staff-engineer — Final review
+6. @chaos-monkey — 5-cycle adversarial hardening (same protocol as Greenfield)
+7. @semantic-modeler — Abstract **conceptual model** from logical → HUMAN APPROVAL GATE
+8. @data-steward — Extract **business terms** from conceptual model → HUMAN APPROVAL GATE (project-specific terms only)
+9. @governance-reviewer — Post-backfill completeness check (verifies models and glossary are consistent with existing implementation)
+10. @staff-engineer — Final review
 
 #### Mode Detection
 @semantic-modeler determines the mode automatically:
@@ -138,6 +158,8 @@ Model artifacts are stored in `governance/models/` as `[spec-name]-conceptual.md
 - @governance-reviewer post-implementation check verifies: DQ rules exist, rules have been executed (results file exists), no P0 failures in latest results
 - Domain packs extend `BaseIngestor` and implement `fetch()`, `flatten()`, and `get_schema()` — the framework handles Iceberg table management, dedup, metadata enrichment, and snapshot management
 - Concept normalization uses a tiered matching engine (exact → prefix → pattern → heuristic) with discovery mode when no mappings exist
+- Base/Consumable specs involving temporal data MUST use PeriodDisambiguator (`src/grist/infra/period_disambiguator.py`) for period classification rather than ad-hoc period logic. The framework utility handles annual vs quarterly vs point-in-time classification using date-span analysis.
+- Every consumable spec MUST have a golden dataset (`governance/golden-datasets/{spec}-golden.json`) with at least 3 independently verifiable values before @staff-engineer review
 
 # Session Logging
 

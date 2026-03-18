@@ -45,6 +45,10 @@ REQUIRE_HUMAN_APPROVAL = os.environ.get("GRIST_REQUIRE_HUMAN_APPROVAL", "true").
 DQ_RULES_DIR = PROJECT_ROOT / "governance" / "dq-rules"
 DQ_RESULTS_DIR = PROJECT_ROOT / "governance" / "dq-results"
 DQ_SCORECARDS_DIR = PROJECT_ROOT / "governance" / "dq-scorecards"
+DQ_TEMPLATES_DIR = PROJECT_ROOT / "governance" / "dq-rule-templates"
+
+# Golden datasets — known-correct reference values for pipeline output validation
+GOLDEN_DATASETS_DIR = PROJECT_ROOT / "governance" / "golden-datasets"
 
 # Iceberg catalog paths (shared catalog, per-zone warehouses)
 WAREHOUSE_PATH = PROJECT_ROOT / "data" / "raw" / "iceberg_warehouse"
@@ -66,7 +70,8 @@ def configure(
         require_human_approval: Toggle for human-in-the-loop gates.
     """
     global PROJECT_ROOT, PROJECT_NAME, REQUIRE_HUMAN_APPROVAL
-    global DQ_RULES_DIR, DQ_RESULTS_DIR, DQ_SCORECARDS_DIR
+    global DQ_RULES_DIR, DQ_RESULTS_DIR, DQ_SCORECARDS_DIR, DQ_TEMPLATES_DIR
+    global GOLDEN_DATASETS_DIR
     global WAREHOUSE_PATH, CATALOG_PATH
 
     if project_root is not None:
@@ -80,5 +85,7 @@ def configure(
     DQ_RULES_DIR = PROJECT_ROOT / "governance" / "dq-rules"
     DQ_RESULTS_DIR = PROJECT_ROOT / "governance" / "dq-results"
     DQ_SCORECARDS_DIR = PROJECT_ROOT / "governance" / "dq-scorecards"
+    DQ_TEMPLATES_DIR = PROJECT_ROOT / "governance" / "dq-rule-templates"
+    GOLDEN_DATASETS_DIR = PROJECT_ROOT / "governance" / "golden-datasets"
     WAREHOUSE_PATH = PROJECT_ROOT / "data" / "raw" / "iceberg_warehouse"
     CATALOG_PATH = PROJECT_ROOT / "data" / "catalog" / "catalog.db"

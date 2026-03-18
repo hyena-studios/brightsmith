@@ -1,0 +1,13 @@
+{
+  "name": "grist",
+  "version": "0.1.0",
+  "description": "AI agent data pipeline framework — Raw to AI-Ready with full governance. Transforms raw data from any source into AI-ready datasets through four zones with 24 specialized agents.",
+  "author": {
+    "name": "jcernauske",
+    "url": "https://github.com/jcernauske"
+  },
+  "repository": "https://github.com/jcernauske/grist",
+  "license": "MIT",
+  "keywords": ["data-engineering", "ai-agents", "governance", "iceberg", "duckdb", "pipeline"],
+  "agents": "./.claude/agents/"
+}

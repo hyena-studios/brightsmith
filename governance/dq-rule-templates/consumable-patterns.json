@@ -1,0 +1,50 @@
+{
+  "version": "1.0",
+  "description": "Mandatory DQ rule patterns for consumable zone specs. @dq-rule-writer must evaluate each pattern and either write a rule or document why it was skipped.",
+  "patterns": [
+    {
+      "pattern_id": "CONS-GRAIN-UNIQUE",
+      "dimension": "Uniqueness",
+      "priority": "P0",
+      "description": "One value per entity-metric-period at the declared grain. If a consumable table has a defined grain (e.g., one annual revenue per company-year), there must be exactly one row per grain combination.",
+      "sql_template": "SELECT {grain_columns}, COUNT(*) as cnt FROM {table} GROUP BY {grain_columns} HAVING cnt > 1",
+      "threshold": "result_count = 0",
+      "when": "Always — every consumable table has a declared grain",
+      "mandatory": true,
+      "skip_requires": "human_override"
+    },
+    {
+      "pattern_id": "CONS-IMPOSSIBLE-VALUE",
+      "dimension": "Validity",
+      "priority": "P0",
+      "description": "Values that violate domain constraints. Revenue cannot be negative, percentages cannot exceed 100%, counts cannot be fractional. Domain-context.md defines what constraints apply.",
+      "sql_template": "SELECT COUNT(*) FROM {table} WHERE {impossible_condition}",
+      "threshold": "result = 0",
+      "when": "When domain-context.md or the logical model defines value constraints for any metric",
+      "mandatory": true,
+      "skip_requires": "human_override"
+    },
+    {
+      "pattern_id": "CONS-CROSS-TABLE",
+      "dimension": "Consistency",
+      "priority": "P1",
+      "description": "Related tables agree on shared dimensions. If two consumable tables share an entity or time dimension, their values for shared attributes must agree.",
+      "sql_template": "SELECT COUNT(*) FROM {table_a} a JOIN {table_b} b ON {join_condition} WHERE {disagreement_condition}",
+      "threshold": "result = 0",
+      "when": "When the spec produces multiple related tables or references existing consumable tables",
+      "mandatory": false,
+      "skip_requires": "documented_rationale"
+    },
+    {
+      "pattern_id": "CONS-GOLDEN-DATASET",
+      "dimension": "Accuracy",
+      "priority": "P0",
+      "description": "Known-correct values match pipeline output. At least 3 independently verifiable values from authoritative sources must match the pipeline output within tolerance.",
+      "sql_template": "SELECT COUNT(*) FROM {table} WHERE {entity_condition} AND {metric_condition} AND {period_condition} AND ABS({value_col} - {expected_value}) > {tolerance}",
+      "threshold": "result = 0",
+      "when": "Always — every consumable spec must have a golden dataset before @staff-engineer review",
+      "mandatory": true,
+      "skip_requires": "human_override"
+    }
+  ]
+}
