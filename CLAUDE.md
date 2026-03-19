@@ -200,6 +200,11 @@ This step is SKIPPABLE only if the @principal-data-architect explicitly approves
 - Every derived table row gets a deterministic `record_id` via `compute_grain_id(row, grain_fields, prefix)` from `grist.infra.grain`. Same input → same hash → dedup skips it.
 - Grain fields are defined once per table and used everywhere: promote dedup, DQ uniqueness rules, data contracts, golden dataset filters.
 - `BaseIngestor` (raw zone) already has grain-based dedup — the promote pattern extends this to base/consumable/ai-ready zones.
+- Headless pipeline runner: `python -m grist.run` executes the full pipeline without AI agents. Supports `--zone`, `--validate-only`, `--dry-run`, `--output json`. Exit codes: 0=success, 1=DQ failure, 2=transform error, 3=contract violation, 4=config error.
+- DQ gates between zones: if P0 fails after raw, base doesn't run. Contract verification between zones.
+- Run history logged to `governance/run-history/{timestamp}.json` for audit trail.
+- Headless readiness check: `python -m grist.run --headless-ready` verifies all specs complete, contracts valid, golden datasets pass, no LLM imports in zone code.
+- Zone transformers register via `domain/manifest.yaml` under `pipeline.zones.{zone}.module` and `pipeline.zones.{zone}.function`.
 - Base/Consumable specs involving temporal data MUST use PeriodDisambiguator (`src/grist/infra/period_disambiguator.py`) for period classification rather than ad-hoc period logic. The framework utility handles annual vs quarterly vs point-in-time classification using date-span analysis.
 - Every consumable spec MUST have a golden dataset (`governance/golden-datasets/{spec}-golden.json`) with at least 3 independently verifiable values before @staff-engineer review
 - AI-Ready zone specs MUST include an evaluation set (`data/ai_ready/eval/{spec}-eval.json`) with at least 50 mechanically verifiable Q&A cases before @staff-engineer review
