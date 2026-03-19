@@ -11,7 +11,7 @@ Grist is a domain-agnostic AI agent data pipeline framework that transforms raw 
 
 ## Key Paths
 - Source code: `src/grist/` (organized by zone: raw, base, consumable, ai_ready)
-- Infrastructure: `src/grist/infra/` (cross-cutting: iceberg_setup, dq_runner, dq_scorecard, lineage, staging, period_disambiguator)
+- Infrastructure: `src/grist/infra/` (cross-cutting: iceberg_setup, dq_runner, dq_scorecard, lineage, staging, period_disambiguator, promote, grain, contract, golden_dataset, verification, glossary_validator, pipeline_gate)
 - Period disambiguator: `src/grist/infra/period_disambiguator.py` (temporal period classification)
 - Chaos monkey: `src/grist/infra/chaos_monkey/` (schema-agnostic adversarial DQ testing)
 - Integration test harness: `src/grist/infra/integration_test_harness.py` (golden dataset validation)
@@ -196,6 +196,10 @@ This step is SKIPPABLE only if the @principal-data-architect explicitly approves
 - Data contracts are machine-readable YAML with schema, quality, lineage, and consumer sections. Verify with `python3 -m grist.infra.contract verify {name}`.
 - Breaking schema changes (column removed/renamed/type changed/grain changed) require a major version bump. Non-breaking changes (column added) require minor bump.
 - Contract lifecycle: DRAFT (generated) → ACTIVE (staff-engineer approved) → DEPRECATED (superseded). Active contracts are enforced on every pipeline run.
+- Zone transformers MUST use the idempotent promote pattern (`from grist.infra.promote import promote`) — no bare `append_data()` for derived tables. Re-running with the same data must produce 0 new rows.
+- Every derived table row gets a deterministic `record_id` via `compute_grain_id(row, grain_fields, prefix)` from `grist.infra.grain`. Same input → same hash → dedup skips it.
+- Grain fields are defined once per table and used everywhere: promote dedup, DQ uniqueness rules, data contracts, golden dataset filters.
+- `BaseIngestor` (raw zone) already has grain-based dedup — the promote pattern extends this to base/consumable/ai-ready zones.
 - Base/Consumable specs involving temporal data MUST use PeriodDisambiguator (`src/grist/infra/period_disambiguator.py`) for period classification rather than ad-hoc period logic. The framework utility handles annual vs quarterly vs point-in-time classification using date-span analysis.
 - Every consumable spec MUST have a golden dataset (`governance/golden-datasets/{spec}-golden.json`) with at least 3 independently verifiable values before @staff-engineer review
 - AI-Ready zone specs MUST include an evaluation set (`data/ai_ready/eval/{spec}-eval.json`) with at least 50 mechanically verifiable Q&A cases before @staff-engineer review
