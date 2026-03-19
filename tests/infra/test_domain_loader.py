@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from grist.domain_loader import (
+from brightsmith.domain_loader import (
     DomainHints,
     DomainManifest,
     SourceConfig,
@@ -27,7 +27,7 @@ def minimal_manifest(tmp_path):
     """Create a minimal manifest with no hints."""
     source_config = {
         "name": "test_source",
-        "namespace": "raw",
+        "namespace": "bronze",
         "table": "test_data",
         "fetch": {
             "api": {
@@ -71,7 +71,7 @@ def full_manifest(tmp_path):
     """Create a manifest with all hints populated."""
     source_config = {
         "name": "test_source",
-        "namespace": "raw",
+        "namespace": "bronze",
         "table": "test_data",
         "fetch": {"api": {"url_template": "https://example.com/{id}.json"}},
         "entities": {100: "Company X", 200: "Company Y"},
@@ -177,7 +177,7 @@ class TestSourceConfig:
         manifest = load_manifest(minimal_manifest)
         source = manifest.sources[0]
         assert source.name == "test_source"
-        assert source.namespace == "raw"
+        assert source.namespace == "bronze"
         assert source.table == "test_data"
         assert len(source.entities) == 2
         assert source.dedup_grain == ["id", "date"]

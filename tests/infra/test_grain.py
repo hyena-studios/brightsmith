@@ -1,6 +1,6 @@
 """Tests for deterministic grain hashing."""
 
-from grist.infra.grain import compute_grain_id
+from brightsmith.infra.grain import compute_grain_id
 
 
 def test_same_input_produces_same_hash():

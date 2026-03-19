@@ -2,7 +2,7 @@
 
 import random
 
-from grist.infra.chaos_monkey.row_corruptor import RowCorruptor
+from brightsmith.infra.chaos_monkey.row_corruptor import RowCorruptor
 
 
 def _make_records():

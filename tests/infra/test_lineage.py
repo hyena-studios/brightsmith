@@ -1,6 +1,6 @@
 """Tests for runtime lineage event emission."""
 
-from grist.infra.lineage import emit_start
+from brightsmith.infra.lineage import emit_start
 
 
 def test_emit_start_returns_run_id():

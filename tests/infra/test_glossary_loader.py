@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from grist.infra.glossary_loader import (
+from brightsmith.infra.glossary_loader import (
     ComposedGlossary,
     GlossaryRegistry,
     GlossaryTerm,
@@ -224,7 +224,7 @@ class TestLoadRegistry:
 
     def test_missing_registry_returns_empty(self, tmp_path):
         """Missing registry file returns empty registry, not an error."""
-        import grist.infra.glossary_loader as gl
+        import brightsmith.infra.glossary_loader as gl
 
         original = gl.REGISTRY_PATH
         gl.REGISTRY_PATH = tmp_path / "nonexistent.yaml"

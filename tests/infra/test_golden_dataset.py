@@ -2,7 +2,7 @@
 
 import json
 
-from grist.infra.golden_dataset import (
+from brightsmith.infra.golden_dataset import (
     VerificationResult,
     list_golden_datasets,
     load_golden_dataset,

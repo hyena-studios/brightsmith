@@ -3,7 +3,7 @@
 import random
 from datetime import date
 
-from grist.infra.chaos_monkey.distribution_corruptor import DistributionCorruptor
+from brightsmith.infra.chaos_monkey.distribution_corruptor import DistributionCorruptor
 
 
 def _make_records():

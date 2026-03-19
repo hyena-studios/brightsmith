@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from grist.infra.contract import (
+from brightsmith.infra.contract import (
     ContractDiffItem,
     ContractVerificationResult,
     bump_version,
@@ -36,7 +36,7 @@ def _make_contract(**overrides) -> dict:
         },
         "schema": {
             "table": "consumable.test_table",
-            "namespace": "consumable",
+            "namespace": "gold",
             "grain": {"columns": ["id"], "description": "One row per entity"},
             "columns": [
                 {"name": "id", "type": "integer", "required": True, "business_term": "BT-001", "is_cde": True, "description": "Entity ID"},

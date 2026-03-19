@@ -6,15 +6,15 @@ from pathlib import Path
 from pyiceberg.schema import Schema
 from pyiceberg.types import IntegerType, NestedField, StringType
 
-from grist.infra.grain import compute_grain_id
-from grist.infra.iceberg_setup import (
+from brightsmith.infra.grain import compute_grain_id
+from brightsmith.infra.iceberg_setup import (
     append_data,
     filter_existing_records,
     get_catalog,
     get_or_create_table,
     read_with_duckdb,
 )
-from grist.infra.promote import promote
+from brightsmith.infra.promote import promote
 
 SCHEMA = Schema(
     NestedField(field_id=1, name="record_id", field_type=StringType(), required=True),

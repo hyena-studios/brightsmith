@@ -15,7 +15,7 @@ import duckdb
 import pyarrow as pa
 import pytest
 
-from grist.infra.dq_runner import (
+from brightsmith.infra.dq_runner import (
     DQValidationError,
     _extract_table_refs,
     _rewrite_sql,
@@ -105,29 +105,29 @@ class TestExtractTableRefs:
     """_extract_table_refs finds namespace.table patterns in SQL."""
 
     def test_single_table(self):
-        refs = _extract_table_refs("SELECT * FROM base.financial_facts")
-        assert ("base", "financial_facts") in refs
+        refs = _extract_table_refs("SELECT * FROM silver.financial_facts")
+        assert ("silver", "financial_facts") in refs
 
     def test_cross_namespace_join(self):
-        sql = "SELECT * FROM raw.xbrl_company_facts r JOIN base.entity_mappings m ON r.cik = m.cik"
+        sql = "SELECT * FROM bronze.xbrl_company_facts r JOIN silver.entity_mappings m ON r.cik = m.cik"
         refs = _extract_table_refs(sql)
-        assert ("raw", "xbrl_company_facts") in refs
-        assert ("base", "entity_mappings") in refs
+        assert ("bronze", "xbrl_company_facts") in refs
+        assert ("silver", "entity_mappings") in refs
 
     def test_skips_alias_column_refs(self):
-        sql = "SELECT r.cik, m.status FROM raw.xbrl_company_facts r JOIN base.entity_mappings m ON r.cik = m.cik"
+        sql = "SELECT r.cik, m.status FROM bronze.xbrl_company_facts r JOIN silver.entity_mappings m ON r.cik = m.cik"
         refs = _extract_table_refs(sql)
         # r.cik and m.status should be skipped (not known namespaces)
         assert ("r", "cik") not in refs
         assert ("m", "status") not in refs
         # But real table refs should be found
-        assert ("raw", "xbrl_company_facts") in refs
-        assert ("base", "entity_mappings") in refs
+        assert ("bronze", "xbrl_company_facts") in refs
+        assert ("silver", "entity_mappings") in refs
 
     def test_deduplicates(self):
-        sql = "SELECT * FROM base.financial_facts f WHERE f.cik IN (SELECT cik FROM base.financial_facts)"
+        sql = "SELECT * FROM silver.financial_facts f WHERE f.cik IN (SELECT cik FROM silver.financial_facts)"
         refs = _extract_table_refs(sql)
-        assert refs.count(("base", "financial_facts")) == 1
+        assert refs.count(("silver", "financial_facts")) == 1
 
     def test_no_table_refs(self):
         refs = _extract_table_refs("SELECT 1")
@@ -143,15 +143,15 @@ class TestRewriteSql:
     """_rewrite_sql replaces namespace.table with view names."""
 
     def test_single_replacement(self):
-        sql = "SELECT * FROM base.financial_facts"
-        result = _rewrite_sql(sql, [("base", "financial_facts")])
-        assert result == "SELECT * FROM base_financial_facts"
+        sql = "SELECT * FROM silver.financial_facts"
+        result = _rewrite_sql(sql, [("silver", "financial_facts")])
+        assert result == "SELECT * FROM silver_financial_facts"
 
     def test_multiple_replacements(self):
-        sql = "FROM raw.xbrl_company_facts r JOIN base.entity_mappings m"
-        result = _rewrite_sql(sql, [("raw", "xbrl_company_facts"), ("base", "entity_mappings")])
-        assert "raw_xbrl_company_facts" in result
-        assert "base_entity_mappings" in result
+        sql = "FROM bronze.xbrl_company_facts r JOIN silver.entity_mappings m"
+        result = _rewrite_sql(sql, [("bronze", "xbrl_company_facts"), ("silver", "entity_mappings")])
+        assert "bronze_xbrl_company_facts" in result
+        assert "silver_entity_mappings" in result
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +192,7 @@ class TestLoadRules:
         }
         (rules_dir / "test-spec.json").write_text(json.dumps(data, indent=2))
 
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", rules_dir):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", rules_dir):
             rules = load_rules()
             assert len(rules) == 2
             for rule in rules:
@@ -220,7 +220,7 @@ class TestLoadRules:
         (rules_dir / "spec-a.json").write_text(json.dumps(data1, indent=2))
         (rules_dir / "spec-b.json").write_text(json.dumps(data2, indent=2))
 
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", rules_dir):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", rules_dir):
             rules = load_rules(spec="spec-a")
             assert len(rules) == 1
             assert all(r["spec"] == "spec-a" for r in rules)
@@ -243,7 +243,7 @@ class TestExecuteSqlRule:
         """DuckDB connection with a test view registered."""
         con = duckdb.connect()
         con.execute("""
-            CREATE TABLE base_financial_facts AS
+            CREATE TABLE silver_financial_facts AS
             SELECT * FROM (VALUES
                 ('FACT-001', 'CIK001', 'revenue', 1000.0, 1, false, NULL),
                 ('FACT-002', 'CIK001', 'assets', 5000.0, 2, false, NULL),
@@ -256,7 +256,7 @@ class TestExecuteSqlRule:
     def test_passing_rule(self, con_with_data):
         rule = {
             "rule_id": "TEST-001",
-            "sql": "SELECT COUNT(*) FROM base_financial_facts WHERE calendar_quarter < 1 OR calendar_quarter > 4",
+            "sql": "SELECT COUNT(*) FROM silver_financial_facts WHERE calendar_quarter < 1 OR calendar_quarter > 4",
             "threshold": "result = 0",
             "spec": "test",
         }
@@ -268,7 +268,7 @@ class TestExecuteSqlRule:
     def test_failing_rule(self, con_with_data):
         rule = {
             "rule_id": "TEST-002",
-            "sql": "SELECT COUNT(*) FROM base_financial_facts WHERE is_superseded = true AND superseded_by IS NULL",
+            "sql": "SELECT COUNT(*) FROM silver_financial_facts WHERE is_superseded = true AND superseded_by IS NULL",
             "threshold": "result = 0",
             "spec": "test",
         }
@@ -279,7 +279,7 @@ class TestExecuteSqlRule:
     def test_result_count_threshold(self, con_with_data):
         rule = {
             "rule_id": "TEST-003",
-            "sql": "SELECT fact_id, COUNT(*) FROM base_financial_facts GROUP BY fact_id HAVING COUNT(*) > 1",
+            "sql": "SELECT fact_id, COUNT(*) FROM silver_financial_facts GROUP BY fact_id HAVING COUNT(*) > 1",
             "threshold": "result_count = 0",
             "spec": "test",
         }
@@ -302,7 +302,7 @@ class TestExecuteSqlRule:
     def test_execution_time_recorded(self, con_with_data):
         rule = {
             "rule_id": "TEST-TIME",
-            "sql": "SELECT COUNT(*) FROM base_financial_facts",
+            "sql": "SELECT COUNT(*) FROM silver_financial_facts",
             "threshold": "result >= 0",
             "spec": "test",
         }
@@ -364,7 +364,7 @@ class TestApproveRules:
         return rules_dir
 
     def test_approve_proposed_rule(self, temp_rules_dir):
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", temp_rules_dir):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", temp_rules_dir):
             results = approve_rules(["TEST-PROP-001"])
             assert results[0]["status"] == "approved"
 
@@ -376,12 +376,12 @@ class TestApproveRules:
             assert "approved_at" in rule
 
     def test_approve_already_active_no_change(self, temp_rules_dir):
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", temp_rules_dir):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", temp_rules_dir):
             results = approve_rules(["TEST-ACT-001"])
             assert "not proposed" in results[0].get("message", "")
 
     def test_approve_nonexistent_rule(self, temp_rules_dir):
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", temp_rules_dir):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", temp_rules_dir):
             results = approve_rules(["NOPE-001"])
             assert results[0]["status"] == "not_found"
 
@@ -400,20 +400,20 @@ class TestRunRulesIntegration:
         from pyiceberg.schema import Schema
         from pyiceberg.types import DateType, DoubleType, IntegerType, NestedField, StringType
 
-        from grist.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
+        from brightsmith.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
 
         warehouse = tmp_path / "warehouse"
         catalog_db = tmp_path / "catalog.db"
         catalog = get_catalog(warehouse, catalog_db)
 
-        # Create base.test_facts table
+        # Create silver.test_facts table
         schema = Schema(
             NestedField(1, "fact_id", StringType(), required=True),
             NestedField(2, "cik", IntegerType(), required=True),
             NestedField(3, "val", DoubleType(), required=True),
             NestedField(4, "filed_date", DateType(), required=True),
         )
-        table = get_or_create_table(catalog, "base", "test_facts", schema)
+        table = get_or_create_table(catalog, "silver", "test_facts", schema)
 
         import datetime
         append_data(table, [
@@ -431,14 +431,14 @@ class TestRunRulesIntegration:
 
         rules = {
             "spec": "test-integration",
-            "tables": ["base.test_facts"],
+            "tables": ["silver.test_facts"],
             "rules": [
                 {
                     "rule_id": "INT-001",
                     "category": "Validity",
                     "priority": "P0",
                     "description": "No future filed_dates",
-                    "sql": "SELECT COUNT(*) FROM base.test_facts WHERE filed_date > '2030-01-01'",
+                    "sql": "SELECT COUNT(*) FROM silver.test_facts WHERE filed_date > '2030-01-01'",
                     "threshold": "result = 0",
                     "status": "active",
                 },
@@ -447,7 +447,7 @@ class TestRunRulesIntegration:
                     "category": "Uniqueness",
                     "priority": "P0",
                     "description": "No duplicate fact_ids",
-                    "sql": "SELECT fact_id, COUNT(*) FROM base.test_facts GROUP BY fact_id HAVING COUNT(*) > 1",
+                    "sql": "SELECT fact_id, COUNT(*) FROM silver.test_facts GROUP BY fact_id HAVING COUNT(*) > 1",
                     "threshold": "result_count = 0",
                     "status": "active",
                 },
@@ -456,7 +456,7 @@ class TestRunRulesIntegration:
                     "category": "Completeness",
                     "priority": "P1",
                     "description": "All vals positive",
-                    "sql": "SELECT COUNT(*) FROM base.test_facts WHERE val <= 0",
+                    "sql": "SELECT COUNT(*) FROM silver.test_facts WHERE val <= 0",
                     "threshold": "result = 0",
                     "status": "active",
                 },
@@ -481,8 +481,8 @@ class TestRunRulesIntegration:
 
     def test_run_rules_returns_all_active_results(self, iceberg_env):
         """run_rules executes active/approved rules and returns results."""
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             result = run_rules(spec="test-integration", catalog=iceberg_env["catalog"])
 
         assert result["rules_total"] == 3  # INT-SKIP is proposed, excluded
@@ -491,8 +491,8 @@ class TestRunRulesIntegration:
 
     def test_run_rules_detects_duplicate_fact_ids(self, iceberg_env):
         """INT-002 (uniqueness) should fail -- we inserted a duplicate F1."""
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             result = run_rules(spec="test-integration", catalog=iceberg_env["catalog"])
 
         int002 = next(r for r in result["results"] if r["rule_id"] == "INT-002")
@@ -501,8 +501,8 @@ class TestRunRulesIntegration:
 
     def test_run_rules_passes_valid_rules(self, iceberg_env):
         """INT-001 (no future dates) and INT-003 (positive vals) should pass."""
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             result = run_rules(spec="test-integration", catalog=iceberg_env["catalog"])
 
         int001 = next(r for r in result["results"] if r["rule_id"] == "INT-001")
@@ -513,16 +513,16 @@ class TestRunRulesIntegration:
 
     def test_run_rules_p0_gate_fails_on_duplicate(self, iceberg_env):
         """P0 gate should fail because INT-002 (P0 uniqueness) failed."""
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             result = run_rules(spec="test-integration", catalog=iceberg_env["catalog"])
 
         assert result["p0_passed"] is False
 
     def test_run_rules_skips_proposed(self, iceberg_env):
         """Proposed rules (INT-SKIP) should not be executed."""
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             result = run_rules(spec="test-integration", catalog=iceberg_env["catalog"])
 
         rule_ids = [r["rule_id"] for r in result["results"]]
@@ -530,8 +530,8 @@ class TestRunRulesIntegration:
 
     def test_run_rules_saves_results_file(self, iceberg_env):
         """Results should be written to DQ_RESULTS_DIR."""
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             run_rules(spec="test-integration", catalog=iceberg_env["catalog"])
 
         files = list(iceberg_env["results_dir"].glob("*.json"))
@@ -541,8 +541,8 @@ class TestRunRulesIntegration:
 
     def test_run_rules_priority_filter(self, iceberg_env):
         """Filtering by priority should only run matching rules."""
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
-             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             result = run_rules(spec="test-integration", priority="P1", catalog=iceberg_env["catalog"])
 
         assert result["rules_total"] == 1
@@ -563,14 +563,14 @@ class TestValidateAfterWrite:
         from pyiceberg.schema import Schema
         from pyiceberg.types import DoubleType, IntegerType, NestedField, StringType
 
-        from grist.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
+        from brightsmith.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
 
         catalog = get_catalog(tmp_path / "wh", tmp_path / "cat.db")
         schema = Schema(
             NestedField(1, "id", StringType(), required=True),
             NestedField(2, "val", DoubleType(), required=True),
         )
-        table = get_or_create_table(catalog, "base", "clean_table", schema)
+        table = get_or_create_table(catalog, "silver", "clean_table", schema)
         append_data(table, [{"id": "A", "val": 1.0}, {"id": "B", "val": 2.0}])
 
         rules_dir = tmp_path / "dq-rules"
@@ -580,13 +580,13 @@ class TestValidateAfterWrite:
 
         rules = {
             "spec": "test-pass",
-            "tables": ["base.clean_table"],
+            "tables": ["silver.clean_table"],
             "rules": [{
                 "rule_id": "PASS-001",
                 "category": "Validity",
                 "priority": "P0",
                 "description": "All vals positive",
-                "sql": "SELECT COUNT(*) FROM base.clean_table WHERE val <= 0",
+                "sql": "SELECT COUNT(*) FROM silver.clean_table WHERE val <= 0",
                 "threshold": "result = 0",
                 "status": "active",
             }],
@@ -601,14 +601,14 @@ class TestValidateAfterWrite:
         from pyiceberg.schema import Schema
         from pyiceberg.types import DoubleType, NestedField, StringType
 
-        from grist.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
+        from brightsmith.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
 
         catalog = get_catalog(tmp_path / "wh", tmp_path / "cat.db")
         schema = Schema(
             NestedField(1, "id", StringType(), required=True),
             NestedField(2, "val", DoubleType(), required=True),
         )
-        table = get_or_create_table(catalog, "base", "dirty_table", schema)
+        table = get_or_create_table(catalog, "silver", "dirty_table", schema)
         append_data(table, [
             {"id": "A", "val": 1.0},
             {"id": "A", "val": 2.0},  # duplicate id
@@ -621,13 +621,13 @@ class TestValidateAfterWrite:
 
         rules = {
             "spec": "test-fail",
-            "tables": ["base.dirty_table"],
+            "tables": ["silver.dirty_table"],
             "rules": [{
                 "rule_id": "FAIL-001",
                 "category": "Uniqueness",
                 "priority": "P0",
                 "description": "No duplicate ids",
-                "sql": "SELECT id, COUNT(*) FROM base.dirty_table GROUP BY id HAVING COUNT(*) > 1",
+                "sql": "SELECT id, COUNT(*) FROM silver.dirty_table GROUP BY id HAVING COUNT(*) > 1",
                 "threshold": "result_count = 0",
                 "status": "active",
             }],
@@ -637,16 +637,16 @@ class TestValidateAfterWrite:
         return {"catalog": catalog, "rules_dir": rules_dir, "results_dir": results_dir}
 
     def test_validate_returns_result_on_pass(self, passing_env):
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", passing_env["rules_dir"]), \
-             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", passing_env["results_dir"]):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", passing_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", passing_env["results_dir"]):
             result = validate_after_write("test-pass", catalog=passing_env["catalog"])
 
         assert result["rules_passed"] == 1
         assert result["p0_passed"] is True
 
     def test_validate_raises_on_p0_failure(self, failing_env):
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", failing_env["rules_dir"]), \
-             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", failing_env["results_dir"]):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", failing_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", failing_env["results_dir"]):
             with pytest.raises(DQValidationError) as exc_info:
                 validate_after_write("test-fail", catalog=failing_env["catalog"])
 
@@ -654,8 +654,8 @@ class TestValidateAfterWrite:
         assert len(exc_info.value.failures) == 1
 
     def test_validate_error_includes_run_result(self, failing_env):
-        with patch("grist.infra.dq_runner.DQ_RULES_DIR", failing_env["rules_dir"]), \
-             patch("grist.infra.dq_runner.DQ_RESULTS_DIR", failing_env["results_dir"]):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", failing_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", failing_env["results_dir"]):
             with pytest.raises(DQValidationError) as exc_info:
                 validate_after_write("test-fail", catalog=failing_env["catalog"])
 

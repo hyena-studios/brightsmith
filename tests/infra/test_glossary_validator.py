@@ -3,7 +3,7 @@
 import json
 from unittest.mock import patch
 
-from grist.infra.glossary_validator import validate_glossary
+from brightsmith.infra.glossary_validator import validate_glossary
 
 
 def _make_valid_term(**overrides):

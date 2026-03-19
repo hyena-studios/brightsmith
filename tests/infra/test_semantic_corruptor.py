@@ -3,7 +3,7 @@
 import random
 from datetime import date
 
-from grist.infra.chaos_monkey.semantic_corruptor import SemanticCorruptor
+from brightsmith.infra.chaos_monkey.semantic_corruptor import SemanticCorruptor
 
 
 def _make_records():

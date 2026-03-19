@@ -2,7 +2,7 @@
 
 import json
 
-from grist.run import (
+from brightsmith.run import (
     EXIT_CONFIG_ERROR,
     EXIT_SUCCESS,
     GoldenResult,
@@ -17,19 +17,19 @@ from grist.run import (
 def test_pipeline_result_to_dict():
     """PipelineResult should serialize to a valid JSON-compatible dict."""
     result = PipelineResult()
-    result.add_zone_result("raw", ZoneResult(zone="raw", status="SUCCESS", rows_promoted=100))
+    result.add_zone_result("bronze", ZoneResult(zone="bronze", status="SUCCESS", rows_promoted=100))
     result.finalize()
     d = result.to_dict()
     assert d["run_id"]
     assert d["status"] == "SUCCESS"
-    assert d["zones"]["raw"]["rows_promoted"] == 100
+    assert d["zones"]["bronze"]["rows_promoted"] == 100
     # Round-trip through JSON
     assert json.loads(json.dumps(d)) == d
 
 
 def test_zone_result_defaults():
     """ZoneResult should have sensible defaults."""
-    zr = ZoneResult(zone="raw")
+    zr = ZoneResult(zone="bronze")
     assert zr.status == "PENDING"
     assert zr.dq_p0_passed is True
     assert zr.rows_promoted == 0
@@ -37,16 +37,16 @@ def test_zone_result_defaults():
 
 def test_previous_zone():
     """previous_zone should return the zone before the given one."""
-    assert previous_zone("base") == "raw"
-    assert previous_zone("consumable") == "base"
-    assert previous_zone("raw") is None
+    assert previous_zone("silver") == "bronze"
+    assert previous_zone("gold") == "silver"
+    assert previous_zone("bronze") is None
 
 
 def test_pipeline_result_finalize_success():
     """Finalize should set SUCCESS when all zones pass."""
     result = PipelineResult()
-    result.add_zone_result("raw", ZoneResult(zone="raw", status="SUCCESS"))
-    result.add_zone_result("base", ZoneResult(zone="base", status="SUCCESS"))
+    result.add_zone_result("bronze", ZoneResult(zone="bronze", status="SUCCESS"))
+    result.add_zone_result("silver", ZoneResult(zone="silver", status="SUCCESS"))
     result.finalize()
     assert result.status == "SUCCESS"
     assert result.exit_code == EXIT_SUCCESS
@@ -55,8 +55,8 @@ def test_pipeline_result_finalize_success():
 def test_pipeline_result_finalize_dq_failure():
     """Finalize should detect DQ failures."""
     result = PipelineResult()
-    result.add_zone_result("raw", ZoneResult(
-        zone="raw", status="FAILED", dq_p0_passed=False,
+    result.add_zone_result("bronze", ZoneResult(
+        zone="bronze", status="FAILED", dq_p0_passed=False,
         dq_p0_failures=["rule-1"],
     ))
     result.finalize()
@@ -67,8 +67,8 @@ def test_pipeline_result_finalize_dq_failure():
 def test_pipeline_result_finalize_contract_warning():
     """Contract violations should produce SUCCESS_WITH_WARNINGS."""
     result = PipelineResult()
-    result.add_zone_result("raw", ZoneResult(
-        zone="raw", status="SUCCESS", contracts_violated=1,
+    result.add_zone_result("bronze", ZoneResult(
+        zone="bronze", status="SUCCESS", contracts_violated=1,
     ))
     result.finalize()
     assert result.status == "SUCCESS_WITH_WARNINGS"
@@ -77,9 +77,9 @@ def test_pipeline_result_finalize_contract_warning():
 
 def test_dry_run_skips_execution():
     """Dry run should not execute any zones."""
-    result = run_pipeline(zones=["raw"], dry_run=True)
+    result = run_pipeline(zones=["bronze"], dry_run=True)
     assert result.status == "DRY_RUN"
-    assert result.zones["raw"].status == "SKIPPED"
+    assert result.zones["bronze"].status == "SKIPPED"
 
 
 def test_validate_only_with_no_zones():
@@ -102,7 +102,7 @@ def test_json_output_format_valid():
 def test_exit_code_0_on_success():
     """Successful pipeline should exit 0."""
     result = PipelineResult()
-    result.add_zone_result("raw", ZoneResult(zone="raw", status="SUCCESS"))
+    result.add_zone_result("bronze", ZoneResult(zone="bronze", status="SUCCESS"))
     result.finalize()
     assert result.exit_code == 0
 

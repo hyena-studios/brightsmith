@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from grist.infra.integration_test_harness import (
+from brightsmith.infra.integration_test_harness import (
     GoldenRecord,
     PipelineTestHarness,
     ValidationResult,
@@ -87,13 +87,13 @@ class TestValidationResult:
         assert result.all_match is True
 
     def test_not_match_with_mismatch(self):
-        from grist.infra.integration_test_harness import Mismatch
+        from brightsmith.infra.integration_test_harness import Mismatch
         r = GoldenRecord("A", "m", "p", 100, 0.01, "relative", "src", "t.t")
         result = ValidationResult(mismatches=[Mismatch(r, 200.0, 100.0, "too different")])
         assert result.all_match is False
 
     def test_summary_includes_mismatches(self):
-        from grist.infra.integration_test_harness import Mismatch
+        from brightsmith.infra.integration_test_harness import Mismatch
         r = GoldenRecord("AAPL", "revenue", "FY2010", 65225, 0.01, "relative", "10-K", "t.t")
         result = ValidationResult(
             matches=[],

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from grist.infra.chaos_monkey.injector import (
+from brightsmith.infra.chaos_monkey.injector import (
     ChaosInjector,
     InjectionConfig,
     SchemaIntrospector,
@@ -18,9 +18,9 @@ from grist.infra.chaos_monkey.injector import (
     _corrupt_integer,
     _corrupt_string,
 )
-from grist.infra.chaos_monkey.manifest import ChaosManifest, CorruptionRecord
-from grist.infra.chaos_monkey.reconciler import AfterActionReconciler
-from grist.infra.chaos_monkey.safety import SafetyGate, SafetyViolation
+from brightsmith.infra.chaos_monkey.manifest import ChaosManifest, CorruptionRecord
+from brightsmith.infra.chaos_monkey.reconciler import AfterActionReconciler
+from brightsmith.infra.chaos_monkey.safety import SafetyGate, SafetyViolation
 
 
 # ---------------------------------------------------------------------------
@@ -50,13 +50,13 @@ class TestSafetyGate:
         monkeypatch.setenv("CHAOS_MONKEY_ENABLED", "true")
         monkeypatch.setenv("GRIST_ENV", "dev")
         with pytest.raises(SafetyViolation, match="does not start with"):
-            SafetyGate.check("base")
+            SafetyGate.check("silver")
 
     def test_multiple_failures(self, monkeypatch):
         monkeypatch.delenv("CHAOS_MONKEY_ENABLED", raising=False)
         monkeypatch.delenv("GRIST_ENV", raising=False)
         with pytest.raises(SafetyViolation) as exc:
-            SafetyGate.check("base")
+            SafetyGate.check("silver")
         assert "CHAOS_MONKEY_ENABLED" in str(exc.value)
         assert "GRIST_ENV" in str(exc.value)
         assert "does not start with" in str(exc.value)
@@ -65,7 +65,7 @@ class TestSafetyGate:
         monkeypatch.setenv("CHAOS_MONKEY_ENABLED", "true")
         monkeypatch.setenv("GRIST_ENV", "dev")
         assert SafetyGate.is_safe("shadow_raw") is True
-        assert SafetyGate.is_safe("raw") is False
+        assert SafetyGate.is_safe("bronze") is False
 
 
 # ---------------------------------------------------------------------------

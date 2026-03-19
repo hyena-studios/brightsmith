@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from grist.infra.period_disambiguator import (
+from brightsmith.infra.period_disambiguator import (
     PeriodClassification,
     PeriodDisambiguator,
     PeriodThresholds,
