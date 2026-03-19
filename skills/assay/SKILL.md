@@ -14,18 +14,17 @@ You run DQ infrastructure commands (Bash) and dispatch agents where needed (Agen
 
 ## MANDATORY: How to Dispatch Agents
 
-Every agent MUST be invoked with `subagent_type` set to the **namespaced** agent name (prefixed with `bs:`).
+Every agent MUST be invoked with `subagent_type` set to the agent name.
 
-CORRECT: `Agent(description: "task", subagent_type: "bs:dq-engineer", prompt: "...")`
+CORRECT: `Agent(description: "task", subagent_type: "dq-engineer", prompt: "...")`
 WRONG:   `Agent(description: "dq-engineer task", prompt: "...")`
-ALSO WRONG: `Agent(description: "task", subagent_type: "dq-engineer", prompt: "...")` (missing bs: prefix)
 
 ## Assay Steps
 
 1. **DQ Rules** — Execute all rules: `python3 -m brightsmith.infra.dq_runner run --spec "$ARGUMENTS"`
 2. **DQ Scorecard** — Generate scorecard: `python3 -m brightsmith.infra.dq_runner scorecard --spec "$ARGUMENTS"`
 3. **Chaos Monkey** — If not already hardened, dispatch:
-   `Agent(description: "adversarial hardening for $ARGUMENTS", subagent_type: "bs:chaos-monkey", prompt: "...")`
+   `Agent(description: "adversarial hardening for $ARGUMENTS", subagent_type: "chaos-monkey", prompt: "...")`
 4. **Golden Datasets** — Verify: `python3 -m brightsmith.infra.golden_dataset verify --spec "$ARGUMENTS"`
 5. **Verification** — Run correctness checks: `python3 -m brightsmith.infra.verification run --spec "$ARGUMENTS"`
 6. **Contracts** — Verify all contracts: `python3 -m brightsmith.infra.contract verify --all`
