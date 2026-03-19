@@ -1,18 +1,23 @@
 ---
 description: Scaffold a new Brightsmith domain project. Use when starting a new data pipeline from scratch — creates directory structure, CLAUDE.md, pyproject.toml, ingestor skeleton, governance dirs, and first spec.
 argument-hint: "[data source description]"
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep
-context: fork
+allowed-tools: Agent
 ---
 
 Scaffold a new Brightsmith domain project for "$ARGUMENTS".
 
-Infer everything you can from the data source description:
-- Project name (derive from source — e.g., "SEC EDGAR" → `sec-edgar-brightsmith`)
-- API URLs, fetch methods (use your knowledge of known public APIs)
-- Seed entities (well-known defaults for the domain)
-- Domain standards (XBRL, ICD-10, etc. if recognizable)
+## YOU ARE AN ORCHESTRATOR, NOT AN IMPLEMENTER
 
-The ONLY thing to ask the user is their **contact email** (required for API User-Agent headers).
+You do ONE thing: launch the @setup agent. You do NOT scaffold files, write code, or create directories yourself.
 
-Then scaffold the full project using `python -m brightsmith.setup init` and create all config files, ingestor skeleton, and first spec.
+**Immediately** invoke the setup agent:
+
+```
+Agent(
+  description: "scaffold project for $ARGUMENTS",
+  subagent_type: "setup",
+  prompt: "Scaffold a new Brightsmith domain project for: $ARGUMENTS\n\nInfer everything you can from the data source description:\n- Project name (derive from source)\n- API URLs, fetch methods (use your knowledge of known public APIs)\n- Seed entities (well-known defaults for the domain)\n- Domain standards (XBRL, ICD-10, etc. if recognizable)\n\nThe ONLY thing to ask the user is their contact email (required for API User-Agent headers).\n\nThen scaffold the full project using python -m brightsmith.setup init and create all config files, ingestor skeleton, and first spec."
+)
+```
+
+That's it. When the agent returns, relay its summary to the user. Do not add to it, do not do follow-up work.

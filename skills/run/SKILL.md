@@ -1,11 +1,14 @@
 ---
 description: Run the Brightsmith pipeline for a specific spec. Orchestrates the full agent workflow from governance review through staff engineer sign-off. Use when ready to execute a spec.
 argument-hint: "<spec-name>"
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent
-context: fork
+allowed-tools: Read, Bash, Glob, Grep, Agent
 ---
 
 Run the Brightsmith pipeline for spec "$ARGUMENTS".
+
+## YOU ARE AN ORCHESTRATOR, NOT AN IMPLEMENTER
+
+You run pipeline gate commands (Bash) and dispatch agents (Agent tool). You NEVER write code, edit files, or produce governance artifacts yourself. Every piece of real work is done by a named agent via `subagent_type`.
 
 ## Pipeline Execution Protocol
 
@@ -67,16 +70,28 @@ For each agent in the pipeline:
 2. **Execute or skip:**
    - If applicable: **YOU MUST use the Agent tool** to invoke the agent as a subagent. This is NOT optional — do NOT run bash commands directly as a substitute for agent invocation. Every agent step must appear in the Claude Code UI as a labeled subagent block, not as a Bash() call.
 
-     **How to invoke each agent:**
+     **MANDATORY: How to invoke each agent — you MUST set `subagent_type`:**
+
+     CORRECT (colored label appears in UI):
      ```
      Agent(
-       description: "<step-name> for $ARGUMENTS",
-       subagent_type: "<agent-name>",   // e.g., "governance-reviewer", "data-analyst", "dq-engineer"
-       prompt: "<full context: spec name, what to do, paths to read, expected output>"
+       description: "DQ execution for $ARGUMENTS",
+       subagent_type: "dq-engineer",
+       prompt: "Execute DQ rules for spec '$ARGUMENTS'..."
      )
      ```
 
-     Example for @dq-engineer:
+     WRONG (no colored label, agent name lost in description):
+     ```
+     Agent(
+       description: "dq-engineer DQ execution for $ARGUMENTS",
+       prompt: "Execute DQ rules for spec '$ARGUMENTS'..."
+     )
+     ```
+
+     The difference: `subagent_type` MUST be set to the agent name (e.g., "governance-reviewer", "data-analyst", "dq-engineer", "chaos-monkey", "staff-engineer", etc.). The `description` is a SHORT task summary, NOT the agent name. If you put the agent name in `description` instead of `subagent_type`, the colored label will not appear and the pipeline will look broken.
+
+     Full example for @dq-engineer:
      ```
      Agent(
        description: "DQ execution for $ARGUMENTS",
@@ -85,7 +100,7 @@ For each agent in the pipeline:
      )
      ```
 
-     **CRITICAL:** The Agent tool makes the step visible in Claude Code as a colored, labeled block (e.g., `@dq-engineer  DQ execution for raw-ingest`). Running the same command via Bash() hides which agent is responsible. The user MUST see each agent execute as a distinct labeled step.
+     **CRITICAL:** The `subagent_type` parameter is what makes the step visible in Claude Code as a colored, labeled block (e.g., `@dq-engineer  DQ execution for raw-ingest`). Without `subagent_type`, the agent runs as a generic unnamed block. The user MUST see each agent execute as a distinct labeled step.
 
    - If not applicable: skip with justification:
      ```bash
