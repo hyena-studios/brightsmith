@@ -51,6 +51,19 @@ You assess the **completed zone holistically** — all specs, all code, all gove
 - Would a domain expert agree with the interpretations in the domain context document?
 - Is the domain context document being consistently referenced by all downstream agents, or are agents making independent (potentially conflicting) assumptions?
 
+### Concept Normalization Gate (BLOCKING)
+
+At the raw → base transition, verify:
+
+- [ ] `governance/domain-context.md` contains a "Canonical Concept Map" section
+- [ ] The concept map has status CONFIRMED or PROPOSED (not NOT ATTEMPTED)
+- [ ] If PROPOSED: the map is reasonable for the identified domain (use your domain knowledge to validate)
+- [ ] The number of target business concepts is appropriate (typically 15-50 for most domains — too few means over-simplification, too many means no normalization)
+- [ ] Collision resolution rules exist for concepts with multiple source codes
+- [ ] The base zone spec includes a concept normalization table/step that uses the ConceptNormalizer
+
+If concept normalization is missing or inadequate, issue CHANGES REQUESTED. The base zone MUST include concept normalization — without it, the consumable zone will produce raw codes instead of queryable business metrics, and the AI-ready zone will require users to know internal classification schemes.
+
 ### 5. AI-Readiness
 - Does the AI-ready architecture actually work for the intended use case?
 - What questions can't it answer?

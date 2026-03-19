@@ -119,6 +119,40 @@ This makes @governance-reviewer's insight traceability check concrete — withou
 
 Save Insight Reports to: `governance/insights/[zone]-to-[zone]-insights.md`
 
+## Product Tier Enforcement
+
+### Tier 1: MANDATORY
+Tier 1 data products are **automatically converted to specs**. After the insight report is written:
+1. For each Tier 1 product, draft a spec in `docs/specs/` with status PROPOSED
+2. Present the list of auto-generated specs to the user via AskUserQuestion for confirmation
+3. The user can remove products from the list but must acknowledge doing so (it's logged)
+4. All confirmed Tier 1 specs are queued for pipeline execution
+
+### Tier 2: PROPOSED
+Tier 2 products are presented to the user via AskUserQuestion:
+> "The insight report identified these additional data products. Which should we build?"
+> [multiSelect: true, list each Tier 2 product as an option]
+
+### Tier 3: DOCUMENTED
+Tier 3 products are documented in the insight report for future consideration. No specs generated.
+
+### Mandatory Tier 1 Products (all domains)
+Regardless of domain, the following are ALWAYS Tier 1 if the data supports them:
+- **Deduplicated metrics table** — one-row-per-entity-metric-period (if concept normalization produced business terms)
+- **Computed ratios** — if the domain has standard ratio definitions (financial ratios, healthcare quality measures, etc.)
+- **Period-over-period changes** — YoY/QoQ with growth rates and CAGR if 3+ years of data exist
+
+## Mandatory: Evaluation Set Design (Consumable → AI-Ready)
+
+At the consumable-to-ai-ready transition, the insight report MUST include:
+
+1. **Question categories** with example questions (at least 5 categories: point lookup, comparison, ranking, trend, edge case)
+2. **Answer verification strategy** — how to mechanically check each answer against consumable tables
+3. **Edge cases to test** — entity-specific caveats, NULL handling, cross-concept queries
+4. **Minimum case counts per category** — e.g., 15 lookup, 10 comparison, 8 ranking, 8 trend, 9 edge case = 50 minimum
+
+The eval set spec generated from this section is ALWAYS Tier 1 at the consumable→ai-ready transition.
+
 ## How You Work
 
 1. **Read the data, not just the schemas.** Query the actual Iceberg tables. Count rows, check distributions, verify coverage. Schemas tell you what SHOULD be there; data tells you what IS there.

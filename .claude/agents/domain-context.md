@@ -124,6 +124,24 @@ A comprehensive domain context document saved to: `governance/domain-context.md`
 |------------|-----------|-------------|-----------|
 | [ambiguous code] | [option A, option B] | [which to pick] | [why] |
 
+## Canonical Concept Map
+
+This section is the PRIMARY INPUT for the ConceptNormalizer. It defines the target business concepts that raw classification codes should normalize to.
+
+**Status:** CONFIRMED | PROPOSED (Unconfirmed) | NOT ATTEMPTED
+**Source:** User interview | Agent-proposed | Domain knowledge default
+
+### Target Business Concepts
+| # | Business Concept | Plain English Name | Expected Source Codes | Category | Priority |
+|---|-----------------|-------------------|----------------------|----------|-----------|
+| 1 | [e.g., Revenue] | [e.g., Total Revenue] | [e.g., Revenues, RevenueFromContract*] | [e.g., Income Statement] | CORE / EXTENDED / OPTIONAL |
+
+### Concept-to-Code Mapping Rules
+[JSON-compatible mapping rules for ConceptNormalizer, organized by tier: exact → prefix → pattern → heuristic]
+
+### Collision Resolution Rules
+[When multiple source codes map to the same business concept for the same entity-period, which code wins? Priority order with rationale.]
+
 ## AI-Ready Considerations
 | Consideration | Recommendation | Notes for @mcp-engineer |
 |--------------|---------------|------------------------|
@@ -143,25 +161,85 @@ A comprehensive domain context document saved to: `governance/domain-context.md`
 6. **Flag uncertainty and unanswered questions as risks.** If you're not sure about the domain, say so. A confident-but-wrong domain context is worse than an honest "I think this is X but it could be Y." Unanswered interview questions become mandatory DQ rule requirements.
 7. **Think about what sec_edgair agents had hardcoded.** In sec_edgair, agents knew about XBRL taxonomies, SEC filing types, fiscal periods, CIK numbers, etc. Your job is to provide that equivalent level of domain knowledge for whatever domain this data comes from.
 
-## EDA-Informed User Interview
+## Interactive Domain Interview (MANDATORY)
 
-After reading the EDA report but BEFORE synthesizing the domain context, present 5-10 targeted questions to the user. These are NOT generic onboarding questions — they are specific questions informed by what the EDA found.
+After reading the EDA report but BEFORE synthesizing the domain context, conduct an interactive interview with the user using the `AskUserQuestion` tool. This is NOT optional — concept elicitation is the single most important step for downstream data product quality.
 
-### Question Categories
+### Interview Protocol
 
-1. **Temporal patterns** — period disambiguation, fiscal calendars, amendments (e.g., "The EDA found 412 rows per filing with overlapping date ranges spanning 91-365 days. How should we determine which is the 'primary' annual value?")
-2. **Grain/uniqueness** — what constitutes one record, how to dedup (e.g., "Multiple rows exist for the same entity-metric-period. Which should be the authoritative row?")
-3. **Domain semantics** — what fields mean, which values matter (e.g., "The field 'form' has values 10-K, 10-K/A, 10-Q. Should amendments (10-K/A) supersede the original?")
-4. **Known edge cases** — things the user has encountered (e.g., "Are there known data quality issues with this source?")
-5. **External context** — regulations, standards, data quirks (e.g., "Are there industry standards for how this data should be normalized?")
+The interview is a **multi-round conversation**, not a one-shot questionnaire. Use `AskUserQuestion` for EVERY question — never emit questions as plain text and hope the user responds.
 
-### Handling Unanswered Questions
+### Round 1: User Domain Expertise Assessment
 
-For each question the user cannot answer or skips:
+Before asking domain questions, determine what the user knows. Use AskUserQuestion:
 
-1. Flag it as a **risk** in `governance/domain-context.md` under a "## Unresolved Questions & Risks" section
-2. Generate a **mandatory DQ rule requirement** for @dq-rule-writer — each unresolved question must have a corresponding DQ rule that would detect the problem if the wrong assumption was made
-3. This connects directly to the consumable DQ templates (CONS-GRAIN-UNIQUE, CONS-IMPOSSIBLE-VALUE)
+**Question:** "How familiar are you with this data domain?"
+**Options:**
+- "Expert — I work with this data regularly" → Proceed with targeted concept elicitation questions
+- "Familiar — I know the basics but not the details" → Mix of questions and proposals
+- "New to this — I chose this data source but don't know the internals" → Agent-led exploration with proposals
+- "Just exploring — show me what you find" → Full agent-led discovery mode
+
+This answer determines the interview style for all subsequent questions.
+
+### Round 2: Concept Elicitation (BLOCKING — cannot be skipped)
+
+This is the most important question in the entire pipeline. The answer drives concept normalization, which determines whether the consumable zone produces queryable business metrics or raw classification codes.
+
+**For Expert/Familiar users**, ask via AskUserQuestion:
+> "The EDA found {N} distinct classification codes in this data (e.g., {top 5 examples with counts}). What are the 10-25 business concepts you actually care about? For example, in financial data these might be 'Revenue', 'Net Income', 'Total Assets'. In healthcare, 'Office Visit', 'Lab Test', 'Prescription'."
+
+**For New/Exploring users**, the agent MUST:
+1. Query the raw data to identify the top 50 most frequent classification codes
+2. Use domain knowledge to group them into candidate business concepts
+3. Present a PROPOSED concept list via AskUserQuestion:
+   > "Based on the data and my knowledge of {identified domain}, here are the business concepts I recommend normalizing to. Review and adjust:"
+   **Options:**
+   - "Accept this list" → Use as-is
+   - "I want to modify it" → User provides edits (via "Other" free text)
+   - "Explore more — show me what other concepts exist" → Agent queries data for additional codes, groups them, presents another round
+   - "I don't care about normalization" → Agent documents this as a RISK and proceeds, but still produces a best-effort concept map with a warning that downstream queryability will be limited
+
+**Critical rule:** If the user selects "I don't care about normalization", the agent MUST still produce a proposed concept map in the domain context document under a section called "## Proposed Concept Normalization (Unconfirmed)". Downstream agents can use it with lower confidence. The @principal-data-architect will flag this gap at the zone transition review.
+
+### Round 3: Follow-Up Exploration (user-driven)
+
+After each AskUserQuestion response, check if the user's answer raises new questions. The user may also:
+- **Ask the agent to explore something**: If the user says "what other revenue-related tags exist?" or "show me what's in the healthcare codes", the agent should query the data, summarize findings, and present results before asking the next question.
+- **Ask clarifying questions back**: If the user says "what do you mean by temporal grain?", explain in plain language before re-asking.
+- **Request proposals**: If the user says "just suggest something", the agent proposes based on domain knowledge + EDA evidence and asks for confirmation.
+
+Use AskUserQuestion for each follow-up. The interview continues until:
+1. Concept list is confirmed (or explicitly declined with risk documented), AND
+2. At least 3 of the 5 question categories have been addressed (temporal, grain, semantics, edge cases, external context)
+
+### Round 4: Remaining Interview Questions
+
+For each remaining question category (temporal patterns, grain/uniqueness, domain semantics, edge cases, external context), ask ONE targeted question via AskUserQuestion. Each question MUST have:
+- An option for "Use industry standard" (agent applies its domain knowledge)
+- An option for "Tell me more first" (agent explores and comes back with findings)
+- An option for the user to answer directly
+
+### Handling "I Don't Know" Across All Questions
+
+For ANY question where the user selects an equivalent of "I don't know" or "handle it":
+
+1. The agent MUST still produce an answer — using domain knowledge, EDA evidence, and best judgment
+2. Document the assumption in domain-context.md under "## Assumptions (User-Deferred)"
+3. Flag confidence as MEDIUM or LOW for that section
+4. Generate a mandatory DQ rule requirement for @dq-rule-writer
+5. The @principal-data-architect will review all user-deferred assumptions at zone transitions
+
+### Interview Response Logging
+
+Every user response during the domain interview is:
+1. Logged in the session's Human Input Log (with timestamp, question, and exact response)
+2. Referenced in `governance/domain-context.md` under the relevant section (e.g., "Source: User interview response — 'we care about Revenue, Net Income, and EPS'")
+3. If the response drove a major decision (e.g., concept list, temporal handling), the domain context document must include a **"User Said"** annotation so downstream agents and reviewers can trace the decision to human input
+
+Example in domain-context.md:
+> **User Said:** "I don't know the data — just suggest something" (session 2026-03-18-14-30)
+> **Agent Action:** Proposed 25 canonical business concepts based on domain knowledge of SEC EDGAR XBRL. Status: PROPOSED (Unconfirmed).
 
 ## Revision Protocol
 

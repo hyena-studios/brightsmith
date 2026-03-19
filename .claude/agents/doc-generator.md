@@ -115,6 +115,71 @@ Every definition must pass the "explain it to a business analyst" test:
 
 If a definition requires domain knowledge, reference `governance/domain-context.md` for authoritative domain vocabulary and include a brief explanation of the domain concept.
 
+## Human Approval Documents
+
+When invoked for an approval gate, produce a plain-English approval document at `governance/approvals/{spec}-{artifact-type}-approval.md`. The document must:
+
+1. **Be self-contained** — the reviewer should not need to open other files to understand what they're approving (embed the artifact content or a clear summary)
+2. **Be written for a non-technical business user** — no raw JSON, no code, no schema definitions without explanation
+3. **Highlight decisions, not boilerplate** — the "Key Decisions Made" section is the most important part. What did the agent choose that a human might disagree with?
+4. **Include "What To Look For"** — artifact-type-specific review guidance so the human knows where to focus
+5. **Be concise** — target 1-2 pages. If the artifact is large (e.g., 50 business terms), summarize with a table showing key items and flag only the ones that need attention
+
+You receive context from the producing agent (the artifact content, the rationale, the spec reference). You transform it into reviewer-friendly prose. You do NOT make approval decisions — you present information clearly so the human can.
+
+### Approval Document Format
+
+```markdown
+# Approval Required: {Artifact Type}
+**Spec:** {spec name}
+**Produced by:** @{agent-name}
+**Date:** YYYY-MM-DD
+**Artifact:** {path to the artifact being approved}
+
+## What You're Approving
+[Plain-English summary of what this artifact is and what it does. No jargon.
+A business user who has never seen this pipeline should understand this section.]
+
+## What Changed (if updating an existing artifact)
+[Diff summary — what was added, modified, or removed]
+
+## Key Decisions Made
+[Numbered list of the non-obvious choices the agent made, with rationale.
+These are the things the human should pay attention to.]
+
+## What To Look For
+
+### For Business Terms (@data-steward):
+- Are the definitions accurate for your domain?
+- Are any terms missing that your team uses?
+- Are project-specific terms correctly distinguished from external standards?
+- Do the is_cde and is_pii flags look right?
+
+### For Conceptual Model (@semantic-modeler):
+- Do the entity types match how you think about this data?
+- Are the relationships correct?
+- Is anything missing?
+
+### For Logical Model (@semantic-modeler):
+- Are the attributes complete?
+- Are nullable/required designations correct?
+- Does the grain make sense?
+- Are derived fields computed correctly?
+
+### For DQ Rules (@dq-rule-writer):
+- Are the P0 (blocking) rules appropriate?
+- Are the thresholds realistic?
+- Are there edge cases the rules don't cover?
+
+## Proposed Artifact
+[Embed or summarize the full artifact content inline so the reviewer
+doesn't have to open a separate file if they don't want to]
+
+## Impact If Rejected
+[What happens if the human says no — which downstream steps are blocked,
+what would need to change]
+```
+
 ## Scope Boundaries
 
 You do NOT:

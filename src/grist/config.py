@@ -50,6 +50,15 @@ DQ_TEMPLATES_DIR = PROJECT_ROOT / "governance" / "dq-rule-templates"
 # Golden datasets — known-correct reference values for pipeline output validation
 GOLDEN_DATASETS_DIR = PROJECT_ROOT / "governance" / "golden-datasets"
 
+# Pipeline gate — programmatic enforcement of agent execution order
+PIPELINE_STATE_DIR = PROJECT_ROOT / "governance" / "pipeline-state"
+
+# Human approval documents
+APPROVALS_DIR = PROJECT_ROOT / "governance" / "approvals"
+
+# Audit trail
+AUDIT_TRAIL_DIR = PROJECT_ROOT / "governance" / "audit-trail"
+
 # Iceberg catalog paths (shared catalog, per-zone warehouses)
 WAREHOUSE_PATH = PROJECT_ROOT / "data" / "raw" / "iceberg_warehouse"
 CATALOG_PATH = PROJECT_ROOT / "data" / "catalog" / "catalog.db"
@@ -72,6 +81,7 @@ def configure(
     global PROJECT_ROOT, PROJECT_NAME, REQUIRE_HUMAN_APPROVAL
     global DQ_RULES_DIR, DQ_RESULTS_DIR, DQ_SCORECARDS_DIR, DQ_TEMPLATES_DIR
     global GOLDEN_DATASETS_DIR
+    global PIPELINE_STATE_DIR, APPROVALS_DIR, AUDIT_TRAIL_DIR
     global WAREHOUSE_PATH, CATALOG_PATH
 
     if project_root is not None:
@@ -87,5 +97,8 @@ def configure(
     DQ_SCORECARDS_DIR = PROJECT_ROOT / "governance" / "dq-scorecards"
     DQ_TEMPLATES_DIR = PROJECT_ROOT / "governance" / "dq-rule-templates"
     GOLDEN_DATASETS_DIR = PROJECT_ROOT / "governance" / "golden-datasets"
+    PIPELINE_STATE_DIR = PROJECT_ROOT / "governance" / "pipeline-state"
+    APPROVALS_DIR = PROJECT_ROOT / "governance" / "approvals"
+    AUDIT_TRAIL_DIR = PROJECT_ROOT / "governance" / "audit-trail"
     WAREHOUSE_PATH = PROJECT_ROOT / "data" / "raw" / "iceberg_warehouse"
     CATALOG_PATH = PROJECT_ROOT / "data" / "catalog" / "catalog.db"
