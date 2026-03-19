@@ -456,8 +456,8 @@ def check_headless_ready() -> tuple[bool, list[str]]:
     src_dir = PROJECT_ROOT / "src"
     if src_dir.exists():
         for py_file in src_dir.rglob("*.py"):
-            # Skip AI-ready zone (chat agents need LLM)
-            if "ai_ready" in str(py_file):
+            # Skip test files and __pycache__
+            if "__pycache__" in str(py_file):
                 continue
             try:
                 content = py_file.read_text()

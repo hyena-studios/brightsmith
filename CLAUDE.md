@@ -90,14 +90,14 @@ At **every** zone boundary (raw-to-base, base-to-consumable, consumable-to-ai-re
    - Builds on existing EDA reports, DQ scorecards, CDE catalog
    - Recommends data products ranked by value/feasibility
    - Identifies external data combination opportunities
-   - Recommends chat agent design (questions users will ask, tools needed, grounding context)
+   - Recommends MCP server design (questions users will ask, tools needed, grounding context)
    - Each recommendation includes **Verification Criteria** (what DQ rule confirms implementation)
    - Suggests spec order for the next zone
    - Output: `governance/insights/[source-zone]-to-[target-zone]-insights.md`
 
 @principal-data-architect runs at ALL transitions (including raw-to-base). @insight-manager runs at base-to-consumable and consumable-to-ai-ready only.
 
-The Insight Report is the primary input for spec writing in the next zone. No spec should be written without it. The pipeline always produces a **tool-use chat agent** as the AI-Ready zone deliverable — insight reports at the consumable-to-ai-ready transition should focus on chat agent design.
+The Insight Report is the primary input for spec writing in the next zone. No spec should be written without it. The pipeline always produces a **MCP server** as the AI-Ready zone deliverable — insight reports at the consumable-to-ai-ready transition should focus on MCP server design.
 
 ### Base & Consumable Zone Pipeline (with data modeling gates)
 

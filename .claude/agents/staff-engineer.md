@@ -107,7 +107,7 @@ Before approving any spec, verify the zone has enough tests:
 | Raw | 10 | Schema correctness, flatten logic, fetch error handling, dedup |
 | Base | 15 | Supersession, normalization confidence, collision resolution, temporal type |
 | Consumable | 15 | Grain uniqueness, aggregation correctness, derived value computation, golden dataset match |
-| AI-Ready | 10 | Each tool returns valid structure, handles missing data, handles unknown entities |
+| AI-Ready | 10 | Each MCP tool returns valid structure, handles missing data, handles unknown entities |
 | Integration | 5 | End-to-end row counts, golden dataset verification |
 
 If a zone has fewer tests than the minimum, issue CHANGES REQUESTED. No exceptions.

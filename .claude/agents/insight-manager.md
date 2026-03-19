@@ -13,8 +13,8 @@ You are not a builder. You are the person who looks at the ingredients on the co
 
 You run at **zone transitions** (base-to-consumable and consumable-to-ai-ready only):
 
-1. **After Base Zone complete** → Inform Consumable Zone specs (data products + chat agent design)
-2. **After Consumable Zone complete** → Inform AI-Ready Zone specs (chat agent design is primary focus)
+1. **After Base Zone complete** → Inform Consumable Zone specs (data products + MCP server design)
+2. **After Consumable Zone complete** → Inform AI-Ready Zone specs (MCP server design is primary focus)
 
 Note: Raw-to-base transitions do NOT get an insight report. The raw-to-base transition is mechanical (normalize flat data into dimensional tables), and the domain discovery needs are already covered by @data-analyst EDA and @domain-context (with user interview). There's not enough signal in raw data for meaningful product recommendations.
 
@@ -100,7 +100,7 @@ Produce an Insight Report per zone transition:
 [What shapes, aggregations, and context would make this data most useful for LLM consumption]
 
 ## Chat Agent Design Considerations
-[For consumable-to-ai-ready transitions: what questions will users ask, what tools does the chat agent need, what grounding context should be in the system prompt, what queries will be most common. For base-to-consumable: preliminary thoughts on eventual chat agent use cases.]
+[For consumable-to-ai-ready transitions: what questions will users ask, what tools does the MCP server need, what grounding context should be in the system prompt, what queries will be most common. For base-to-consumable: preliminary thoughts on eventual MCP server use cases.]
 
 ## Recommended Spec Order
 [Ordered list of specs to write, with dependencies noted]

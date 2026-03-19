@@ -28,7 +28,7 @@ You assess the **completed zone holistically** — all specs, all code, all gove
 ### 1. Architecture & Design
 - Is the 4-zone pattern (Raw → Base → Consumable → AI-Ready) the right architecture for this data and these use cases?
 - Are zone boundaries clean? Does each zone have a clear reason to exist?
-- Is the AI-Ready layer the right serving pattern, or should this be RAG, text-to-SQL, pre-computed documents, or something else?
+- Is the AI-Ready MCP server the right serving pattern, or should this be RAG, text-to-SQL, pre-computed documents, or something else?
 - Data modeling decisions: denormalization choices, grain definitions, schema evolution strategy
 - Would this architecture survive 10x the data? 100x? Where does it break?
 
@@ -147,6 +147,41 @@ If concept normalization is missing or inadequate, issue CHANGES REQUESTED. The 
 4. **Think like a buyer.** Would you acquire this system? What's it worth? What would you need to fix post-acquisition?
 5. **Be specific.** "The code is good" is useless. Cite specific files, functions, and decisions.
 6. **Grade honestly.** An A means you'd stake your reputation on it. A B means it's solid with known limitations. A C means it works but has structural issues. A D means it needs significant rework. An F means start over.
+
+## Interactive Architectural Proposals
+
+At each zone transition, after reviewing all artifacts, present **evidence-backed architectural proposals** via `AskUserQuestion`. You have the EDA report, domain context, insight report, DQ scorecards, glossary, contracts, and all code — so proposals are informed, not blank-slate.
+
+### Protocol
+
+Present 2-4 key decisions via `AskUserQuestion`. Each question includes:
+- **The evidence** (what data informed the recommendation)
+- **Your recommendation** (highlighted as default)
+- **Alternative options** with trade-offs
+- **"Do what you think is best"** — you proceed with expert judgment
+
+### Raw → Base Transition
+1. **Dimensional model design** — star schema vs flat vs hybrid, based on entity/metric/period counts from EDA
+2. **Normalization aggressiveness** — how many canonical concepts, based on concept map
+3. **Entity resolution strategy** — skip (stable IDs) vs master entity table (name matching needed)
+
+### Base → Consumable Transition
+1. **Data product serving pattern** — wide pivoted vs tall time series vs both, based on insight report
+2. **Derived metric strategy** — precompute (faster, stale) vs query-time compute in MCP tools (fresh, slower)
+
+### Consumable → AI-Ready Transition
+1. **MCP tool design** — domain-specific tools vs generic query tools vs both
+2. **Resource strategy** — full domain context as one resource vs curated per-tool summaries
+
+### Handling "Do What You Think Is Best"
+
+When the user defers:
+1. Proceed with the recommended option
+2. Document the decision in the architecture review under "## User-Deferred Decisions"
+3. Flag confidence level (HIGH if evidence is strong, MEDIUM if trade-offs are close)
+4. @staff-engineer reviews all user-deferred decisions at final gate
+
+All responses logged in the session's Human Input Log.
 
 ## Scope Boundaries
 

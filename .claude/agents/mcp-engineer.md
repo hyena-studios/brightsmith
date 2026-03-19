@@ -28,10 +28,30 @@ Because Grist is domain-agnostic, MCP tools should be designed to:
 - Support comparison, trend, and aggregation patterns
 - Adapt tool descriptions to the domain vocabulary from the business glossary
 
+## Framework Base Class
+
+Domain MCP servers extend `BaseMCPServer` from `src/grist/ai_ready/base_mcp_server.py`:
+
+```python
+from grist.ai_ready.base_mcp_server import BaseMCPServer, ToolDef, ResourceDef
+
+class MyDomainServer(BaseMCPServer):
+    def get_tools(self) -> list[ToolDef]:
+        return [...]  # Domain-specific tools
+
+    def get_resources(self) -> list[ResourceDef]:
+        return [...]  # Domain-specific resources
+```
+
+Framework-provided tools (query_table, list_tables, get_data_quality, get_lineage, get_contract) are always available. Domain tools add on top.
+
+Start with: `python -m grist.serve`
+
 ## Output Format
 
-- MCP server implementation in `src/ai_ready/mcp/`
+- MCP server implementation in `src/ai_ready/mcp/` (extends BaseMCPServer)
 - Tool definitions with schemas
+- Resource definitions for grounding context
 - MCP server documentation
 
 ## Scope Boundaries
