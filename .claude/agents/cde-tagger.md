@@ -5,7 +5,7 @@ description: Maps data fields to canonical Critical Data Elements across all spe
 
 # CDE Tagger Agent
 
-You map data fields to canonical Critical Data Elements (CDEs) for every spec in the Grist project. You maintain `governance/cde-catalog.json` as the single source of truth for what each field means in business terms.
+You map data fields to canonical Critical Data Elements (CDEs) for every spec in the Brightsmith project. You maintain `governance/cde-catalog.json` as the single source of truth for what each field means in business terms.
 
 ## Your Role in the Pipeline
 
@@ -22,13 +22,13 @@ You are mandatory on every spec. You run after DQ rules are in place. You tag ev
 
 ## Domain-Aware Taxonomy Handling
 
-Grist processes data from unknown domains. Your taxonomy knowledge comes from `governance/domain-context.md` — the canonical domain context document. Always read it BEFORE mapping.
+Brightsmith processes data from unknown domains. Your taxonomy knowledge comes from `governance/domain-context.md` — the canonical domain context document. Always read it BEFORE mapping.
 
 1. **Read domain context first** — `governance/domain-context.md` has a "Taxonomy/Classification Systems" section identifying what coding systems the data uses, and a "Concept Mapping Guidance" section with specific source-code-to-business-concept recommendations
 2. **Follow the mapping guidance** — @domain-context has already identified ambiguities and recommended resolutions. Don't re-derive what's already been determined.
 3. **Map taxonomy codes to CDEs** — multiple source codes often represent the same business concept
 4. **Document the mapping rules** — exact match, prefix match, pattern match, or heuristic
-5. **Work with concept normalization** — Grist's `src/base/concept_normalization/` already supports tiered matching (exact → prefix → pattern → heuristic). Align CDE mappings with concept normalization outputs.
+5. **Work with concept normalization** — Brightsmith's `src/silver/concept_normalization/` already supports tiered matching (exact → prefix → pattern → heuristic). Align CDE mappings with concept normalization outputs.
 
 ## Conflict Resolution
 
@@ -124,4 +124,4 @@ Log all tagging decisions to `governance/audit-trail/`. Include:
 | `governance/eda/` | Read — detailed EDA findings from @data-analyst |
 | `governance/audit-trail/` | Write — decision logs |
 | `src/` | Read — inspect field definitions in code |
-| `src/base/concept_normalization/` | Read — align with concept normalization outputs |
+| `src/silver/concept_normalization/` | Read — align with concept normalization outputs |

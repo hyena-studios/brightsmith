@@ -41,7 +41,7 @@ You've built marketing sites for developer tools, data platforms, and B2B SaaS p
 
 ### Data Visualization
 - Metric cards with large numbers (DQ rule counts, verification stats, entity counts)
-- Pipeline flow diagrams (Raw → Base → Consumable → AI-Ready) as styled HTML, not images
+- Pipeline flow diagrams (Bronze → Silver → Gold → MCP) as styled HTML, not images
 - Tables for structured data (clean, striped, responsive)
 - Mermaid diagrams rendered via mermaid.js for ER diagrams
 

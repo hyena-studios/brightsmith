@@ -1,19 +1,19 @@
-# Grist
+# Brightsmith
 
 AI agent data pipeline framework. Takes raw data from any source and grinds it into governed, AI-ready datasets — without knowing the domain upfront.
 
-**Raw → Base → Consumable → AI-Ready** with full governance metadata at every step.
+**Bronze → Silver → Gold → MCP** with full governance metadata at every step.
 
-## What Makes Grist Different
+## What Makes Brightsmith Different
 
-Most data pipelines are built for a specific domain. Grist discovers the domain from the data itself.
+Most data pipelines are built for a specific domain. Brightsmith discovers the domain from the data itself.
 
 1. You point it at a data source (API, files, database)
 2. AI agents ingest the raw data, profile it, and determine what it is
 3. A canonical **domain context document** is produced — vocabulary, entity types, temporal patterns, applicable regulations, taxonomy systems
 4. Every downstream agent reads that same document — no independent assumptions, no drift
 5. The pipeline builds governed data products through spec-driven development with human approval gates
-6. The AI-Ready zone produces a **tool-use chat agent** that queries live Iceberg data
+6. The MCP zone produces a **tool-use chat agent** that queries live Iceberg data
 
 Grist was extracted from [sec_edgair](https://github.com/jcernauske/sec_edgair), a production-grade SEC EDGAR financial data pipeline. Everything domain-specific was replaced with a discovery mechanism. Same rigor, any data. Field-tested with [sec_edgar_grist](https://github.com/jcernauske/sec_edgar_grist).
 
@@ -32,7 +32,7 @@ Once installed, three skills are available:
 | Skill | What It Does |
 |-------|-------------|
 | `/grist:init my-project` | Scaffold a new domain project |
-| `/grist:run raw-ingest-foo` | Run the pipeline for a spec |
+| `/brightsmith.run raw-ingest-foo` | Run the pipeline for a spec |
 | `/grist:status` | Dashboard of project state |
 
 All 24 agents are available as subagents (`@setup`, `@chaos-monkey`, `@staff-engineer`, etc.).
@@ -46,7 +46,7 @@ All 24 agents are available as subagents (`@setup`, `@chaos-monkey`, `@staff-eng
 └─────────────────┬───────────────────────────────────────────┘
                   │
     ┌─────────────▼─────────────┐
-    │         Raw Zone          │  Ingest as-is, metadata enrichment, dedup
+    │         Bronze Zone          │  Ingest as-is, metadata enrichment, dedup
     │   Iceberg tables (DuckDB) │
     └─────────────┬─────────────┘
                   │
@@ -56,26 +56,26 @@ All 24 agents are available as subagents (`@setup`, `@chaos-monkey`, `@staff-eng
     └─────────────┬─────────────┘
                   │
     ┌─────────────▼─────────────┐
-    │        Base Zone          │  Normalize, resolve entities, map concepts
+    │        Silver Zone          │  Normalize, resolve entities, map concepts
     │   Governed, modeled       │  3-stage data models (conceptual → logical → physical)
     └─────────────┬─────────────┘
                   │
     ┌─────────────▼─────────────┐
-    │     Consumable Zone       │  Data products: ratios, comparisons, aggregations
+    │     Gold Zone       │  Data products: ratios, comparisons, aggregations
     │   Contracted, documented  │  Golden dataset validation
     └─────────────┬─────────────┘
                   │
     ┌─────────────▼─────────────┐
-    │      AI-Ready Zone        │  Tool-use chat agent, grounding docs, eval sets
+    │      MCP Zone        │  Tool-use chat agent, grounding docs, eval sets
     │   Governed AI consumption │
     └───────────────────────────┘
 ```
 
 ## Agent Pipeline
 
-Grist uses **24 specialized AI agents** orchestrated through a spec-driven workflow. Every piece of code, every governance artifact, every data transformation traces back to a spec.
+Brightsmith uses **24 specialized AI agents** orchestrated through a spec-driven workflow. Every piece of code, every governance artifact, every data transformation traces back to a spec.
 
-### Raw Zone Pipeline
+### Bronze Zone Pipeline
 | Step | Agent | What It Does |
 |------|-------|-------------|
 | 1 | @governance-reviewer | Pre-implementation spec review |
@@ -91,7 +91,7 @@ Grist uses **24 specialized AI agents** orchestrated through a spec-driven workf
 | 11 | @governance-reviewer | Post-implementation completeness check |
 | 12 | @staff-engineer | Final quality gate + data correctness spot-check |
 
-### Base & Consumable Zone Pipeline
+### Base & Gold Zone Pipeline
 Same as Raw, plus:
 - @data-steward — business term identification and glossary management
 - @semantic-modeler — 3-stage data modeling (conceptual → logical → physical) with human approval gates
@@ -99,7 +99,7 @@ Same as Raw, plus:
 - @temporal-modeler — bitemporal schema design (valid time + Iceberg transaction time)
 
 ### Zone Transitions
-@insight-manager runs at **base-to-consumable** and **consumable-to-ai-ready** transitions — analyzes completed data, recommends data products, suggests chat agent design, and provides verification criteria for each recommendation.
+@insight-manager runs at **silver-to-gold** and **gold-to-mcp** transitions — analyzes completed data, recommends data products, suggests chat agent design, and provides verification criteria for each recommendation.
 
 ### Governance & Quality Agents
 | Agent | Role |
@@ -123,23 +123,23 @@ Same as Raw, plus:
 | Component | Path | Purpose |
 |-----------|------|---------|
 | Base ingestor | `grist.raw.base_ingestor` | Abstract ingestor with dedup, metadata, snapshots |
-| **Period disambiguator** | `grist.infra.period_disambiguator` | **Temporal period classification using date-span analysis** — prevents the class of bug that corrupted 17% of sec_edgar_grist data |
-| **Chaos monkey** | `grist.infra.chaos_monkey` | **Schema-agnostic adversarial testing** — introspects PyIceberg schemas, injects type-appropriate corruptions, reconciles with After-Action Reports |
-| **Integration test harness** | `grist.infra.integration_test_harness` | **Golden dataset validation** — compares pipeline output to known-correct reference values |
-| **Base chat agent** | `grist.ai_ready.base_chat_agent` | **AI-Ready zone base class** — Anthropic SDK setup, tool registration, Iceberg query execution |
-| Iceberg setup | `grist.infra.iceberg_setup` | Table creation, append, read via PyIceberg + DuckDB |
-| DQ runner | `grist.infra.dq_runner` | Execute SQL rules against Iceberg, threshold evaluation, P0 gating, `--shadow` flag for chaos monkey |
-| DQ scorecard | `grist.infra.dq_scorecard` | Generate markdown scorecards from real results |
-| Lineage | `grist.infra.lineage` | OpenLineage event emission to Iceberg |
-| Staging | `grist.infra.staging` | Proposal staging, confidence-based approval gates |
-| Glossary loader | `grist.infra.glossary_loader` | Three-tier glossary composition (standards → domains → project) |
+| **Period disambiguator** | `brightsmith.infra.period_disambiguator` | **Temporal period classification using date-span analysis** — prevents the class of bug that corrupted 17% of sec_edgar_grist data |
+| **Chaos monkey** | `brightsmith.infra.chaos_monkey` | **Schema-agnostic adversarial testing** — introspects PyIceberg schemas, injects type-appropriate corruptions, reconciles with After-Action Reports |
+| **Integration test harness** | `brightsmith.infra.integration_test_harness` | **Golden dataset validation** — compares pipeline output to known-correct reference values |
+| **Base chat agent** | `grist.ai_ready.base_chat_agent` | **MCP zone base class** — Anthropic SDK setup, tool registration, Iceberg query execution |
+| Iceberg setup | `brightsmith.infra.iceberg_setup` | Table creation, append, read via PyIceberg + DuckDB |
+| DQ runner | `brightsmith.infra.dq_runner` | Execute SQL rules against Iceberg, threshold evaluation, P0 gating, `--shadow` flag for chaos monkey |
+| DQ scorecard | `brightsmith.infra.dq_scorecard` | Generate markdown scorecards from real results |
+| Lineage | `brightsmith.infra.lineage` | OpenLineage event emission to Iceberg |
+| Staging | `brightsmith.infra.staging` | Proposal staging, confidence-based approval gates |
+| Glossary loader | `brightsmith.infra.glossary_loader` | Three-tier glossary composition (standards → domains → project) |
 | Domain loader | `grist.domain_loader` | Manifest parsing, source config, hints resolution |
 | Concept normalizer | `grist.base.concept_normalization` | Tiered matching (exact → prefix → pattern → heuristic) |
-| Setup CLI | `grist.setup` | `python -m grist.setup init` — scaffold domain projects |
+| Setup CLI | `grist.setup` | `python -m brightsmith.setup init` — scaffold domain projects |
 
 ## Domain Discovery → Domain Context
 
-This is the core innovation. In a domain-specific pipeline, every agent knows the vocabulary. In Grist:
+This is the core innovation. In a domain-specific pipeline, every agent knows the vocabulary. In Brightsmith:
 
 ```
 @data-analyst                    @domain-context
@@ -173,7 +173,7 @@ All 13 downstream agents read the same `governance/domain-context.md`. No agent 
 
 ## Data Quality
 
-### DQ Rule Templates (Consumable Zone)
+### DQ Rule Templates (Gold Zone)
 
 Every consumable spec must address four mandatory patterns:
 
@@ -221,7 +221,7 @@ Every transformation produces governance metadata:
 | Business glossary | `governance/business-glossary.json` | Approved business term definitions |
 | CDE catalog | `governance/cde-catalog.json` | Critical Data Element mappings |
 | DQ rules | `governance/dq-rules/*.json` | SQL-based validation (P0/P1/P2 priority) |
-| DQ rule templates | `governance/dq-rule-templates/` | Mandatory patterns for consumable zone |
+| DQ rule templates | `governance/dq-rule-templates/` | Mandatory patterns for gold zone |
 | DQ results | `governance/dq-results/` | Timestamped execution results |
 | DQ scorecards | `governance/dq-scorecards/` | Markdown scorecards from real runs |
 | Golden datasets | `governance/golden-datasets/` | Known-correct reference values |
@@ -240,7 +240,7 @@ Every transformation produces governance metadata:
 
 ## Human-in-the-Loop
 
-`REQUIRE_HUMAN_APPROVAL` in `src/grist/config.py` is the single global toggle (or set `GRIST_REQUIRE_HUMAN_APPROVAL=false` env var).
+`REQUIRE_HUMAN_APPROVAL` in `src/brightsmith.config.py` is the single global toggle (or set `BRIGHTSMITH_REQUIRE_HUMAN_APPROVAL=false` env var).
 
 When `True`:
 - Business terms require human approval before use in models
@@ -264,13 +264,13 @@ When `False` (dev/demo mode):
 /grist:init sec-edgar
 
 # Work through specs with the agent pipeline
-/grist:run raw-ingest-company-facts
+/brightsmith.run raw-ingest-company-facts
 /grist:status
 ```
 
 ### Option 2: Scaffolded by @setup agent
 
-In a Claude Code session with Grist installed:
+In a Claude Code session with Brightsmith installed:
 
 ```
 You: I want to ingest SEC EDGAR XBRL company facts
@@ -284,7 +284,7 @@ You: uv sync && uv run pytest  # works on first try
 
 ```bash
 pip install git+https://github.com/jcernauske/grist.git
-python -m grist.setup init --name my-project
+python -m brightsmith.setup init --name my-project
 cd my-project && uv sync
 ```
 
@@ -311,7 +311,7 @@ If you improve the framework (fix a bug in `dq_runner.py`, add a feature to `Bas
 |------|-------|---------|
 | Manifest | `domain/manifest.yaml` | How to acquire your data |
 | Source config | `domain/sources/*.yaml` | Entity IDs, fetch methods, dedup grain |
-| Ingestor | `src/raw/my_ingestor.py` | `fetch()` and `flatten()` (imports `from grist.raw import BaseIngestor`) |
+| Ingestor | `src/bronze/my_ingestor.py` | `fetch()` and `flatten()` (imports `from brightsmith.raw import BaseIngestor`) |
 | Concept mappings | `domain/concept-mappings/*.json` | Taxonomy → business term mappings (optional — discovery mode if absent) |
 | Glossaries | `glossaries/` | Standard/domain term definitions (optional) |
 | DQ rules | `governance/dq-rules/*.json` | SQL validation rules (or let @dq-rule-writer generate from EDA) |
@@ -321,7 +321,7 @@ If you improve the framework (fix a bug in `dq_runner.py`, add a feature to `Bas
 - Python 3.11+
 - DuckDB + Iceberg extension
 - Apache Iceberg tables (local SQLite catalog, no server)
-- Anthropic SDK (for AI-Ready zone chat agents)
+- Anthropic SDK (for MCP zone chat agents)
 - uv for dependency management
 
 ## Session Logging
@@ -334,15 +334,15 @@ Every Claude Code session is logged to `docs/sessions/` for transparency and con
 grist/
 ├── .claude-plugin/               Claude Code plugin manifest
 │   └── plugin.json
-├── skills/                       Plugin skills (/grist:init, /grist:run, /grist:status)
+├── skills/                       Plugin skills (/grist:init, /brightsmith.run, /grist:status)
 ├── hooks/                        Plugin hooks (auto-install on session start)
-├── src/grist/                    Framework package (pip-installable)
+├── src/brightsmith/                    Framework package (pip-installable)
 │   ├── config.py                 Global config (env var overrides for domain projects)
 │   ├── domain_loader.py          Manifest + source config parsing
 │   ├── setup.py                  Domain project scaffolding CLI
-│   ├── raw/                      Raw zone (BaseIngestor)
-│   ├── base/                     Base zone (concept normalization)
-│   ├── ai_ready/                 AI-Ready zone (BaseChatAgent)
+│   ├── raw/                      Bronze zone (BaseIngestor)
+│   ├── base/                     Silver zone (concept normalization)
+│   ├── ai_ready/                 MCP zone (BaseChatAgent)
 │   └── infra/                    Cross-cutting infrastructure
 │       ├── period_disambiguator.py  Temporal period classification
 │       ├── chaos_monkey/            Adversarial DQ testing
@@ -356,7 +356,7 @@ grist/
 │   └── agents/                   24 agent definitions (also served by plugin)
 ├── domain/                       Domain pack (your data source config)
 ├── governance/                   All governance artifacts
-│   ├── dq-rule-templates/        Mandatory consumable zone patterns
+│   ├── dq-rule-templates/        Mandatory gold zone patterns
 │   ├── golden-datasets/          Known-correct reference values
 │   ├── chaos-manifests/          Injection records + After-Action Reports
 │   └── ...                       (20+ artifact directories)

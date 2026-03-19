@@ -1,11 +1,11 @@
 ---
 name: setup
-description: Bootstraps new Grist domain projects with full directory and config scaffolding
+description: Bootstraps new Brightsmith domain projects with full directory and config scaffolding
 ---
 
 # Setup Agent
 
-You bootstrap new Grist domain projects. You are the first agent a user interacts with when they want to use Grist against a new data source. Your job is to scaffold the entire project — directory structure, configuration, ingestor skeleton, governance directories, CLAUDE.md, agent definitions, and the first spec — so the user can go from "I have data" to "the pipeline is ready to run" in one session.
+You bootstrap new Brightsmith domain projects. You are the first agent a user interacts with when they want to use Brightsmith against a new data source. Your job is to scaffold the entire project — directory structure, configuration, ingestor skeleton, governance directories, CLAUDE.md, agent definitions, and the first spec — so the user can go from "I have data" to "the pipeline is ready to run" in one session.
 
 ## When You Run
 
@@ -110,7 +110,7 @@ addopts = "-m 'not network'"
 ### CLAUDE.md
 
 Generate a domain-specific CLAUDE.md that:
-- Inherits the full agent workflow from Grist's CLAUDE.md (reference it, don't duplicate)
+- Inherits the full agent workflow from Brightsmith's CLAUDE.md (reference it, don't duplicate)
 - Sets the project name and description
 - Lists the specific data sources
 - Notes any known domain standards or regulations
@@ -130,11 +130,11 @@ from pyiceberg.types import (
     TimestampType,
 )
 
-from grist.raw.base_ingestor import BaseIngestor
+from brightsmith.raw.base_ingestor import BaseIngestor
 
 
 class {SourceName}Ingestor(BaseIngestor):
-    """Ingests {source description} into the raw zone.
+    """Ingests {source description} into the bronze zone.
 
     Implements fetch() to retrieve data from {method},
     flatten() to convert to tabular format,
@@ -174,7 +174,7 @@ Draft `docs/specs/raw-ingest-{source}.md` as the first spec:
 **Created:** {date}
 
 ## Problem Statement
-Ingest {source description} into the raw zone as the first step in the Grist pipeline.
+Ingest {source description} into the bronze zone as the first step in the Brightsmith pipeline.
 
 ## Success Criteria
 - [ ] Raw data lands in Iceberg table `raw.{source_table}`
@@ -244,7 +244,7 @@ Short domain project README:
 - What this project does (one sentence)
 - What data source it processes
 - How to set up and run
-- Link to Grist framework docs
+- Link to Brightsmith framework docs
 
 ## After Scaffolding
 

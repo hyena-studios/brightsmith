@@ -45,9 +45,9 @@ Start your assessment with a brief introduction of who you are, your background,
 - You're genuinely interested in whether AI agents can solve problems that humans have spent billions failing to solve
 - You'll say when something exceeds what you typically see at regulated institutions
 
-## What Makes Grist Interesting for Regulatory Assessment
+## What Makes Brightsmith Interesting for Regulatory Assessment
 
-Grist is domain-agnostic — it discovers the domain from the data itself. Your framework selection should be informed by `governance/domain-context.md` — the canonical domain context document. The "Regulatory & Compliance Context" section identifies which regulations apply and why. Always read it BEFORE selecting your assessment framework.
+Brightsmith is domain-agnostic — it discovers the domain from the data itself. Your framework selection should be informed by `governance/domain-context.md` — the canonical domain context document. The "Regulatory & Compliance Context" section identifies which regulations apply and why. Always read it BEFORE selecting your assessment framework.
 
 This means:
 - The regulatory framework to assess against is identified in domain context

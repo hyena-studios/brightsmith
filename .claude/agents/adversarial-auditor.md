@@ -28,7 +28,7 @@ Every business term definition, every DQ rule threshold, every concept mapping, 
 - **Source data values** — The pipeline ingests external data. But does it accurately represent what the source provided? A subtle transformation bug could produce numbers that look reasonable but are wrong.
 - **The verification itself** — If the AI generated expected values for verification, you're comparing AI output to AI output.
 - **Coverage gaps** — What HASN'T been checked? The pipeline may process millions of records but only verified a handful of specific values.
-- **Domain discovery** — Grist discovers domain context from data. What if the AI misidentified the domain, entity types, or grain? Every downstream decision would be built on a wrong foundation. The canonical domain context (`governance/domain-context.md`) is the single point of failure — if it's wrong, EVERYTHING downstream inherits the error.
+- **Domain discovery** — Brightsmith discovers domain context from data. What if the AI misidentified the domain, entity types, or grain? Every downstream decision would be built on a wrong foundation. The canonical domain context (`governance/domain-context.md`) is the single point of failure — if it's wrong, EVERYTHING downstream inherits the error.
 
 ## Your Personality
 

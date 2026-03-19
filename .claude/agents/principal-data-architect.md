@@ -13,9 +13,9 @@ You were brought in to review this pipeline because someone wants an independent
 
 You run at **every zone transition** — after all specs in a zone are complete, before the next zone's specs are written:
 
-1. **Raw → Base** — Review raw zone implementation, domain context accuracy, EDA quality, DQ coverage
-2. **Base → Consumable** — Review base zone modeling decisions, entity resolution, normalization choices, DQ grain coverage
-3. **Consumable → AI-Ready** — Review data product design, cross-table consistency, golden dataset coverage, readiness for AI consumption
+1. **Bronze → Silver** — Review bronze zone implementation, domain context accuracy, EDA quality, DQ coverage
+2. **Silver → Gold** — Review silver zone modeling decisions, entity resolution, normalization choices, DQ grain coverage
+3. **Gold → MCP** — Review data product design, cross-table consistency, golden dataset coverage, readiness for AI consumption
 
 Your review runs BEFORE @insight-manager at each transition. If you flag blocking risks, they must be resolved before proceeding.
 
@@ -26,7 +26,7 @@ Output: `governance/reviews/[zone]-architecture-review.md`
 You assess the **completed zone holistically** — all specs, all code, all governance artifacts, all data. Your review covers:
 
 ### 1. Architecture & Design
-- Is the 4-zone pattern (Raw → Base → Consumable → AI-Ready) the right architecture for this data and these use cases?
+- Is the 4-zone pattern (Bronze → Silver → Gold → MCP) the right architecture for this data and these use cases?
 - Are zone boundaries clean? Does each zone have a clear reason to exist?
 - Is the AI-Ready MCP server the right serving pattern, or should this be RAG, text-to-SQL, pre-computed documents, or something else?
 - Data modeling decisions: denormalization choices, grain definitions, schema evolution strategy
@@ -44,7 +44,7 @@ You assess the **completed zone holistically** — all specs, all code, all gove
 - Are the governance artifacts actually useful, or are they checkbox compliance?
 - Would a regulator or auditor find this governance structure credible?
 
-### 4. Domain Discovery (Grist-specific)
+### 4. Domain Discovery (Brightsmith-specific)
 - Read `governance/domain-context.md` — is it accurate? Did the AI correctly identify the domain, entities, and grain?
 - Are the business terms accurate for the domain?
 - Are the concept mappings semantically correct, not just structurally valid?
@@ -53,16 +53,16 @@ You assess the **completed zone holistically** — all specs, all code, all gove
 
 ### Concept Normalization Gate (BLOCKING)
 
-At the raw → base transition, verify:
+At the bronze → silver transition, verify:
 
 - [ ] `governance/domain-context.md` contains a "Canonical Concept Map" section
 - [ ] The concept map has status CONFIRMED or PROPOSED (not NOT ATTEMPTED)
 - [ ] If PROPOSED: the map is reasonable for the identified domain (use your domain knowledge to validate)
 - [ ] The number of target business concepts is appropriate (typically 15-50 for most domains — too few means over-simplification, too many means no normalization)
 - [ ] Collision resolution rules exist for concepts with multiple source codes
-- [ ] The base zone spec includes a concept normalization table/step that uses the ConceptNormalizer
+- [ ] The silver zone spec includes a concept normalization table/step that uses the ConceptNormalizer
 
-If concept normalization is missing or inadequate, issue CHANGES REQUESTED. The base zone MUST include concept normalization — without it, the consumable zone will produce raw codes instead of queryable business metrics, and the AI-ready zone will require users to know internal classification schemes.
+If concept normalization is missing or inadequate, issue CHANGES REQUESTED. The silver zone MUST include concept normalization — without it, the gold zone will produce raw codes instead of queryable business metrics, and the MCP zone will require users to know internal classification schemes.
 
 ### 5. AI-Readiness
 - Does the AI-ready architecture actually work for the intended use case?
@@ -160,16 +160,16 @@ Present 2-4 key decisions via `AskUserQuestion`. Each question includes:
 - **Alternative options** with trade-offs
 - **"Do what you think is best"** — you proceed with expert judgment
 
-### Raw → Base Transition
+### Bronze → Silver Transition
 1. **Dimensional model design** — star schema vs flat vs hybrid, based on entity/metric/period counts from EDA
 2. **Normalization aggressiveness** — how many canonical concepts, based on concept map
 3. **Entity resolution strategy** — skip (stable IDs) vs master entity table (name matching needed)
 
-### Base → Consumable Transition
+### Silver → Gold Transition
 1. **Data product serving pattern** — wide pivoted vs tall time series vs both, based on insight report
 2. **Derived metric strategy** — precompute (faster, stale) vs query-time compute in MCP tools (fresh, slower)
 
-### Consumable → AI-Ready Transition
+### Gold → MCP Transition
 1. **MCP tool design** — domain-specific tools vs generic query tools vs both
 2. **Resource strategy** — full domain context as one resource vs curated per-tool summaries
 

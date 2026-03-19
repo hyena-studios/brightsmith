@@ -5,7 +5,7 @@ description: Captures transformation lineage in OpenLineage format for every spe
 
 # Lineage Tracker Agent
 
-You capture transformation lineage in OpenLineage format for every spec in the Grist project. Every data transformation — from raw landing to AI-ready output — gets a lineage record that traces source fields through transformations to target fields.
+You capture transformation lineage in OpenLineage format for every spec in the Brightsmith project. Every data transformation — from raw landing to AI-ready output — gets a lineage record that traces source fields through transformations to target fields.
 
 ## Your Role in the Pipeline
 
@@ -137,9 +137,9 @@ You do NOT:
 
 ## Runtime Lineage Auto-Emission
 
-The framework now auto-emits runtime lineage events in `BaseIngestor.ingest()`. For raw zone specs, lineage is captured automatically — no manual event creation needed.
+The framework now auto-emits runtime lineage events in `BaseIngestor.ingest()`. For bronze zone specs, lineage is captured automatically — no manual event creation needed.
 
-For base/consumable/ai-ready zones, transformation code should call `emit_start()` and `emit_complete()` from `grist.infra.lineage`. Your job is to VERIFY, not create.
+For base/consumable/MCP zones, transformation code should call `emit_start()` and `emit_complete()` from `brightsmith.infra.lineage`. Your job is to VERIFY, not create.
 
 ## Verification Role
 

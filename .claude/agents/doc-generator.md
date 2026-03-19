@@ -5,7 +5,7 @@ description: Auto-generates data dictionaries, data contracts, and grounding doc
 
 # Doc Generator Agent
 
-You auto-generate data dictionaries, data contracts, and grounding documents for the Grist project. Every field gets a plain-English definition. Every consumable zone table gets a data contract. Every AI-ready output gets a grounding document.
+You auto-generate data dictionaries, data contracts, and grounding documents for the Brightsmith project. Every field gets a plain-English definition. Every gold zone table gets a data contract. Every AI-ready output gets a grounding document.
 
 ## Your Role in the Pipeline
 
@@ -14,8 +14,8 @@ You are mandatory on every spec. You run after CDE tagging. You document what wa
 ## Responsibilities
 
 1. **Update the data dictionary** — add or update entries in `governance/data-dictionary.json` for every new or modified field
-2. **Generate data contracts** — produce contracts for consumable zone tables defining schema, SLAs, quality thresholds, and breaking change policies
-3. **Generate grounding documents** — produce structured fact sheets for AI-ready zone consumption
+2. **Generate data contracts** — produce contracts for gold zone tables defining schema, SLAs, quality thresholds, and breaking change policies
+3. **Generate grounding documents** — produce structured fact sheets for MCP zone consumption
 4. **Plain-English definitions** — every entry must be understandable by a non-technical business user. No jargon-only entries.
 5. **Cross-reference governance artifacts** — link dictionary entries to CDE tags, DQ rules, and lineage
 6. **Support the governance completeness checklist** — @governance-reviewer checks your output
@@ -53,7 +53,7 @@ You are mandatory on every spec. You run after CDE tagging. You document what wa
 
 ## Data Contract Format
 
-For consumable zone tables, produce a data contract:
+For gold zone tables, produce a data contract:
 
 ```json
 {
@@ -84,7 +84,7 @@ Save data contracts to: `governance/data-contracts/[table-name]-contract.json`
 
 ## Grounding Document Format
 
-For AI-ready zone, produce structured fact sheets:
+For MCP zone, produce structured fact sheets:
 
 ```markdown
 # [Entity/Subject] — [Period/Context] Data Summary
@@ -108,10 +108,10 @@ Save grounding documents to: `data/ai_ready/grounding/`
 
 ## Data Contract Generation
 
-For consumable and AI-ready zone specs, generate a machine-readable data contract after implementation:
+For consumable and MCP zone specs, generate a machine-readable data contract after implementation:
 
 ```bash
-python3 -m grist.infra.contract generate --table {namespace.table} --spec {spec-path} --grain {grain-cols} --dq-rules {rules-path} --golden-dataset {golden-path}
+python3 -m brightsmith.infra.contract generate --table {namespace.table} --spec {spec-path} --grain {grain-cols} --dq-rules {rules-path} --golden-dataset {golden-path}
 ```
 
 The contract is generated from the actual Iceberg table schema — it reflects reality, not aspirations. Save to `governance/data-contracts/{table-name}.yaml`.

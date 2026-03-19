@@ -1,11 +1,11 @@
 ---
-description: Run the Grist pipeline for a specific spec. Orchestrates the full agent workflow from governance review through staff engineer sign-off. Use when ready to execute a spec.
+description: Run the Brightsmith pipeline for a specific spec. Orchestrates the full agent workflow from governance review through staff engineer sign-off. Use when ready to execute a spec.
 argument-hint: "<spec-name>"
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent
 context: fork
 ---
 
-Run the Grist pipeline for spec "$ARGUMENTS".
+Run the Brightsmith pipeline for spec "$ARGUMENTS".
 
 ## Pipeline Execution Protocol
 
@@ -14,7 +14,7 @@ Run the Grist pipeline for spec "$ARGUMENTS".
 Before any agent runs, initialize the pipeline state:
 
 ```bash
-python3 -m grist.infra.pipeline_gate init "$ARGUMENTS" --zone <zone> [--mode greenfield|backfill]
+python3 -m brightsmith.infra.pipeline_gate init "$ARGUMENTS" --zone <zone> [--mode greenfield|backfill]
 ```
 
 This creates `governance/pipeline-state/$ARGUMENTS-pipeline.json` tracking every step.
@@ -29,7 +29,7 @@ This creates `governance/pipeline-state/$ARGUMENTS-pipeline.json` tracking every
 
 Execute the appropriate pipeline from CLAUDE.md:
 
-- **Raw Zone:** governance review → implementation → EDA → domain context → DQ rules → DQ execution → chaos monkey → [entity-resolver, pii-scanner, temporal-modeler, adversarial-auditor] → lineage → CDE → docs → governance review → staff engineer
+- **Bronze Zone:** governance review → implementation → EDA → domain context → DQ rules → DQ execution → chaos monkey → [entity-resolver, pii-scanner, temporal-modeler, adversarial-auditor] → lineage → CDE → docs → governance review → staff engineer
 - **Base/Consumable Greenfield:** governance review → data steward → semantic modeler (conceptual → logical → physical) → EDA → DQ rules → implementation → DQ execution → chaos monkey → [entity-resolver, pii-scanner, temporal-modeler, adversarial-auditor] → lineage → CDE → docs → governance review → staff engineer
 - **Base/Consumable Backfill:** semantic modeler (physical → logical) → EDA → DQ rules → DQ execution → chaos monkey → conceptual model → data steward → governance review → staff engineer
 
@@ -38,18 +38,18 @@ Execute the appropriate pipeline from CLAUDE.md:
 After @staff-engineer signs off on the LAST spec in a zone:
 
 1. **@principal-data-architect** — BLOCKING zone transition review. Output: `governance/reviews/{zone}-architecture-review.md`. Must be COMPLETED before proceeding.
-2. **@insight-manager** — Strategic analysis (base→consumable and consumable→ai-ready ONLY, skip at raw→base). Output: `governance/insights/{from-zone}-to-{to-zone}-insights.md`.
+2. **@insight-manager** — Strategic analysis (silver→gold and gold→mcp ONLY, skip at bronze→silver). Output: `governance/insights/{from-zone}-to-{to-zone}-insights.md`.
 
 Verify transition readiness:
 ```bash
-python3 -m grist.infra.pipeline_gate check-transition <from-zone> <to-zone>
+python3 -m brightsmith.infra.pipeline_gate check-transition <from-zone> <to-zone>
 ```
 
 ### Step 4: Report Final Status
 
 When complete or blocked, report status and validate:
 ```bash
-python3 -m grist.infra.pipeline_gate validate "$ARGUMENTS"
+python3 -m brightsmith.infra.pipeline_gate validate "$ARGUMENTS"
 ```
 
 ## Agent Execution Rules
@@ -60,7 +60,7 @@ For each agent in the pipeline:
 
 1. **Gate check** — before invoking the agent:
    ```bash
-   python3 -m grist.infra.pipeline_gate check "$ARGUMENTS" <step-name>
+   python3 -m brightsmith.infra.pipeline_gate check "$ARGUMENTS" <step-name>
    ```
    If BLOCKED, STOP and report which prerequisites are missing. Do NOT proceed by skipping the check.
 
@@ -81,7 +81,7 @@ For each agent in the pipeline:
      Agent(
        description: "DQ execution for $ARGUMENTS",
        subagent_type: "dq-engineer",
-       prompt: "Execute DQ rules for spec '$ARGUMENTS'. Run: python3 -m grist.infra.dq_runner run --spec $ARGUMENTS. Then generate scorecard: python3 -m grist.infra.dq_runner scorecard --spec $ARGUMENTS. Report results."
+       prompt: "Execute DQ rules for spec '$ARGUMENTS'. Run: python3 -m brightsmith.infra.dq_runner run --spec $ARGUMENTS. Then generate scorecard: python3 -m brightsmith.infra.dq_runner scorecard --spec $ARGUMENTS. Report results."
      )
      ```
 
@@ -89,12 +89,12 @@ For each agent in the pipeline:
 
    - If not applicable: skip with justification:
      ```bash
-     python3 -m grist.infra.pipeline_gate skip "$ARGUMENTS" <step-name> --reason "..." --evidence <path>
+     python3 -m brightsmith.infra.pipeline_gate skip "$ARGUMENTS" <step-name> --reason "..." --evidence <path>
      ```
 
 3. **Register completion** — after the agent subagent returns:
    ```bash
-   python3 -m grist.infra.pipeline_gate complete "$ARGUMENTS" <step-name> --output <artifact-path>
+   python3 -m brightsmith.infra.pipeline_gate complete "$ARGUMENTS" <step-name> --output <artifact-path>
    ```
 
 4. **Loop back** — if any agent requests changes, return to the appropriate step. The gate tracks current state.
@@ -135,14 +135,14 @@ These agents run on every spec, no exceptions:
 ### Agents That Run at Zone Transitions Only
 
 - @principal-data-architect — BLOCKING review at every zone transition
-- @insight-manager — at base→consumable and consumable→ai-ready transitions
+- @insight-manager — at silver→gold and gold→mcp transitions
 
 ## Pipeline Completion Gate
 
 Before marking a spec COMPLETE, run validation:
 
 ```bash
-python3 -m grist.infra.pipeline_gate validate "$ARGUMENTS"
+python3 -m brightsmith.infra.pipeline_gate validate "$ARGUMENTS"
 ```
 
 If validation fails, the spec CANNOT be marked complete. @staff-engineer's final review MUST include a passing gate validation.

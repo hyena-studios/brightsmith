@@ -1,7 +1,7 @@
-# Grist — Claude Code Instructions
+# Brightsmith — Claude Code Instructions
 
 ## Project Overview
-Grist is a domain-agnostic AI agent data pipeline framework that transforms raw data from any source into AI-ready datasets through four zones (Raw → Base → Consumable → AI-Ready) with full governance metadata at every step. Unlike a domain-specific pipeline, Grist discovers the domain context from the data itself — the framework doesn't know what it's processing until the data analyst examines it.
+Brightsmith is a domain-agnostic AI agent data pipeline framework that transforms raw data from any source into AI-ready datasets through four zones (Bronze → Silver → Gold → MCP) with full governance metadata at every step. Unlike a domain-specific pipeline, Brightsmith discovers the domain context from the data itself — the framework doesn't know what it's processing until the data analyst examines it.
 
 ## Stack
 - Python 3.11+
@@ -10,12 +10,12 @@ Grist is a domain-agnostic AI agent data pipeline framework that transforms raw 
 - uv for dependency management
 
 ## Key Paths
-- Source code: `src/grist/` (organized by zone: raw, base, consumable, ai_ready)
-- Infrastructure: `src/grist/infra/` (cross-cutting: iceberg_setup, dq_runner, dq_scorecard, lineage, staging, period_disambiguator, promote, grain, contract, golden_dataset, verification, glossary_validator, pipeline_gate)
-- Period disambiguator: `src/grist/infra/period_disambiguator.py` (temporal period classification)
-- Chaos monkey: `src/grist/infra/chaos_monkey/` (schema-agnostic adversarial DQ testing)
-- Integration test harness: `src/grist/infra/integration_test_harness.py` (golden dataset validation)
-- DQ rule templates: `governance/dq-rule-templates/` (mandatory patterns for consumable zone)
+- Source code: `src/brightsmith/` (organized by zone: bronze, silver, gold, mcp)
+- Infrastructure: `src/brightsmith/infra/` (cross-cutting: iceberg_setup, dq_runner, dq_scorecard, lineage, staging, period_disambiguator, promote, grain, contract, golden_dataset, verification, glossary_validator, pipeline_gate)
+- Period disambiguator: `src/brightsmith/infra/period_disambiguator.py` (temporal period classification)
+- Chaos monkey: `src/brightsmith/infra/chaos_monkey/` (schema-agnostic adversarial DQ testing)
+- Integration test harness: `src/brightsmith/infra/integration_test_harness.py` (golden dataset validation)
+- DQ rule templates: `governance/dq-rule-templates/` (mandatory patterns for gold zone)
 - Golden datasets: `governance/golden-datasets/` (known-correct reference values)
 - Data: `data/` (gitignored, organized by zone)
 - Domain pack: `domain/` (manifest.yaml, sources/, concept-mappings/)
@@ -28,9 +28,9 @@ Grist is a domain-agnostic AI agent data pipeline framework that transforms raw 
 - Domain context: `governance/domain-context.md` (canonical domain knowledge for all agents)
 - Business glossary: `governance/business-glossary.json`
 - Pipeline state: `governance/pipeline-state/` (programmatic gate enforcement per spec)
-- Pipeline gate module: `src/grist/infra/pipeline_gate.py` (state machine + CLI)
+- Pipeline gate module: `src/brightsmith/infra/pipeline_gate.py` (state machine + CLI)
 - Data contracts: `governance/data-contracts/` (machine-readable YAML per table)
-- Contract module: `src/grist/infra/contract.py` (generate, verify, diff, list CLI)
+- Contract module: `src/brightsmith/infra/contract.py` (generate, verify, diff, list CLI)
 - Human approval documents: `governance/approvals/` (plain-English review docs for approval gates)
 - Audit trail: `governance/audit-trail/` (approval decisions, skip justifications, pipeline checklists)
 - Specs: `docs/specs/`
@@ -43,19 +43,19 @@ New domain projects are scaffolded by @setup — the first agent a user interact
 
 ## Domain Discovery
 
-Grist does not assume domain knowledge upfront. The discovery process works as follows:
+Brightsmith does not assume domain knowledge upfront. The discovery process works as follows:
 
 1. **Domain pack provides raw access** — `domain/manifest.yaml` and `domain/sources/*.yaml` define HOW to get data (URLs, API endpoints, file paths, fetch methods), not what it means
-2. **Raw zone lands data as-is** — no interpretation, just storage with metadata
+2. **Bronze zone lands data as-is** — no interpretation, just storage with metadata
 3. **@data-analyst discovers context** — after raw ingestion, the data analyst profiles the data to determine: what entities exist, what the grain is, what fields mean, what patterns emerge, what the domain vocabulary looks like
 4. **@domain-context synthesizes domain knowledge** — takes the data analyst's EDA findings and produces `governance/domain-context.md`, the **canonical domain context document**. This replaces the hardcoded domain knowledge that would exist in a domain-specific pipeline. It covers: domain vocabulary, entity types, temporal patterns, applicable regulations, taxonomy/classification systems, edge cases, concept mapping guidance, and PII expectations.
 5. **All downstream agents reference domain context** — @data-steward, @cde-tagger, @entity-resolver, @dq-rule-writer, @pii-scanner, @temporal-modeler, @insight-manager, @bcbs239-auditor, @adversarial-auditor, @content-strategist, @principal-data-architect, @doc-generator, and @mcp-engineer all read `governance/domain-context.md` as their source of domain knowledge. No agent independently invents domain assumptions.
 
-This is the key difference from a domain-specific pipeline: specs for Base and Consumable zones may be written AFTER discovery, not before. The domain context document is the bridge between "we don't know what this data is" and "every agent operates with full domain awareness."
+This is the key difference from a domain-specific pipeline: specs for Silver and Gold zones may be written AFTER discovery, not before. The domain context document is the bridge between "we don't know what this data is" and "every agent operates with full domain awareness."
 
 ## Agent Workflow
 
-### Raw Zone Pipeline (physical-only, quick and dirty)
+### Bronze Zone Pipeline (physical-only, quick and dirty)
 1. @governance-reviewer — Pre-implementation review
 2. @primary-agent — Implementation (ingest raw data via BaseIngestor)
 3. @data-analyst — EDA on raw data (distributions, outliers, edge cases, threshold evidence, **domain discovery**)
@@ -76,7 +76,7 @@ This is the key difference from a domain-specific pipeline: specs for Base and C
 
 ### Zone Transitions
 
-At **every** zone boundary (raw-to-base, base-to-consumable, consumable-to-ai-ready), after all specs in a zone are complete:
+At **every** zone boundary (bronze-to-silver, silver-to-gold, gold-to-mcp), after all specs in a zone are complete:
 
 1. @principal-data-architect — **Architecture review of the completed zone**
    - Reviews all code, tests, governance artifacts, DQ results, and data in the completed zone
@@ -85,7 +85,7 @@ At **every** zone boundary (raw-to-base, base-to-consumable, consumable-to-ai-re
    - Can flag risks that block progression to the next zone
    - This is a checkpoint — catching structural issues is cheaper here than after the next zone is built
 
-2. @insight-manager — **Strategic analysis** (base-to-consumable and consumable-to-ai-ready only, NOT raw-to-base)
+2. @insight-manager — **Strategic analysis** (silver-to-gold and gold-to-mcp only, NOT bronze-to-silver)
    - Queries real Iceberg tables (not just schemas)
    - Builds on existing EDA reports, DQ scorecards, CDE catalog
    - Recommends data products ranked by value/feasibility
@@ -95,11 +95,11 @@ At **every** zone boundary (raw-to-base, base-to-consumable, consumable-to-ai-re
    - Suggests spec order for the next zone
    - Output: `governance/insights/[source-zone]-to-[target-zone]-insights.md`
 
-@principal-data-architect runs at ALL transitions (including raw-to-base). @insight-manager runs at base-to-consumable and consumable-to-ai-ready only.
+@principal-data-architect runs at ALL transitions (including bronze-to-silver). @insight-manager runs at silver-to-gold and gold-to-mcp only.
 
-The Insight Report is the primary input for spec writing in the next zone. No spec should be written without it. The pipeline always produces a **MCP server** as the AI-Ready zone deliverable — insight reports at the consumable-to-ai-ready transition should focus on MCP server design.
+The Insight Report is the primary input for spec writing in the next zone. No spec should be written without it. The pipeline always produces a **MCP server** as the MCP zone deliverable — insight reports at the gold-to-mcp transition should focus on MCP server design.
 
-### Base & Consumable Zone Pipeline (with data modeling gates)
+### Silver Base & Gold Zone Gold Zone Pipeline (with data modeling gates)
 
 The pipeline auto-detects **greenfield** vs **backfill** mode:
 
@@ -150,13 +150,13 @@ The human approval gates are controlled by `REQUIRE_HUMAN_APPROVAL` in `src/conf
 
 Model artifacts are stored in `governance/models/` as `[spec-name]-conceptual.md`, `[spec-name]-logical.md`, `[spec-name]-physical.md`.
 
-### Concept Normalization Step (Base Zone, after @data-steward)
+### Concept Normalization Step (Silver Zone, after @data-steward)
 
 If `governance/domain-context.md` contains a "Canonical Concept Map" section with status CONFIRMED or PROPOSED:
 
 1. @primary-agent generates concept mapping config files in `domain/concept-mappings/` from the domain context's concept map
 2. @primary-agent creates a `base.concept_map` table using `ConceptNormalizer` that maps raw classification codes to canonical business concepts
-3. The concept map table becomes a dimension that joins to the base zone fact table (e.g., `base.financial_facts` or equivalent)
+3. The concept map table becomes a dimension that joins to the silver zone fact table (e.g., `base.financial_facts` or equivalent)
 4. @dq-rule-writer writes coverage rules: what % of raw codes map to a canonical concept? (P1 rule, threshold from EDA)
 5. Unmapped codes are preserved in the base table (no data loss) but flagged
 
@@ -168,7 +168,7 @@ This step is SKIPPABLE only if the @principal-data-architect explicitly approves
 - DQ rules validate real data, never placeholders
 - Every agent logs its reasoning, not just outputs
 - No changes to data schemas without a spec
-- Base/Consumable tables require approved business terms → conceptual → logical → physical models before implementation
+- Silver/Gold tables require approved business terms → conceptual → logical → physical models before implementation
 - Business terms from recognized external standards are auto-approved; project-specific terms require human approval
 - `REQUIRE_HUMAN_APPROVAL` in `src/config.py` is the single global toggle for all human-in-the-loop gates
 - @staff-engineer reviews last — no spec is marked complete until he approves
@@ -179,45 +179,45 @@ This step is SKIPPABLE only if the @principal-data-architect explicitly approves
 - Data models store governance metadata as **IDs only** (`BT-XXX`) with derived flags (`is_cde`, `is_pii`) — never inline definitions. Authoritative source: `governance/business-glossary.json` (terms with `is_cde` and `is_pii` boolean flags). Documentation (README) dereferences IDs into human-readable names.
 - All model levels include `Business Term`, `Is CDE`, `Is PII` columns: conceptual on entity tables, logical on attribute tables, physical on column tables. CDE and PII flags are derived from the referenced business term.
 - DQ has three agents with distinct roles: @data-analyst (profiles data, produces EDA reports), @dq-rule-writer (writes rules from EDA evidence), @dq-engineer (executes rules, produces scorecards). No agent does another's job.
-- DQ rules follow a lifecycle: `PROPOSED → APPROVED → ACTIVE`. Rules must be executed against real Iceberg data via `python -m grist.infra.dq_runner run`. P0 failures block spec completion.
+- DQ rules follow a lifecycle: `PROPOSED → APPROVED → ACTIVE`. Rules must be executed against real Iceberg data via `python -m brightsmith.infra.dq_runner run`. P0 failures block spec completion.
 - DQ rule approval respects `REQUIRE_HUMAN_APPROVAL` — when False, proposed rules auto-advance to approved
-- DQ scorecards must be generated from real execution results (`python -m grist.infra.dq_runner scorecard`), not test results
+- DQ scorecards must be generated from real execution results (`python -m brightsmith.infra.dq_runner scorecard`), not test results
 - @governance-reviewer post-implementation check verifies: DQ rules exist, rules have been executed (results file exists), no P0 failures in latest results
 - Domain packs extend `BaseIngestor` and implement `fetch()`, `flatten()`, and `get_schema()` — the framework handles Iceberg table management, dedup, metadata enrichment, and snapshot management
 - Concept normalization uses a tiered matching engine (exact → prefix → pattern → heuristic) with discovery mode when no mappings exist. Returns `NormalizationResult` with confidence scores (1.0=exact, 0.7=prefix, 0.6=pattern, 0.3=heuristic, 0.0=unmapped). Mappings below `CONFIDENCE_FLOOR` (0.7) require human approval.
-- Collision resolution rules must be defined at `governance/concept-normalization/collision-rules.json` when multiple source codes map to the same canonical concept. @data-steward produces these; approval required before consumable spec implementation.
-- Business glossary terms require 14 fields per term (see @data-steward agent definition). Validate with `python3 -m grist.infra.glossary_validator validate`.
-- `BaseIngestor.ingest()` auto-emits runtime lineage events — no manual lineage creation needed for raw zone. Base/consumable/ai-ready zone transformations should call `emit_start()`/`emit_complete()` from `grist.infra.lineage`.
+- Collision resolution rules must be defined at `governance/concept-normalization/collision-rules.json` when multiple source codes map to the same canonical concept. @data-steward produces these; approval required before gold spec implementation.
+- Business glossary terms require 14 fields per term (see @data-steward agent definition). Validate with `python3 -m brightsmith.infra.glossary_validator validate`.
+- `BaseIngestor.ingest()` auto-emits runtime lineage events — no manual lineage creation needed for bronze zone. Base/consumable/MCP zone transformations should call `emit_start()`/`emit_complete()` from `brightsmith.infra.lineage`.
 - @lineage-tracker is a verifier, not a creator — it checks that lineage events exist with runtime metadata (snapshot IDs, row counts, DQ metrics), not static templates.
-- Golden datasets are verified with `python3 -m grist.infra.golden_dataset verify --spec {spec}`. Pipeline gate enforces existence + minimum 3 values for consumable specs.
-- Verification framework (`python3 -m grist.infra.verification run`) validates correctness: "is this number right?" not just "is this column non-null?". Pass rate >= 80% required for AI-Ready zone.
+- Golden datasets are verified with `python3 -m brightsmith.infra.golden_dataset verify --spec {spec}`. Pipeline gate enforces existence + minimum 3 values for gold specs.
+- Verification framework (`python3 -m brightsmith.infra.verification run`) validates correctness: "is this number right?" not just "is this column non-null?". Pass rate >= 80% required for MCP zone.
 - @staff-engineer enforces minimum test counts per zone: Raw=10, Base=15, Consumable=15, AI-Ready=10, Integration=5. Specs below minimum get CHANGES REQUESTED.
-- Consumable and AI-ready zone tables MUST have a data contract at `governance/data-contracts/{table-name}.yaml`. @doc-generator generates it from the actual Iceberg table schema.
-- Data contracts are machine-readable YAML with schema, quality, lineage, and consumer sections. Verify with `python3 -m grist.infra.contract verify {name}`.
+- Consumable and MCP zone tables MUST have a data contract at `governance/data-contracts/{table-name}.yaml`. @doc-generator generates it from the actual Iceberg table schema.
+- Data contracts are machine-readable YAML with schema, quality, lineage, and consumer sections. Verify with `python3 -m brightsmith.infra.contract verify {name}`.
 - Breaking schema changes (column removed/renamed/type changed/grain changed) require a major version bump. Non-breaking changes (column added) require minor bump.
 - Contract lifecycle: DRAFT (generated) → ACTIVE (staff-engineer approved) → DEPRECATED (superseded). Active contracts are enforced on every pipeline run.
-- Zone transformers MUST use the idempotent promote pattern (`from grist.infra.promote import promote`) — no bare `append_data()` for derived tables. Re-running with the same data must produce 0 new rows.
-- Every derived table row gets a deterministic `record_id` via `compute_grain_id(row, grain_fields, prefix)` from `grist.infra.grain`. Same input → same hash → dedup skips it.
+- Zone transformers MUST use the idempotent promote pattern (`from brightsmith.infra.promote import promote`) — no bare `append_data()` for derived tables. Re-running with the same data must produce 0 new rows.
+- Every derived table row gets a deterministic `record_id` via `compute_grain_id(row, grain_fields, prefix)` from `brightsmith.infra.grain`. Same input → same hash → dedup skips it.
 - Grain fields are defined once per table and used everywhere: promote dedup, DQ uniqueness rules, data contracts, golden dataset filters.
-- `BaseIngestor` (raw zone) already has grain-based dedup — the promote pattern extends this to base/consumable/ai-ready zones.
-- Headless pipeline runner: `python -m grist.run` executes the full pipeline without AI agents. Supports `--zone`, `--validate-only`, `--dry-run`, `--output json`. Exit codes: 0=success, 1=DQ failure, 2=transform error, 3=contract violation, 4=config error.
+- `BaseIngestor` (bronze zone) already has grain-based dedup — the promote pattern extends this to silver/gold/MCP zones.
+- Headless pipeline runner: `python -m brightsmith.run` executes the full pipeline without AI agents. Supports `--zone`, `--validate-only`, `--dry-run`, `--output json`. Exit codes: 0=success, 1=DQ failure, 2=transform error, 3=contract violation, 4=config error.
 - DQ gates between zones: if P0 fails after raw, base doesn't run. Contract verification between zones.
 - Run history logged to `governance/run-history/{timestamp}.json` for audit trail.
-- Headless readiness check: `python -m grist.run --headless-ready` verifies all specs complete, contracts valid, golden datasets pass, no LLM imports in zone code.
+- Headless readiness check: `python -m brightsmith.run --headless-ready` verifies all specs complete, contracts valid, golden datasets pass, no LLM imports in zone code.
 - Zone transformers register via `domain/manifest.yaml` under `pipeline.zones.{zone}.module` and `pipeline.zones.{zone}.function`.
-- Base/Consumable specs involving temporal data MUST use PeriodDisambiguator (`src/grist/infra/period_disambiguator.py`) for period classification rather than ad-hoc period logic. The framework utility handles annual vs quarterly vs point-in-time classification using date-span analysis.
-- Every consumable spec MUST have a golden dataset (`governance/golden-datasets/{spec}-golden.json`) with at least 3 independently verifiable values before @staff-engineer review
-- AI-Ready zone specs MUST include an evaluation set (`data/ai_ready/eval/{spec}-eval.json`) with at least 50 mechanically verifiable Q&A cases before @staff-engineer review
+- Silver/Gold specs involving temporal data MUST use PeriodDisambiguator (`src/brightsmith/infra/period_disambiguator.py`) for period classification rather than ad-hoc period logic. The framework utility handles annual vs quarterly vs point-in-time classification using date-span analysis.
+- Every gold spec MUST have a golden dataset (`governance/golden-datasets/{spec}-golden.json`) with at least 3 independently verifiable values before @staff-engineer review
+- MCP zone specs MUST include an evaluation set (`data/ai_ready/eval/{spec}-eval.json`) with at least 50 mechanically verifiable Q&A cases before @staff-engineer review
 - Eval cases must span at least 5 categories: point lookup, comparison, ranking, trend, and edge case
 - Every eval case must include: question, expected_answer, source_table, source_filters, source_column — so answers can be verified programmatically against consumable tables
 - The eval set is a DQ artifact — @dq-engineer validates that all expected answers match pipeline output
 - Every pipeline agent MUST be either executed or explicitly skipped with documented justification — silent omission is not allowed
 - Skip justifications must reference a specific governance artifact (e.g., "domain-context.md PII section says 'No personal data expected'")
-- Pipeline execution is tracked by `src/grist/infra/pipeline_gate.py` — every spec gets a state file at `governance/pipeline-state/{spec}-pipeline.json`
-- Before any agent runs: `python3 -m grist.infra.pipeline_gate check {spec} {step}` — if BLOCKED, stop
-- After any agent completes: `python3 -m grist.infra.pipeline_gate complete {spec} {step} --output {path}`
-- Before marking a spec COMPLETE: `python3 -m grist.infra.pipeline_gate validate {spec}` must PASS
-- Zone transitions require: `python3 -m grist.infra.pipeline_gate check-transition {from} {to}` must PASS
+- Pipeline execution is tracked by `src/brightsmith/infra/pipeline_gate.py` — every spec gets a state file at `governance/pipeline-state/{spec}-pipeline.json`
+- Before any agent runs: `python3 -m brightsmith.infra.pipeline_gate check {spec} {step}` — if BLOCKED, stop
+- After any agent completes: `python3 -m brightsmith.infra.pipeline_gate complete {spec} {step} --output {path}`
+- Before marking a spec COMPLETE: `python3 -m brightsmith.infra.pipeline_gate validate {spec}` must PASS
+- Zone transitions require: `python3 -m brightsmith.infra.pipeline_gate check-transition {from} {to}` must PASS
 
 ## Human Approval Gates
 
@@ -244,7 +244,7 @@ After @doc-generator produces the approval document, use AskUserQuestion:
 
 ### When Multiple Artifacts Need Approval in Sequence
 
-For Base/Consumable greenfield specs, approvals happen in order:
+For Silver/Gold greenfield specs, approvals happen in order:
 1. Business terms → approval document → AskUserQuestion
 2. Conceptual model → approval document → AskUserQuestion
 3. Logical model → approval document → AskUserQuestion
@@ -257,7 +257,7 @@ Every approval decision is recorded in TWO places:
 
 1. **Pipeline gate state file** via:
    ```bash
-   python3 -m grist.infra.pipeline_gate approve {spec} {artifact} --decision APPROVED --by human:{name} --notes "..." --document governance/approvals/{filename}
+   python3 -m brightsmith.infra.pipeline_gate approve {spec} {artifact} --decision APPROVED --by human:{name} --notes "..." --document governance/approvals/{filename}
    ```
 
 2. **Audit trail** at `governance/audit-trail/{spec}-approvals.md`:
