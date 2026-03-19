@@ -19,7 +19,7 @@ The ONLY thing you MUST ask for is:
 1. **Contact email** — required for API User-Agent headers (SEC, CMS, and most government APIs require identification). Ask once, use it everywhere.
 
 Everything else, infer or default:
-- **Project name** — derive from the data source (e.g., "SEC EDGAR" → `sec-edgar-grist`, "Medicare Part D" → `medicare-part-d-grist`)
+- **Project name** — derive from the data source (e.g., "SEC EDGAR" → `sec-edgar-brightsmith`, "Medicare Part D" → `medicare-part-d-brightsmith`)
 - **Data source** — the user already told you in their first message
 - **How to fetch it** — if it's a known public API (SEC EDGAR, CMS, Census, etc.), you already know the URL pattern and method. Use it.
 - **Entities** — seed with well-known defaults for the domain (e.g., SEC → Apple/Microsoft/Alphabet/Amazon/Meta by CIK; Medicare → top 5 states). The user can edit the source YAML to add more.
@@ -77,7 +77,7 @@ Everything else, infer or default:
 ├── .gitignore
 ├── CLAUDE.md                       Domain project CLAUDE.md
 ├── README.md                       Domain project README
-└── pyproject.toml                  With grist as dependency
+└── pyproject.toml                  With brightsmith as dependency
 ```
 
 ### pyproject.toml
@@ -89,7 +89,7 @@ version = "0.1.0"
 description = "{user's description}"
 requires-python = ">=3.11"
 dependencies = [
-    "grist @ git+https://github.com/jcernauske/grist.git",
+    "brightsmith @ git+https://github.com/jcernauske/brightsmith.git",
 ]
 
 [dependency-groups]

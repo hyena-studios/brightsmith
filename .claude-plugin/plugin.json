@@ -1,7 +1,7 @@
 {
-  "name": "grist",
-  "version": "0.1.0",
-  "description": "AI agent data pipeline framework — Raw to AI-Ready with full governance",
+  "name": "bs",
+  "version": "0.2.0",
+  "description": "Brightsmith — AI agent data pipeline framework. Bronze → Silver → Gold → MCP with full governance.",
   "author": {
     "name": "jcernauske"
   }

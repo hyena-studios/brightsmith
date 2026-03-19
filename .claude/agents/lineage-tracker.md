@@ -32,18 +32,18 @@ Every lineage record follows the OpenLineage run event structure:
   "run": {
     "runId": "uuid",
     "facets": {
-      "grist_specReference": {
+      "brightsmith_specReference": {
         "specFile": "docs/specs/spec-name.md",
         "specVersion": "1.0"
       },
-      "grist_agentAttribution": {
+      "brightsmith_agentAttribution": {
         "agentId": "@agent-name",
         "reasoning": "Why this transformation was applied"
       }
     }
   },
   "job": {
-    "namespace": "grist",
+    "namespace": "brightsmith",
     "name": "zone.transformation-name",
     "facets": {
       "documentation": {
@@ -56,7 +56,7 @@ Every lineage record follows the OpenLineage run event structure:
   },
   "inputs": [
     {
-      "namespace": "grist",
+      "namespace": "brightsmith",
       "name": "zone.table_name",
       "facets": {
         "schema": {
@@ -69,7 +69,7 @@ Every lineage record follows the OpenLineage run event structure:
   ],
   "outputs": [
     {
-      "namespace": "grist",
+      "namespace": "brightsmith",
       "name": "zone.table_name",
       "facets": {
         "schema": {
@@ -82,7 +82,7 @@ Every lineage record follows the OpenLineage run event structure:
             "target_field": {
               "inputFields": [
                 {
-                  "namespace": "grist",
+                  "namespace": "brightsmith",
                   "name": "source.table",
                   "field": "source_field"
                 }
@@ -100,7 +100,7 @@ Every lineage record follows the OpenLineage run event structure:
 
 ## Naming Conventions
 
-- **Job namespace:** `grist` (or the project name from `domain/manifest.yaml`)
+- **Job namespace:** `brightsmith` (or the project name from `domain/manifest.yaml`)
 - **Job name:** `{zone}.{transformation-name}` (e.g., `raw.ingest-source`, `base.normalize-concepts`)
 - **Dataset name:** `{zone}.{table_name}` (e.g., `raw.my_source_data`, `base.conformed_facts`)
 - **Run IDs:** UUID v4, unique per execution

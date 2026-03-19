@@ -7,15 +7,15 @@ completions with output artifact paths and SHA-256 hashes, validates skip
 justifications, and checks zone transition readiness.
 
 Usage:
-    python -m grist.infra.pipeline_gate init <spec-name> --zone raw|base|consumable|ai_ready [--mode greenfield|backfill]
-    python -m grist.infra.pipeline_gate check <spec-name> <step-name>
-    python -m grist.infra.pipeline_gate complete <spec-name> <step-name> --output <path>
-    python -m grist.infra.pipeline_gate skip <spec-name> <step-name> --reason "..." --evidence <path>
-    python -m grist.infra.pipeline_gate approve <spec-name> <artifact> --decision APPROVED|CHANGES_REQUESTED --by <who> [--notes "..."] [--document <path>]
-    python -m grist.infra.pipeline_gate validate <spec-name> | --all
-    python -m grist.infra.pipeline_gate check-transition <from-zone> <to-zone>
-    python -m grist.infra.pipeline_gate status <spec-name>
-    python -m grist.infra.pipeline_gate audit --format json|markdown
+    python -m brightsmith.infra.pipeline_gate init <spec-name> --zone raw|base|consumable|ai_ready [--mode greenfield|backfill]
+    python -m brightsmith.infra.pipeline_gate check <spec-name> <step-name>
+    python -m brightsmith.infra.pipeline_gate complete <spec-name> <step-name> --output <path>
+    python -m brightsmith.infra.pipeline_gate skip <spec-name> <step-name> --reason "..." --evidence <path>
+    python -m brightsmith.infra.pipeline_gate approve <spec-name> <artifact> --decision APPROVED|CHANGES_REQUESTED --by <who> [--notes "..."] [--document <path>]
+    python -m brightsmith.infra.pipeline_gate validate <spec-name> | --all
+    python -m brightsmith.infra.pipeline_gate check-transition <from-zone> <to-zone>
+    python -m brightsmith.infra.pipeline_gate status <spec-name>
+    python -m brightsmith.infra.pipeline_gate audit --format json|markdown
 """
 
 from __future__ import annotations
@@ -858,7 +858,7 @@ class PipelineGate:
 def main() -> None:
     """CLI entry point for pipeline gate operations."""
     parser = argparse.ArgumentParser(
-        description="Grist Pipeline Gate — programmatic enforcement of agent execution order"
+        description="Brightsmith Pipeline Gate — programmatic enforcement of agent execution order"
     )
     subparsers = parser.add_subparsers(dest="command")
 

@@ -5,7 +5,7 @@ Verification validates correctness: "is this number actually right?"
 This wraps golden dataset verification with reporting and tolerance.
 
 Usage:
-    python -m grist.infra.verification run [--spec SPEC] [--tolerance 1.0]
+    python -m brightsmith.infra.verification run [--spec SPEC] [--tolerance 1.0]
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def run_verification(
 
 def main() -> None:
     """CLI entry point for verification."""
-    parser = argparse.ArgumentParser(description="Grist Verification Framework")
+    parser = argparse.ArgumentParser(description="Brightsmith Verification Framework")
     subparsers = parser.add_subparsers(dest="command")
 
     run_p = subparsers.add_parser("run", help="Run verification checks")

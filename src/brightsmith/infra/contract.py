@@ -5,10 +5,10 @@ tables. Contracts are the guarantee layer — specs are proposals, contracts
 are what was actually built and what consumers can rely on.
 
 Usage:
-    python -m grist.infra.contract generate --table consumable.company_financials --spec my-spec
-    python -m grist.infra.contract verify {contract-name} | --all
-    python -m grist.infra.contract diff {contract-name}
-    python -m grist.infra.contract list
+    python -m brightsmith.infra.contract generate --table consumable.company_financials --spec my-spec
+    python -m brightsmith.infra.contract verify {contract-name} | --all
+    python -m brightsmith.infra.contract diff {contract-name}
+    python -m brightsmith.infra.contract list
 """
 
 from __future__ import annotations
@@ -248,7 +248,7 @@ def generate_contract(
     contract_name = tbl.replace("_", "-")
 
     contract = {
-        "apiVersion": "grist/v1",
+        "apiVersion": "brightsmith/v1",
         "kind": "DataContract",
         "metadata": {
             "name": contract_name,
@@ -608,7 +608,7 @@ def check_version_bump_required(diffs: list[ContractDiffItem], current_version: 
 
 def main() -> None:
     """CLI entry point for contract operations."""
-    parser = argparse.ArgumentParser(description="Grist Data Contracts")
+    parser = argparse.ArgumentParser(description="Brightsmith Data Contracts")
     subparsers = parser.add_subparsers(dest="command")
 
     # generate

@@ -5,9 +5,9 @@ and verifies them against live Iceberg table data. Each golden dataset
 file defines filter conditions, expected values, and tolerances.
 
 Usage:
-    python -m grist.infra.golden_dataset verify --spec my-spec
-    python -m grist.infra.golden_dataset list
-    python -m grist.infra.golden_dataset summary
+    python -m brightsmith.infra.golden_dataset verify --spec my-spec
+    python -m brightsmith.infra.golden_dataset list
+    python -m brightsmith.infra.golden_dataset summary
 """
 
 from __future__ import annotations
@@ -201,7 +201,7 @@ def list_golden_datasets(golden_dir: Path | None = None) -> list[dict]:
 
 def main() -> None:
     """CLI entry point for golden dataset operations."""
-    parser = argparse.ArgumentParser(description="Grist Golden Dataset Verification")
+    parser = argparse.ArgumentParser(description="Brightsmith Golden Dataset Verification")
     subparsers = parser.add_subparsers(dest="command")
 
     verify_p = subparsers.add_parser("verify", help="Verify golden dataset against live data")

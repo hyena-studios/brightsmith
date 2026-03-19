@@ -4,12 +4,12 @@ Reads JSON rules from governance/dq-rules/, executes SQL against Iceberg tables
 via PyIceberg scan → Arrow → DuckDB, evaluates thresholds, and stores results.
 
 Usage:
-    python -m grist.infra.dq_runner status [--spec NAME]
-    python -m grist.infra.dq_runner approve RULE_ID [RULE_ID ...]
-    python -m grist.infra.dq_runner run [--spec NAME] [--priority P0]
-    python -m grist.infra.dq_runner results [--spec NAME]
-    python -m grist.infra.dq_runner scorecard [--spec NAME]
-    python -m grist.infra.dq_runner acknowledge --spec NAME --run RUN_ID --reason "..."
+    python -m brightsmith.infra.dq_runner status [--spec NAME]
+    python -m brightsmith.infra.dq_runner approve RULE_ID [RULE_ID ...]
+    python -m brightsmith.infra.dq_runner run [--spec NAME] [--priority P0]
+    python -m brightsmith.infra.dq_runner results [--spec NAME]
+    python -m brightsmith.infra.dq_runner scorecard [--spec NAME]
+    python -m brightsmith.infra.dq_runner acknowledge --spec NAME --run RUN_ID --reason "..."
 """
 
 from __future__ import annotations
@@ -587,7 +587,7 @@ def _print_results(spec: str | None = None) -> None:
 
 def main() -> None:
     """CLI entry point."""
-    parser = argparse.ArgumentParser(description="Grist DQ Runner")
+    parser = argparse.ArgumentParser(description="Brightsmith DQ Runner")
     subparsers = parser.add_subparsers(dest="command")
 
     # status

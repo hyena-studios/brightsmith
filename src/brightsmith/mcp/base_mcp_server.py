@@ -1,6 +1,6 @@
 """Base MCP server for AI-Ready zone — the standard deliverable.
 
-Every Grist pipeline produces an MCP server as its AI-Ready zone output.
+Every Brightsmith pipeline produces an MCP server as its AI-Ready zone output.
 Domain projects extend BaseMCPServer with domain-specific tools and
 resources. The framework handles MCP protocol, tool registration,
 Iceberg query execution, and governance metadata attachment.
@@ -20,7 +20,7 @@ Usage:
         def get_resources(self) -> list[ResourceDef]:
             return [
                 ResourceDef(
-                    uri="grist://domain-context",
+                    uri="brightsmith://domain-context",
                     name="Domain Context",
                     description="Domain knowledge for financial data",
                     handler=self._get_domain_context,
@@ -207,7 +207,7 @@ class BaseMCPServer:
         domain_ctx = PROJECT_ROOT / "governance" / "domain-context.md"
         if domain_ctx.exists():
             framework_resources.append(ResourceDef(
-                uri="grist://domain-context",
+                uri="brightsmith://domain-context",
                 name="Domain Context",
                 description="Canonical domain knowledge for interpreting this data",
                 mime_type="text/markdown",
@@ -218,7 +218,7 @@ class BaseMCPServer:
         glossary = PROJECT_ROOT / "governance" / "business-glossary.json"
         if glossary.exists():
             framework_resources.append(ResourceDef(
-                uri="grist://business-glossary",
+                uri="brightsmith://business-glossary",
                 name="Business Glossary",
                 description="Business term definitions with CDE/PII flags",
                 mime_type="application/json",
@@ -229,7 +229,7 @@ class BaseMCPServer:
         data_dict = PROJECT_ROOT / "governance" / "data-dictionary.json"
         if data_dict.exists():
             framework_resources.append(ResourceDef(
-                uri="grist://data-dictionary",
+                uri="brightsmith://data-dictionary",
                 name="Data Dictionary",
                 description="Field-level documentation for all tables",
                 mime_type="application/json",
@@ -240,7 +240,7 @@ class BaseMCPServer:
         if self.grounding_docs_path and self.grounding_docs_path.exists():
             for md_file in sorted(self.grounding_docs_path.glob("*.md")):
                 framework_resources.append(ResourceDef(
-                    uri=f"grist://grounding/{md_file.stem}",
+                    uri=f"brightsmith://grounding/{md_file.stem}",
                     name=f"Grounding: {md_file.stem}",
                     description=f"Grounding document: {md_file.stem}",
                     mime_type="text/markdown",

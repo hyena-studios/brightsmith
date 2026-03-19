@@ -1,7 +1,7 @@
-"""Domain project scaffolding — creates a complete Grist domain project.
+"""Domain project scaffolding — creates a complete Brightsmith domain project.
 
 Usage:
-    python -m grist.setup init
+    python -m brightsmith.setup init
 
 This is the programmatic equivalent of @setup agent. Creates the full
 directory structure, CLAUDE.md, pyproject.toml, ingestor skeleton,
@@ -68,7 +68,7 @@ version = "0.1.0"
 description = "{description}"
 requires-python = ">=3.11"
 dependencies = [
-    "grist @ git+https://github.com/jcernauske/grist.git",
+    "brightsmith @ git+https://github.com/jcernauske/brightsmith.git",
 ]
 
 [dependency-groups]
@@ -113,7 +113,7 @@ def _copy_dq_templates(root: Path) -> None:
 
 def init(
     project_name: str = "my-domain-project",
-    description: str = "A Grist domain project",
+    description: str = "A Brightsmith domain project",
     output_dir: str | Path | None = None,
 ) -> Path:
     """Scaffold a complete domain project.
@@ -134,7 +134,7 @@ def init(
     _write_gitignore(root)
     _copy_dq_templates(root)
 
-    print(f"Scaffolded Grist domain project at: {root}")
+    print(f"Scaffolded Brightsmith domain project at: {root}")
     print(f"\nNext steps:")
     print(f"  cd {root}")
     print(f"  uv sync")
@@ -145,12 +145,12 @@ def init(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Grist domain project scaffolding")
+    parser = argparse.ArgumentParser(description="Brightsmith domain project scaffolding")
     subparsers = parser.add_subparsers(dest="command")
 
     init_p = subparsers.add_parser("init", help="Scaffold a new domain project")
     init_p.add_argument("--name", default="my-domain-project", help="Project name")
-    init_p.add_argument("--description", default="A Grist domain project", help="Description")
+    init_p.add_argument("--description", default="A Brightsmith domain project", help="Description")
     init_p.add_argument("--output", help="Output directory")
 
     args = parser.parse_args()

@@ -1,11 +1,11 @@
 """MCP server entry point.
 
-Starts the Grist MCP server in stdio mode. Discovers the domain
+Starts the Brightsmith MCP server in stdio mode. Discovers the domain
 MCP server class from the manifest, or falls back to the framework
 base server with generic tools.
 
 Usage:
-    python -m grist.serve
+    python -m brightsmith.serve
 """
 
 from __future__ import annotations

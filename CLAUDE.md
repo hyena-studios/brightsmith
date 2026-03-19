@@ -39,7 +39,7 @@ Brightsmith is a domain-agnostic AI agent data pipeline framework that transform
 
 ## Project Bootstrapping
 
-New domain projects are scaffolded by @setup — the first agent a user interacts with. It creates the full project structure (domain pack, governance directories, ingestor skeleton, first spec, CLAUDE.md, pyproject.toml with grist dependency) from a few questions about the data source. After @setup finishes, the normal spec-driven pipeline takes over.
+New domain projects are scaffolded by @setup — the first agent a user interacts with. It creates the full project structure (domain pack, governance directories, ingestor skeleton, first spec, CLAUDE.md, pyproject.toml with brightsmith dependency) from a few questions about the data source. After @setup finishes, the normal spec-driven pipeline takes over.
 
 ## Domain Discovery
 

@@ -29,7 +29,7 @@ class ConcreteServer(BaseMCPServer):
     def get_resources(self) -> list[ResourceDef]:
         return [
             ResourceDef(
-                uri="grist://test-resource",
+                uri="brightsmith://test-resource",
                 name="Test Resource",
                 description="A test resource",
                 handler=lambda: "test content",
@@ -81,7 +81,7 @@ class TestResourceRegistration:
         """Domain resources should be included in the resource list."""
         all_resources = server._all_resources()
         uris = [r.uri for r in all_resources]
-        assert "grist://test-resource" in uris
+        assert "brightsmith://test-resource" in uris
 
     def test_resource_handler_returns_content(self, server):
         """Resource handlers should return string content."""
@@ -104,7 +104,7 @@ class TestResourceRegistration:
         )
         all_resources = server._all_resources()
         uris = [r.uri for r in all_resources]
-        assert "grist://grounding/context" in uris
+        assert "brightsmith://grounding/context" in uris
 
 
 class TestToolHandlers:

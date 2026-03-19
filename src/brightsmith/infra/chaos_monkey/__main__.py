@@ -1,10 +1,10 @@
 """CLI for chaos monkey operations.
 
 Usage:
-    python -m grist.infra.chaos_monkey inject --table NS.TABLE --rate 0.07 --seed 42
-    python -m grist.infra.chaos_monkey reconcile --table NS.TABLE --manifest PATH --dq-results PATH
-    python -m grist.infra.chaos_monkey cleanup --table NS.TABLE
-    python -m grist.infra.chaos_monkey manifest --latest
+    python -m brightsmith.infra.chaos_monkey inject --table NS.TABLE --rate 0.07 --seed 42
+    python -m brightsmith.infra.chaos_monkey reconcile --table NS.TABLE --manifest PATH --dq-results PATH
+    python -m brightsmith.infra.chaos_monkey cleanup --table NS.TABLE
+    python -m brightsmith.infra.chaos_monkey manifest --latest
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from brightsmith.config import PROJECT_ROOT
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Grist Chaos Monkey")
+    parser = argparse.ArgumentParser(description="Brightsmith Chaos Monkey")
     subparsers = parser.add_subparsers(dest="command")
 
     # inject

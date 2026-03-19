@@ -4,7 +4,7 @@ Validates that business-glossary.json terms have all required fields,
 valid cross-references, and consistent CDE/PII rationale.
 
 Usage:
-    python -m grist.infra.glossary_validator validate
+    python -m brightsmith.infra.glossary_validator validate
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ def validate_glossary(glossary_path: Path | None = None) -> tuple[bool, list[str
 
 def main() -> None:
     """CLI entry point for glossary validation."""
-    parser = argparse.ArgumentParser(description="Grist Business Glossary Validator")
+    parser = argparse.ArgumentParser(description="Brightsmith Business Glossary Validator")
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("validate", help="Validate business glossary schema")

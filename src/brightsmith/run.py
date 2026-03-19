@@ -6,12 +6,12 @@ pure Python code. Designed for cron, Airflow, GitHub Actions,
 or any scheduler.
 
 Usage:
-    python -m grist.run                          # Full pipeline
-    python -m grist.run --zone raw               # Raw zone only
-    python -m grist.run --zone base              # Base zone only
-    python -m grist.run --validate-only          # DQ + contracts, no data writes
-    python -m grist.run --dry-run                # Check readiness, no execution
-    python -m grist.run --output json            # JSON to stdout
+    python -m brightsmith.run                          # Full pipeline
+    python -m brightsmith.run --zone raw               # Raw zone only
+    python -m brightsmith.run --zone base              # Base zone only
+    python -m brightsmith.run --validate-only          # DQ + contracts, no data writes
+    python -m brightsmith.run --dry-run                # Check readiness, no execution
+    python -m brightsmith.run --output json            # JSON to stdout
 """
 
 from __future__ import annotations
@@ -516,7 +516,7 @@ def _save_run_history(result: PipelineResult) -> Path:
 
 def main() -> None:
     """CLI entry point for headless pipeline execution."""
-    parser = argparse.ArgumentParser(description="Grist Headless Pipeline Runner")
+    parser = argparse.ArgumentParser(description="Brightsmith Headless Pipeline Runner")
     parser.add_argument("--zone", choices=["bronze", "silver", "gold", "mcp", "all"], default="all")
     parser.add_argument("--validate-only", action="store_true", help="Run DQ + contracts, no data writes")
     parser.add_argument("--dry-run", action="store_true", help="Check config only, no execution")

@@ -23,7 +23,7 @@ from brightsmith.infra.contract import (
 def _make_contract(**overrides) -> dict:
     """Create a minimal valid contract dict."""
     contract = {
-        "apiVersion": "grist/v1",
+        "apiVersion": "brightsmith/v1",
         "kind": "DataContract",
         "metadata": {
             "name": "test-table",
