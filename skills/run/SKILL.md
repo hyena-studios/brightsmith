@@ -65,18 +65,52 @@ For each agent in the pipeline:
    If BLOCKED, STOP and report which prerequisites are missing. Do NOT proceed by skipping the check.
 
 2. **Execute or skip:**
-   - If applicable: invoke the agent via `@agent-name` and capture output
+   - If applicable: **YOU MUST use the Agent tool** to invoke the agent as a subagent. This is NOT optional — do NOT run bash commands directly as a substitute for agent invocation. Every agent step must appear in the Claude Code UI as a labeled subagent block, not as a Bash() call.
+
+     **How to invoke each agent:**
+     ```
+     Agent(
+       description: "<step-name> for $ARGUMENTS",
+       subagent_type: "<agent-name>",   // e.g., "governance-reviewer", "data-analyst", "dq-engineer"
+       prompt: "<full context: spec name, what to do, paths to read, expected output>"
+     )
+     ```
+
+     Example for @dq-engineer:
+     ```
+     Agent(
+       description: "DQ execution for $ARGUMENTS",
+       subagent_type: "dq-engineer",
+       prompt: "Execute DQ rules for spec '$ARGUMENTS'. Run: python3 -m grist.infra.dq_runner run --spec $ARGUMENTS. Then generate scorecard: python3 -m grist.infra.dq_runner scorecard --spec $ARGUMENTS. Report results."
+     )
+     ```
+
+     **CRITICAL:** The Agent tool makes the step visible in Claude Code as a colored, labeled block (e.g., `@dq-engineer  DQ execution for raw-ingest`). Running the same command via Bash() hides which agent is responsible. The user MUST see each agent execute as a distinct labeled step.
+
    - If not applicable: skip with justification:
      ```bash
      python3 -m grist.infra.pipeline_gate skip "$ARGUMENTS" <step-name> --reason "..." --evidence <path>
      ```
 
-3. **Register completion** — after an agent completes:
+3. **Register completion** — after the agent subagent returns:
    ```bash
    python3 -m grist.infra.pipeline_gate complete "$ARGUMENTS" <step-name> --output <artifact-path>
    ```
 
 4. **Loop back** — if any agent requests changes, return to the appropriate step. The gate tracks current state.
+
+### Why Agent Tool, Not Bash
+
+The pipeline MUST use the Agent tool for every agent step because:
+1. **Visibility** — each agent appears as a labeled, colored block in Claude Code UI
+2. **Isolation** — each agent gets its own context, preventing cross-contamination between steps
+3. **Auditability** — the user can expand/collapse each agent's work independently
+4. **Governance** — the agent label proves which persona performed each step
+
+The ONLY things that should run as direct Bash() calls are:
+- Pipeline gate commands (init, check, complete, skip, validate)
+- Simple file operations (mkdir, ls)
+- Non-agent utilities that don't correspond to a pipeline persona
 
 ### Agents That Are NEVER Skippable
 
