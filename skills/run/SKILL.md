@@ -10,6 +10,38 @@ Run the Brightsmith pipeline for spec "$ARGUMENTS".
 
 You run pipeline gate commands (Bash) and dispatch agents (Agent tool). You NEVER write code, edit files, or produce governance artifacts yourself. Every piece of real work is done by a named agent via `subagent_type`.
 
+## MANDATORY: How to Dispatch Agents
+
+Every agent MUST be invoked with `subagent_type` set to the **namespaced** agent name (prefixed with `bs:`). This is what makes colored labels appear in the UI and loads the agent's dedicated context/instructions.
+
+CORRECT (colored label appears in UI):
+```
+Agent(
+  description: "DQ execution for $ARGUMENTS",
+  subagent_type: "bs:dq-engineer",
+  prompt: "Execute DQ rules for spec '$ARGUMENTS'..."
+)
+```
+
+WRONG (no colored label, agent name lost in description):
+```
+Agent(
+  description: "dq-engineer DQ execution for $ARGUMENTS",
+  prompt: "Execute DQ rules for spec '$ARGUMENTS'..."
+)
+```
+
+ALSO WRONG (missing bs: namespace prefix — agent not found):
+```
+Agent(
+  description: "DQ execution for $ARGUMENTS",
+  subagent_type: "dq-engineer",
+  prompt: "Execute DQ rules for spec '$ARGUMENTS'..."
+)
+```
+
+The `bs:` prefix is required because Brightsmith agents are loaded as a plugin. Without it, the agent won't be found.
+
 ## Pipeline Execution Protocol
 
 ### Step 0: Initialize Pipeline Gate
@@ -32,16 +64,26 @@ This creates `governance/pipeline-state/$ARGUMENTS-pipeline.json` tracking every
 
 Execute the appropriate pipeline from CLAUDE.md:
 
-- **Bronze Zone:** governance review → implementation → EDA → domain context → DQ rules → DQ execution → chaos monkey → [entity-resolver, pii-scanner, temporal-modeler, adversarial-auditor] → lineage → CDE → docs → governance review → staff engineer
-- **Base/Consumable Greenfield:** governance review → data steward → semantic modeler (conceptual → logical → physical) → EDA → DQ rules → implementation → DQ execution → chaos monkey → [entity-resolver, pii-scanner, temporal-modeler, adversarial-auditor] → lineage → CDE → docs → governance review → staff engineer
-- **Base/Consumable Backfill:** semantic modeler (physical → logical) → EDA → DQ rules → DQ execution → chaos monkey → conceptual model → data steward → governance review → staff engineer
+- **Bronze Zone:** bs:governance-reviewer → bs:primary-agent → bs:data-analyst → bs:domain-context → bs:dq-rule-writer → bs:dq-engineer → bs:chaos-monkey → [bs:entity-resolver, bs:pii-scanner, bs:temporal-modeler, bs:adversarial-auditor] → bs:lineage-tracker → bs:cde-tagger → bs:doc-generator → bs:governance-reviewer → bs:staff-engineer
+- **Base/Consumable Greenfield:** bs:governance-reviewer → bs:data-steward → bs:semantic-modeler (conceptual → logical → physical) → bs:data-analyst → bs:dq-rule-writer → bs:primary-agent → bs:dq-engineer → bs:chaos-monkey → [bs:entity-resolver, bs:pii-scanner, bs:temporal-modeler, bs:adversarial-auditor] → bs:lineage-tracker → bs:cde-tagger → bs:doc-generator → bs:governance-reviewer → bs:staff-engineer
+- **Base/Consumable Backfill:** bs:semantic-modeler (physical → logical) → bs:data-analyst → bs:dq-rule-writer → bs:dq-engineer → bs:chaos-monkey → bs:semantic-modeler (conceptual) → bs:data-steward → bs:governance-reviewer → bs:staff-engineer
+
+For each agent step:
+1. Gate check: `python3 -m brightsmith.infra.pipeline_gate check "$ARGUMENTS" <step-name>`
+2. Dispatch: `Agent(description: "<task>", subagent_type: "bs:<agent-name>", prompt: "<full context>")`
+3. Register: `python3 -m brightsmith.infra.pipeline_gate complete "$ARGUMENTS" <step-name> --output <path>`
+
+If not applicable, skip with justification:
+```bash
+python3 -m brightsmith.infra.pipeline_gate skip "$ARGUMENTS" <step-name> --reason "..." --evidence <path>
+```
 
 ### Step 3: Zone Transition (after all specs in a zone complete)
 
 After @staff-engineer signs off on the LAST spec in a zone:
 
-1. **@principal-data-architect** — BLOCKING zone transition review. Output: `governance/reviews/{zone}-architecture-review.md`. Must be COMPLETED before proceeding.
-2. **@insight-manager** — Strategic analysis (silver→gold and gold→mcp ONLY, skip at bronze→silver). Output: `governance/insights/{from-zone}-to-{to-zone}-insights.md`.
+1. **bs:principal-data-architect** — BLOCKING zone transition review. Output: `governance/reviews/{zone}-architecture-review.md`.
+2. **bs:insight-manager** — Strategic analysis (silver->gold and gold->mcp ONLY, skip at bronze->silver). Output: `governance/insights/{from-zone}-to-{to-zone}-insights.md`.
 
 Verify transition readiness:
 ```bash
@@ -50,142 +92,30 @@ python3 -m brightsmith.infra.pipeline_gate check-transition <from-zone> <to-zone
 
 ### Step 4: Report Final Status
 
-When complete or blocked, report status and validate:
 ```bash
 python3 -m brightsmith.infra.pipeline_gate validate "$ARGUMENTS"
 ```
 
-## Agent Execution Rules
+## Agents That Are NEVER Skippable
 
-Every agent in the pipeline MUST be either **executed** or **explicitly skipped with documented justification**. Silent omission is not allowed.
+- bs:governance-reviewer (pre and post)
+- bs:staff-engineer (final gate)
+- bs:data-analyst (EDA)
+- bs:dq-rule-writer
+- bs:dq-engineer (execution)
+- bs:chaos-monkey (adversarial hardening)
+- bs:lineage-tracker
+- bs:cde-tagger
+- bs:doc-generator
 
-For each agent in the pipeline:
+## Agents That Are Conditionally Skippable (with justification)
 
-1. **Gate check** — before invoking the agent:
-   ```bash
-   python3 -m brightsmith.infra.pipeline_gate check "$ARGUMENTS" <step-name>
-   ```
-   If BLOCKED, STOP and report which prerequisites are missing. Do NOT proceed by skipping the check.
+- bs:entity-resolver — skip only if domain-context.md says entity resolution is trivial
+- bs:pii-scanner — skip only if domain-context.md PII section says no PII expected
+- bs:temporal-modeler — skip only if no temporal data exists
+- bs:adversarial-auditor — skip only if @chaos-monkey found no gaps in 5 cycles
 
-2. **Execute or skip:**
-   - If applicable: **YOU MUST use the Agent tool** to invoke the agent as a subagent. This is NOT optional — do NOT run bash commands directly as a substitute for agent invocation. Every agent step must appear in the Claude Code UI as a labeled subagent block, not as a Bash() call.
+## Agents That Run at Zone Transitions Only
 
-     **MANDATORY: How to invoke each agent — you MUST set `subagent_type`:**
-
-     CORRECT (colored label appears in UI):
-     ```
-     Agent(
-       description: "DQ execution for $ARGUMENTS",
-       subagent_type: "dq-engineer",
-       prompt: "Execute DQ rules for spec '$ARGUMENTS'..."
-     )
-     ```
-
-     WRONG (no colored label, agent name lost in description):
-     ```
-     Agent(
-       description: "dq-engineer DQ execution for $ARGUMENTS",
-       prompt: "Execute DQ rules for spec '$ARGUMENTS'..."
-     )
-     ```
-
-     The difference: `subagent_type` MUST be set to the agent name (e.g., "governance-reviewer", "data-analyst", "dq-engineer", "chaos-monkey", "staff-engineer", etc.). The `description` is a SHORT task summary, NOT the agent name. If you put the agent name in `description` instead of `subagent_type`, the colored label will not appear and the pipeline will look broken.
-
-     Full example for @dq-engineer:
-     ```
-     Agent(
-       description: "DQ execution for $ARGUMENTS",
-       subagent_type: "dq-engineer",
-       prompt: "Execute DQ rules for spec '$ARGUMENTS'. Run: python3 -m brightsmith.infra.dq_runner run --spec $ARGUMENTS. Then generate scorecard: python3 -m brightsmith.infra.dq_runner scorecard --spec $ARGUMENTS. Report results."
-     )
-     ```
-
-     **CRITICAL:** The `subagent_type` parameter is what makes the step visible in Claude Code as a colored, labeled block (e.g., `@dq-engineer  DQ execution for raw-ingest`). Without `subagent_type`, the agent runs as a generic unnamed block. The user MUST see each agent execute as a distinct labeled step.
-
-   - If not applicable: skip with justification:
-     ```bash
-     python3 -m brightsmith.infra.pipeline_gate skip "$ARGUMENTS" <step-name> --reason "..." --evidence <path>
-     ```
-
-3. **Register completion** — after the agent subagent returns:
-   ```bash
-   python3 -m brightsmith.infra.pipeline_gate complete "$ARGUMENTS" <step-name> --output <artifact-path>
-   ```
-
-4. **Loop back** — if any agent requests changes, return to the appropriate step. The gate tracks current state.
-
-### Why Agent Tool, Not Bash
-
-The pipeline MUST use the Agent tool for every agent step because:
-1. **Visibility** — each agent appears as a labeled, colored block in Claude Code UI
-2. **Isolation** — each agent gets its own context, preventing cross-contamination between steps
-3. **Auditability** — the user can expand/collapse each agent's work independently
-4. **Governance** — the agent label proves which persona performed each step
-
-The ONLY things that should run as direct Bash() calls are:
-- Pipeline gate commands (init, check, complete, skip, validate)
-- Simple file operations (mkdir, ls)
-- Non-agent utilities that don't correspond to a pipeline persona
-
-### Agents That Are NEVER Skippable
-
-These agents run on every spec, no exceptions:
-- @governance-reviewer (pre and post)
-- @staff-engineer (final gate)
-- @data-analyst (EDA)
-- @dq-rule-writer
-- @dq-engineer (execution)
-- @chaos-monkey (adversarial hardening)
-- @lineage-tracker
-- @cde-tagger
-- @doc-generator
-
-### Agents That Are Conditionally Skippable (with justification)
-
-- @entity-resolver — skip only if domain-context.md says entity resolution is trivial (e.g., stable IDs, no name matching needed)
-- @pii-scanner — skip only if domain-context.md PII section says no PII expected
-- @temporal-modeler — skip only if no temporal data exists
-- @adversarial-auditor — skip only if @chaos-monkey found no gaps in 5 cycles
-
-### Agents That Run at Zone Transitions Only
-
-- @principal-data-architect — BLOCKING review at every zone transition
-- @insight-manager — at silver→gold and gold→mcp transitions
-
-## Pipeline Completion Gate
-
-Before marking a spec COMPLETE, run validation:
-
-```bash
-python3 -m brightsmith.infra.pipeline_gate validate "$ARGUMENTS"
-```
-
-If validation fails, the spec CANNOT be marked complete. @staff-engineer's final review MUST include a passing gate validation.
-
-## Pipeline Completion Checklist
-
-This checklist is auto-populated by the pipeline gate. Verify every row before completion:
-
-| Agent | Status | Output Location | Skip Reason (if skipped) |
-|-------|--------|-----------------|-------------------------|
-| @governance-reviewer (pre) | EXECUTED / SKIPPED | governance/reviews/ | |
-| @data-steward | EXECUTED / SKIPPED | governance/business-glossary.json | |
-| @semantic-modeler (conceptual) | EXECUTED / SKIPPED | governance/models/ | |
-| @semantic-modeler (logical) | EXECUTED / SKIPPED | governance/models/ | |
-| @data-analyst (EDA) | EXECUTED / SKIPPED | governance/eda/ | |
-| @dq-rule-writer | EXECUTED / SKIPPED | governance/dq-rules/ | |
-| @semantic-modeler (physical) | EXECUTED / SKIPPED | governance/models/ | |
-| @primary-agent (implementation) | EXECUTED / SKIPPED | src/ | |
-| @dq-engineer (execution) | EXECUTED / SKIPPED | governance/dq-results/ | |
-| @chaos-monkey (5 cycles) | EXECUTED / SKIPPED | governance/chaos-manifests/ | |
-| @entity-resolver | EXECUTED / SKIPPED | | |
-| @pii-scanner | EXECUTED / SKIPPED | governance/pii-scans/ | |
-| @temporal-modeler | EXECUTED / SKIPPED | | |
-| @lineage-tracker | EXECUTED / SKIPPED | governance/lineage/ | |
-| @cde-tagger | EXECUTED / SKIPPED | governance/cde-catalog.json | |
-| @doc-generator | EXECUTED / SKIPPED | governance/data-dictionary.json | |
-| @adversarial-auditor | EXECUTED / SKIPPED | | |
-| @governance-reviewer (post) | EXECUTED / SKIPPED | governance/reviews/ | |
-| @staff-engineer | EXECUTED / SKIPPED | governance/reviews/ | |
-
-This checklist is written to `governance/audit-trail/{spec}-pipeline-checklist.md` and verified by @governance-reviewer in the post-implementation review.
+- bs:principal-data-architect — BLOCKING review at every zone transition
+- bs:insight-manager — at silver->gold and gold->mcp transitions
