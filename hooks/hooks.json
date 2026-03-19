@@ -5,8 +5,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pip show grist > /dev/null 2>&1 || pip install -e ${CLAUDE_PLUGIN_ROOT}",
+            "command": "pip show brightsmith > /dev/null 2>&1 || pip install -e ${CLAUDE_PLUGIN_ROOT}",
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/require-subagent-type.sh"
           }
         ]
       }
