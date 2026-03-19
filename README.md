@@ -1,6 +1,6 @@
 # Brightsmith
 
-AI agent data pipeline framework. Takes raw data from any source and grinds it into governed, AI-ready datasets — without knowing the domain upfront.
+AI agent data pipeline framework. Takes raw data from any source and forges it into governed, AI-ready datasets — without knowing the domain upfront.
 
 **Bronze → Silver → Gold → MCP** with full governance metadata at every step.
 
@@ -15,7 +15,7 @@ Most data pipelines are built for a specific domain. Brightsmith discovers the d
 5. The pipeline builds governed data products through spec-driven development with human approval gates
 6. The MCP zone produces a **tool-use chat agent** that queries live Iceberg data
 
-Grist was extracted from [sec_edgair](https://github.com/jcernauske/sec_edgair), a production-grade SEC EDGAR financial data pipeline. Everything domain-specific was replaced with a discovery mechanism. Same rigor, any data. Field-tested with [sec_edgar_grist](https://github.com/jcernauske/sec_edgar_grist).
+Brightsmith was extracted from [sec_edgair](https://github.com/jcernauske/sec_edgair), a production-grade SEC EDGAR financial data pipeline. Everything domain-specific was replaced with a discovery mechanism. Same rigor, any data. Field-tested with [sec-edgar-brightsmith](https://github.com/jcernauske/sec_edgar_grist).
 
 ## Install as Claude Code Plugin
 
@@ -24,56 +24,64 @@ Grist was extracted from [sec_edgair](https://github.com/jcernauske/sec_edgair),
 /plugin install    # point to this repo's git URL
 
 # Or test locally:
-claude --plugin-dir ~/code/grist
+claude --plugin-dir ~/code/brightsmith
 ```
 
-Once installed, three skills are available:
+## Skills (Metallurgy-Themed)
 
-| Skill | What It Does |
-|-------|-------------|
-| `/grist:init my-project` | Scaffold a new domain project |
-| `/brightsmith.run raw-ingest-foo` | Run the pipeline for a spec |
-| `/grist:status` | Dashboard of project state |
+| Skill | Metaphor | What It Does |
+|-------|----------|-------------|
+| `/bs:init SEC EDGAR` | — | Scaffold a new domain project |
+| `/bs:mine raw-ingest-foo` | ⛏️ Mining | Run the Bronze zone pipeline |
+| `/bs:smelt base-foo` | ⚒️ Smelting | Run the Silver zone pipeline |
+| `/bs:cast consumable-foo` | 🥇 Casting | Run the Gold zone pipeline |
+| `/bs:serve` | 🚀 Serving | Start the MCP server |
+| `/bs:assay foo` | 🔬 Assaying | Full DQ audit (rules, chaos monkey, golden datasets, contracts) |
+| `/bs:stamp foo` | 🔏 Stamping | Generate and verify data contracts |
+| `/bs:run foo` | — | Auto-detect zone and run the right pipeline |
+| `/bs:status` | — | Dashboard of project state |
 
-All 24 agents are available as subagents (`@setup`, `@chaos-monkey`, `@staff-engineer`, etc.).
+Each zone skill prints a celebration summary on completion with real stats — tables created, DQ rules active, business terms defined, artifacts produced, and links to everything.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Domain Pack                            │
-│  manifest.yaml · sources/*.yaml · BaseIngestor subclass     │
-└─────────────────┬───────────────────────────────────────────┘
-                  │
-    ┌─────────────▼─────────────┐
-    │         Bronze Zone          │  Ingest as-is, metadata enrichment, dedup
-    │   Iceberg tables (DuckDB) │
-    └─────────────┬─────────────┘
-                  │
-    ┌─────────────▼─────────────┐
-    │   Domain Discovery        │  @data-analyst EDA → @domain-context synthesis
-    │   + User Interview        │  → governance/domain-context.md
-    └─────────────┬─────────────┘
-                  │
-    ┌─────────────▼─────────────┐
-    │        Silver Zone          │  Normalize, resolve entities, map concepts
-    │   Governed, modeled       │  3-stage data models (conceptual → logical → physical)
-    └─────────────┬─────────────┘
-                  │
-    ┌─────────────▼─────────────┐
-    │     Gold Zone       │  Data products: ratios, comparisons, aggregations
-    │   Contracted, documented  │  Golden dataset validation
-    └─────────────┬─────────────┘
-                  │
-    ┌─────────────▼─────────────┐
-    │      MCP Zone        │  Tool-use chat agent, grounding docs, eval sets
-    │   Governed AI consumption │
-    └───────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│                        Domain Pack                            │
+│    manifest.yaml · sources/*.yaml · BaseIngestor subclass     │
+└─────────────────────┬─────────────────────────────────────────┘
+                      │
+      ┌───────────────▼───────────────┐
+      │        ⛏️ Bronze Zone          │  Ingest as-is, metadata enrichment, dedup
+      │     Iceberg tables (DuckDB)   │
+      └───────────────┬───────────────┘
+                      │
+      ┌───────────────▼───────────────┐
+      │      Domain Discovery         │  @data-analyst EDA → @domain-context synthesis
+      │      + User Interview         │  → governance/domain-context.md
+      └───────────────┬───────────────┘
+                      │
+      ┌───────────────▼───────────────┐
+      │        ⚒️ Silver Zone          │  Normalize, resolve entities, map concepts
+      │     Governed, modeled         │  3-stage data models (conceptual → logical → physical)
+      └───────────────┬───────────────┘
+                      │
+      ┌───────────────▼───────────────┐
+      │        🥇 Gold Zone            │  Data products: ratios, comparisons, aggregations
+      │     Contracted, documented    │  Golden dataset validation
+      └───────────────┬───────────────┘
+                      │
+      ┌───────────────▼───────────────┐
+      │        🤖 MCP Zone             │  Tool-use chat agent, grounding docs, eval sets
+      │     Governed AI consumption   │
+      └───────────────────────────────┘
 ```
 
 ## Agent Pipeline
 
 Brightsmith uses **24 specialized AI agents** orchestrated through a spec-driven workflow. Every piece of code, every governance artifact, every data transformation traces back to a spec.
+
+Each agent runs in its own context window with a dedicated persona. A PreToolUse hook enforces that every agent call includes `subagent_type` — it's physically impossible to launch a nameless agent.
 
 ### Bronze Zone Pipeline
 | Step | Agent | What It Does |
@@ -91,15 +99,17 @@ Brightsmith uses **24 specialized AI agents** orchestrated through a spec-driven
 | 11 | @governance-reviewer | Post-implementation completeness check |
 | 12 | @staff-engineer | Final quality gate + data correctness spot-check |
 
-### Base & Gold Zone Pipeline
-Same as Raw, plus:
+### Silver & Gold Zone Pipeline
+Same as Bronze, plus:
 - @data-steward — business term identification and glossary management
 - @semantic-modeler — 3-stage data modeling (conceptual → logical → physical) with human approval gates
 - @entity-resolver — canonical entity mapping across source identifiers
 - @temporal-modeler — bitemporal schema design (valid time + Iceberg transaction time)
 
 ### Zone Transitions
-@insight-manager runs at **silver-to-gold** and **gold-to-mcp** transitions — analyzes completed data, recommends data products, suggests chat agent design, and provides verification criteria for each recommendation.
+At every zone boundary:
+1. @principal-data-architect — **blocking** architecture review of the completed zone
+2. @insight-manager — strategic analysis recommending data products for the next zone (silver→gold and gold→mcp only)
 
 ### Governance & Quality Agents
 | Agent | Role |
@@ -120,22 +130,30 @@ Same as Raw, plus:
 
 ## Key Framework Utilities
 
-| Component | Path | Purpose |
-|-----------|------|---------|
-| Base ingestor | `grist.raw.base_ingestor` | Abstract ingestor with dedup, metadata, snapshots |
-| **Period disambiguator** | `brightsmith.infra.period_disambiguator` | **Temporal period classification using date-span analysis** — prevents the class of bug that corrupted 17% of sec_edgar_grist data |
-| **Chaos monkey** | `brightsmith.infra.chaos_monkey` | **Schema-agnostic adversarial testing** — introspects PyIceberg schemas, injects type-appropriate corruptions, reconciles with After-Action Reports |
-| **Integration test harness** | `brightsmith.infra.integration_test_harness` | **Golden dataset validation** — compares pipeline output to known-correct reference values |
-| **Base chat agent** | `grist.ai_ready.base_chat_agent` | **MCP zone base class** — Anthropic SDK setup, tool registration, Iceberg query execution |
+| Component | Module | Purpose |
+|-----------|--------|---------|
+| Base ingestor | `brightsmith.raw.base_ingestor` | Abstract ingestor with dedup, metadata, snapshots |
+| Period disambiguator | `brightsmith.infra.period_disambiguator` | Temporal period classification using date-span analysis |
+| Chaos monkey | `brightsmith.infra.chaos_monkey` | Schema-agnostic adversarial testing with type-appropriate corruptions |
+| Integration test harness | `brightsmith.infra.integration_test_harness` | Golden dataset validation against known-correct reference values |
+| Base chat agent | `brightsmith.ai_ready.base_chat_agent` | MCP zone base class — Anthropic SDK, tool registration, Iceberg queries |
 | Iceberg setup | `brightsmith.infra.iceberg_setup` | Table creation, append, read via PyIceberg + DuckDB |
-| DQ runner | `brightsmith.infra.dq_runner` | Execute SQL rules against Iceberg, threshold evaluation, P0 gating, `--shadow` flag for chaos monkey |
-| DQ scorecard | `brightsmith.infra.dq_scorecard` | Generate markdown scorecards from real results |
+| DQ runner | `brightsmith.infra.dq_runner` | Execute SQL rules against Iceberg, threshold evaluation, P0 gating |
+| DQ scorecard | `brightsmith.infra.dq_scorecard` | Markdown scorecards from real execution results |
 | Lineage | `brightsmith.infra.lineage` | OpenLineage event emission to Iceberg |
 | Staging | `brightsmith.infra.staging` | Proposal staging, confidence-based approval gates |
+| Pipeline gate | `brightsmith.infra.pipeline_gate` | State machine tracking every agent step per spec |
+| Promote | `brightsmith.infra.promote` | Idempotent table promotion with grain-based dedup |
+| Grain | `brightsmith.infra.grain` | Deterministic record IDs via `compute_grain_id()` |
+| Contract | `brightsmith.infra.contract` | Data contract generation, verification, diff, lifecycle |
+| Golden dataset | `brightsmith.infra.golden_dataset` | Verify pipeline output against reference values |
+| Verification | `brightsmith.infra.verification` | Correctness validation ("is this number right?") |
+| Glossary validator | `brightsmith.infra.glossary_validator` | Validate 14-field business term completeness |
 | Glossary loader | `brightsmith.infra.glossary_loader` | Three-tier glossary composition (standards → domains → project) |
-| Domain loader | `grist.domain_loader` | Manifest parsing, source config, hints resolution |
-| Concept normalizer | `grist.base.concept_normalization` | Tiered matching (exact → prefix → pattern → heuristic) |
-| Setup CLI | `grist.setup` | `python -m brightsmith.setup init` — scaffold domain projects |
+| Concept normalizer | `brightsmith.base.concept_normalization` | Tiered matching (exact → prefix → pattern → heuristic) |
+| Domain loader | `brightsmith.domain_loader` | Manifest parsing, source config, hints resolution |
+| Headless runner | `brightsmith.run` | Full pipeline without AI agents — `--zone`, `--validate-only`, `--dry-run` |
+| Setup CLI | `brightsmith.setup` | `python -m brightsmith.setup init` — scaffold domain projects |
 
 ## Domain Discovery → Domain Context
 
@@ -218,7 +236,7 @@ Every transformation produces governance metadata:
 | Artifact | Location | Purpose |
 |----------|----------|---------|
 | Domain context | `governance/domain-context.md` | Canonical domain knowledge |
-| Business glossary | `governance/business-glossary.json` | Approved business term definitions |
+| Business glossary | `governance/business-glossary.json` | Approved business term definitions (14 fields per term) |
 | CDE catalog | `governance/cde-catalog.json` | Critical Data Element mappings |
 | DQ rules | `governance/dq-rules/*.json` | SQL-based validation (P0/P1/P2 priority) |
 | DQ rule templates | `governance/dq-rule-templates/` | Mandatory patterns for gold zone |
@@ -227,26 +245,30 @@ Every transformation produces governance metadata:
 | Golden datasets | `governance/golden-datasets/` | Known-correct reference values |
 | Data models | `governance/models/` | Conceptual, logical, physical (Mermaid ER diagrams) |
 | Data dictionary | `governance/data-dictionary.json` | Plain-English field definitions |
-| Data contracts | `governance/data-contracts/` | Schema + SLA + quality guarantees |
+| Data contracts | `governance/data-contracts/` | Schema + SLA + quality guarantees (DRAFT → ACTIVE → DEPRECATED) |
 | Lineage | `governance/lineage/` | OpenLineage events per transformation |
 | Entity registry | `governance/entity-registry.json` | Canonical entity mappings |
 | PII scans | `governance/pii-scans/` | Sensitivity classifications |
 | Access policies | `governance/policies/` | RLS, masking, retention, AI consumption |
 | EDA reports | `governance/eda/` | Statistical profiling + domain discovery |
-| Insight reports | `governance/insights/` | Zone transition analysis |
+| Insight reports | `governance/insights/` | Zone transition analysis + data product recommendations |
 | Chaos manifests | `governance/chaos-manifests/` | Injection records + After-Action Reports |
-| Reviews | `governance/reviews/` | Governance review reports |
-| Audit trail | `governance/audit-trail/` | Every agent decision logged |
+| Reviews | `governance/reviews/` | Architecture and governance review reports |
+| Audit trail | `governance/audit-trail/` | Every agent decision, approval, and skip logged |
+| Pipeline state | `governance/pipeline-state/` | Programmatic gate enforcement per spec |
+| Run history | `governance/run-history/` | Headless pipeline execution logs |
+| Approvals | `governance/approvals/` | Plain-English approval documents for human gates |
 
 ## Human-in-the-Loop
 
-`REQUIRE_HUMAN_APPROVAL` in `src/brightsmith.config.py` is the single global toggle (or set `BRIGHTSMITH_REQUIRE_HUMAN_APPROVAL=false` env var).
+`REQUIRE_HUMAN_APPROVAL` in `src/brightsmith/config.py` is the single global toggle (or set `BRIGHTSMITH_REQUIRE_HUMAN_APPROVAL=false` env var).
 
 When `True`:
 - Business terms require human approval before use in models
 - Data models pause at each stage (conceptual → logical → physical) for review
 - Entity resolution proposals below confidence 0.7 require human review
 - DQ rules require approval before activation
+- Plain-English approval documents are generated at each gate
 
 When `False` (dev/demo mode):
 - All artifacts are still produced, just auto-approved
@@ -261,49 +283,43 @@ When `False` (dev/demo mode):
 /plugin install    # point to git URL
 
 # Scaffold a domain project
-/grist:init sec-edgar
+/bs:init SEC EDGAR financial filings
 
-# Work through specs with the agent pipeline
-/brightsmith.run raw-ingest-company-facts
-/grist:status
+# The setup agent asks for your email, then scaffolds everything.
+# cd into the project, then:
+
+/bs:mine raw-ingest-company-facts    # Bronze zone
+/bs:smelt base-financial-facts       # Silver zone
+/bs:cast consumable-financial-ratios  # Gold zone
+/bs:serve                            # Start MCP server
+
+# Check status anytime:
+/bs:status
+
+# Run DQ audit:
+/bs:assay raw-ingest-company-facts
 ```
 
-### Option 2: Scaffolded by @setup agent
-
-In a Claude Code session with Brightsmith installed:
-
-```
-You: I want to ingest SEC EDGAR XBRL company facts
-@setup: [asks a few questions about the data source, entities, fetch method]
-@setup: [creates full project structure with domain pack, ingestor skeleton,
-         first spec, governance directories, CLAUDE.md, pyproject.toml]
-You: uv sync && uv run pytest  # works on first try
-```
-
-### Option 3: CLI scaffolding
+### Option 2: Headless Pipeline
 
 ```bash
-pip install git+https://github.com/jcernauske/grist.git
-python -m brightsmith.setup init --name my-project
-cd my-project && uv sync
+pip install git+https://github.com/jcernauske/brightsmith.git
+
+# Run the full pipeline without AI agents
+python -m brightsmith.run --zone bronze
+python -m brightsmith.run --zone silver
+python -m brightsmith.run --zone gold
+
+# Validate only (no transforms)
+python -m brightsmith.run --validate-only
+
+# Check readiness
+python -m brightsmith.run --headless-ready
 ```
 
-### Option 4: Manual setup
+### Framework vs Domain Work
 
-```bash
-mkdir my-project && cd my-project
-uv init && uv add grist@git+https://github.com/jcernauske/grist.git
-
-mkdir -p domain/sources governance src/raw docs/specs
-
-# Write your ingestor extending BaseIngestor
-# Configure domain/manifest.yaml and domain/sources/
-# Write your first spec in docs/specs/
-```
-
-### Framework enhancements vs domain work
-
-If you improve the framework (fix a bug in `dq_runner.py`, add a feature to `BaseIngestor`), push it to grist. If you build domain-specific artifacts (ingestors, governance, specs), those stay in your domain project. Clean separation — grist never gets polluted with domain data.
+If you improve the framework (fix a bug in `dq_runner.py`, add a feature to `BaseIngestor`), push it to brightsmith. If you build domain-specific artifacts (ingestors, governance, specs), those stay in your domain project. Clean separation — brightsmith never gets polluted with domain data.
 
 ## What You Provide (Domain Pack)
 
@@ -311,10 +327,9 @@ If you improve the framework (fix a bug in `dq_runner.py`, add a feature to `Bas
 |------|-------|---------|
 | Manifest | `domain/manifest.yaml` | How to acquire your data |
 | Source config | `domain/sources/*.yaml` | Entity IDs, fetch methods, dedup grain |
-| Ingestor | `src/bronze/my_ingestor.py` | `fetch()` and `flatten()` (imports `from brightsmith.raw import BaseIngestor`) |
+| Ingestor | `src/raw/my_ingestor.py` | `fetch()` and `flatten()` (extends `brightsmith.raw.BaseIngestor`) |
 | Concept mappings | `domain/concept-mappings/*.json` | Taxonomy → business term mappings (optional — discovery mode if absent) |
 | Glossaries | `glossaries/` | Standard/domain term definitions (optional) |
-| DQ rules | `governance/dq-rules/*.json` | SQL validation rules (or let @dq-rule-writer generate from EDA) |
 
 ## Stack
 
@@ -326,24 +341,39 @@ If you improve the framework (fix a bug in `dq_runner.py`, add a feature to `Bas
 
 ## Session Logging
 
-Every Claude Code session is logged to `docs/sessions/` for transparency and continuity. Logs capture: exact prompt, specs referenced, files changed, decisions made, problems encountered.
+Every Claude Code session is logged to `docs/sessions/` for transparency and continuity. Logs capture: exact prompt, all human input (verbatim), specs referenced, files changed, decisions made, problems encountered. The Human Input Log is the authoritative record of human involvement — if it's not logged, it didn't happen.
 
 ## Project Structure
 
 ```
-grist/
+brightsmith/
 ├── .claude-plugin/               Claude Code plugin manifest
 │   └── plugin.json
-├── skills/                       Plugin skills (/grist:init, /brightsmith.run, /grist:status)
-├── hooks/                        Plugin hooks (auto-install on session start)
-├── src/brightsmith/                    Framework package (pip-installable)
+├── skills/                       Plugin skills (/bs:init, /bs:mine, /bs:smelt, etc.)
+│   ├── init/                     Scaffold new domain projects
+│   ├── mine/                     Bronze zone pipeline
+│   ├── smelt/                    Silver zone pipeline
+│   ├── cast/                     Gold zone pipeline
+│   ├── serve/                    Start MCP server
+│   ├── assay/                    Full DQ audit
+│   ├── stamp/                    Data contract management
+│   ├── run/                      Auto-detect zone and run
+│   └── status/                   Project state dashboard
+├── hooks/                        Plugin hooks
+│   ├── hooks.json                Hook config (SessionStart, PreToolUse)
+│   └── require-subagent-type.sh  Enforces subagent_type on all Agent calls
+├── agents/                       Plugin agent definitions (copied to consumer projects)
+├── src/brightsmith/              Framework package (pip-installable)
 │   ├── config.py                 Global config (env var overrides for domain projects)
 │   ├── domain_loader.py          Manifest + source config parsing
 │   ├── setup.py                  Domain project scaffolding CLI
+│   ├── run.py                    Headless pipeline runner
 │   ├── raw/                      Bronze zone (BaseIngestor)
 │   ├── base/                     Silver zone (concept normalization)
+│   ├── consumable/               Gold zone (data products)
 │   ├── ai_ready/                 MCP zone (BaseChatAgent)
 │   └── infra/                    Cross-cutting infrastructure
+│       ├── pipeline_gate.py         State machine + CLI for spec tracking
 │       ├── period_disambiguator.py  Temporal period classification
 │       ├── chaos_monkey/            Adversarial DQ testing
 │       ├── integration_test_harness.py  Golden dataset validation
@@ -351,15 +381,18 @@ grist/
 │       ├── dq_scorecard.py          Scorecard generator
 │       ├── iceberg_setup.py         PyIceberg + DuckDB bridge
 │       ├── lineage.py               OpenLineage events
+│       ├── promote.py               Idempotent table promotion
+│       ├── grain.py                 Deterministic record IDs
+│       ├── contract.py              Data contract lifecycle
+│       ├── golden_dataset.py        Reference value verification
+│       ├── verification.py          Correctness validation
+│       ├── glossary_validator.py    Business term completeness
+│       ├── glossary_loader.py       Three-tier glossary composition
 │       └── staging.py               Proposal staging
 ├── .claude/
-│   └── agents/                   24 agent definitions (also served by plugin)
+│   └── agents/                   24 agent definitions (also in agents/ for plugin)
 ├── domain/                       Domain pack (your data source config)
-├── governance/                   All governance artifacts
-│   ├── dq-rule-templates/        Mandatory gold zone patterns
-│   ├── golden-datasets/          Known-correct reference values
-│   ├── chaos-manifests/          Injection records + After-Action Reports
-│   └── ...                       (20+ artifact directories)
+├── governance/                   All governance artifacts (20+ directories)
 ├── docs/
 │   ├── specs/                    Spec-driven development
 │   └── sessions/                 Claude Code session logs
