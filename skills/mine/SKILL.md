@@ -54,3 +54,38 @@ If you catch yourself about to invoke Agent() without `subagent_type`, STOP. You
    - `entity-resolver`, `pii-scanner`, `temporal-modeler`, `adversarial-auditor`
 
 5. Report final status: `python3 -m brightsmith.infra.pipeline_gate validate "$ARGUMENTS"`
+
+## 🎉 Zone Celebration (after pipeline validates)
+
+After the pipeline gate validates successfully, gather real stats and print a celebration summary. Use Bash/Glob/Grep to count actual artifacts, then output this to the user:
+
+```
+⛏️🔥 BRONZE ZONE FORGED — "$ARGUMENTS" ⛏️🔥
+
+Congratulations! You've mined raw ore from the source and forged it into bronze.
+
+📊 Tables: [count raw.* tables in Iceberg catalog]
+📏 Rows: [total row count across raw tables]
+🔍 DQ Rules: [count rules in governance/dq-rules/ for this spec] across [count unique dimensions] dimensions
+🛡️ Chaos Monkey: [X] hardening cycles survived
+📖 Domain Context: governance/domain-context.md
+🧬 Lineage Events: [count in governance/lineage/]
+🏷️ CDE Mappings: [count in governance/cde-catalog.json]
+
+📋 Artifacts Created:
+  • Spec: docs/specs/$ARGUMENTS.md
+  • EDA Report: governance/eda/[filename]
+  • Domain Context: governance/domain-context.md
+  • DQ Rules: governance/dq-rules/[filename]
+  • DQ Scorecard: governance/dq-scorecards/[filename]
+  • Chaos Manifest: governance/chaos-manifests/[filename]
+  • Lineage: governance/lineage/[filename]
+  • Data Dictionary: governance/data-dictionary.json
+  • Pipeline Checklist: governance/audit-trail/$ARGUMENTS-pipeline-checklist.md
+  • Staff Engineer Review: governance/reviews/[filename]
+
+🔜 Next: Run /bs:smelt to refine this raw ore into clean silver.
+   First, @principal-data-architect will review the zone architecture.
+```
+
+Replace bracketed values with real counts from the filesystem. If a count is zero or a file doesn't exist, omit that line rather than showing zeros. Make the links clickable file paths.

@@ -98,3 +98,7 @@ python3 -m brightsmith.infra.pipeline_gate validate "$ARGUMENTS"
 - pii-scanner — skip only if domain-context.md PII section says no PII expected
 - temporal-modeler — skip only if no temporal data exists
 - adversarial-auditor — skip only if @chaos-monkey found no gaps in 5 cycles
+
+## 🎉 Spec Celebration (after pipeline validates)
+
+After the pipeline gate validates successfully, print the appropriate zone celebration based on which zone this spec belongs to. Use the same celebration format as the zone-specific skills (/bs:mine, /bs:smelt, /bs:cast). Gather real stats from the filesystem — don't guess or use placeholders.
