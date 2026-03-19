@@ -45,6 +45,28 @@
       "when": "Always — every consumable spec must have a golden dataset before @staff-engineer review",
       "mandatory": true,
       "skip_requires": "human_override"
+    },
+    {
+      "pattern_id": "CONS-COLLISION-RESOLVED",
+      "dimension": "Uniqueness",
+      "priority": "P0",
+      "description": "After collision resolution, no duplicate concepts per entity-period. If concept normalization maps multiple source codes to the same canonical concept, collision resolution must produce exactly one value per grain.",
+      "sql_template": "SELECT COUNT(*) FROM (SELECT {entity_id}, canonical_concept, {period_fields}, COUNT(*) AS cnt FROM {table} GROUP BY {entity_id}, canonical_concept, {period_fields} HAVING cnt > 1)",
+      "threshold": "result = 0",
+      "when": "When the spec uses concept normalization with multi-source mappings",
+      "mandatory": true,
+      "skip_requires": "human_override"
+    },
+    {
+      "pattern_id": "CONS-COVERAGE-FLOOR",
+      "dimension": "Coverage",
+      "priority": "P1",
+      "description": "Mapped concepts cover >= threshold of base rows. If concept normalization is in use, a minimum percentage of source records should map to a canonical concept.",
+      "sql_template": "SELECT CAST(COUNT(*) FILTER (WHERE canonical_concept IS NOT NULL) AS DOUBLE) * 100.0 / COUNT(*) FROM {table}",
+      "threshold": "result >= {coverage_pct}",
+      "when": "When concept normalization is in use",
+      "mandatory": false,
+      "skip_requires": "documented_rationale"
     }
   ]
 }

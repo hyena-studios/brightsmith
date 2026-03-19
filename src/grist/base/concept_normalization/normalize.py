@@ -2,6 +2,13 @@
 
 Loads concept → business term mappings from JSON config files.
 Works with any taxonomy — XBRL, CPT codes, meter types, etc.
+
+Usage:
+    from grist.base.concept_normalization import ConceptNormalizer
+    normalizer = ConceptNormalizer(mappings_dir)
+    result = normalizer.classify("RevenueFromContractWithCustomer")
+    print(result.confidence)  # 0.7
+    print(result.requires_approval)  # False (at floor)
 """
 
 from __future__ import annotations
@@ -9,9 +16,68 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class NormalizationResult:
+    """Structured result from concept normalization.
+
+    Every normalization call returns this instead of a bare dict.
+    Confidence scores drive approval gates, DQ rules, and manual review.
+    """
+
+    source_key: str
+    """The raw classification code/tag/identifier that was classified."""
+
+    canonical_concept: str | None
+    """The business term name this maps to, or None if unmapped."""
+
+    business_term_id: str | None
+    """Business glossary term ID (e.g., BT-024), or None if unmapped."""
+
+    financial_statement: str | None
+    """Which category/group this belongs to (domain-agnostic name kept for compatibility)."""
+
+    category: str | None
+    """Sub-classification within the statement/group."""
+
+    tier: int
+    """Match tier: 1=exact, 2=prefix, 3=pattern, 4=heuristic, 0=unmapped."""
+
+    confidence: float
+    """Confidence score: 1.0 (exact), 0.7 (prefix), 0.6 (pattern), 0.3 (heuristic), 0.0 (unmapped)."""
+
+    match_method: str
+    """How the match was made: exact_match, prefix_match, pattern_match, heuristic, unmapped."""
+
+    matched_rule: str | None
+    """Which specific rule triggered the match (e.g., prefix string, pattern regex)."""
+
+    source_mapping: str | None
+    """Which mapping file produced this result."""
+
+    requires_approval: bool
+    """True if confidence < CONFIDENCE_FLOOR and human approval is needed."""
+
+    def to_dict(self) -> dict:
+        """Convert to dict for backward compatibility and serialization."""
+        return {
+            "source_key": self.source_key,
+            "business_term_id": self.business_term_id,
+            "business_term": self.canonical_concept,
+            "financial_statement": self.financial_statement,
+            "category": self.category,
+            "tier": self.tier,
+            "confidence": self.confidence,
+            "mapping_method": self.match_method,
+            "matched_rule": self.matched_rule,
+            "source_mapping": self.source_mapping,
+            "requires_approval": self.requires_approval,
+        }
 
 
 class ConceptNormalizer:
@@ -114,21 +180,18 @@ class ConceptNormalizer:
                 heuristic["category"],
             ))
 
-    def classify(self, concept: str) -> dict:
+    def classify(self, concept: str) -> NormalizationResult:
         """Classify a concept through the tier hierarchy.
 
+        Args:
+            concept: The raw classification code/tag to normalize.
+
         Returns:
-            {
-                "business_term_id": "BT-024" | None,
-                "business_term": "Revenue" | None,
-                "financial_statement": "income_statement" | None,
-                "category": "line_item" | None,
-                "tier": 1 | 2 | 3 | "unmapped",
-                "confidence": 1.0 | 0.7 | 0.6 | 0.3 | 0.0,
-                "mapping_method": "exact_match" | "prefix_match" | "pattern_match" | "heuristic" | "unmapped",
-                "source_mapping": "xbrl-us-gaap" | None
-            }
+            NormalizationResult with confidence score, tier, and approval flag.
+            Use result.to_dict() for backward-compatible dict format.
         """
+        from grist.config import CONFIDENCE_FLOOR
+
         self._classify_counts["total"] += 1
         source = self._source_mappings[0] if self._source_mappings else None
 
@@ -136,78 +199,111 @@ class ConceptNormalizer:
         if not self._exact_mappings and not self._prefix_rules and not self._pattern_rules:
             self._classify_counts["unmapped"] += 1
             self._unmapped_concepts.append(concept)
-            return {
-                "business_term_id": None,
-                "business_term": None,
-                "financial_statement": None,
-                "category": None,
-                "tier": "unmapped",
-                "confidence": 0.0,
-                "mapping_method": "unmapped",
-                "source_mapping": None,
-            }
+            return NormalizationResult(
+                source_key=concept,
+                canonical_concept=None,
+                business_term_id=None,
+                financial_statement=None,
+                category=None,
+                tier=0,
+                confidence=0.0,
+                match_method="unmapped",
+                matched_rule=None,
+                source_mapping=None,
+                requires_approval=False,
+            )
 
-        # Tier 1: Exact match
+        # Tier 1: Exact match (confidence 1.0)
         if concept in self._exact_mappings:
             business_term_id, stmt, cat = self._exact_mappings[concept]
             bt_name = self._business_terms.get(business_term_id, {}).get("name")
             self._classify_counts["tier_1"] += 1
-            return {
-                "business_term_id": business_term_id,
-                "business_term": bt_name,
-                "financial_statement": stmt,
-                "category": cat,
-                "tier": 1,
-                "confidence": 1.0,
-                "mapping_method": "exact_match",
-                "source_mapping": source,
-            }
+            return NormalizationResult(
+                source_key=concept,
+                canonical_concept=bt_name,
+                business_term_id=business_term_id,
+                financial_statement=stmt,
+                category=cat,
+                tier=1,
+                confidence=1.0,
+                match_method="exact_match",
+                matched_rule=concept,
+                source_mapping=source,
+                requires_approval=False,
+            )
 
         # Tier 2: Prefix match (confidence 0.7)
         for prefix, business_term_id, stmt, cat in self._prefix_rules:
             if concept.startswith(prefix):
                 bt_name = self._business_terms.get(business_term_id, {}).get("name")
                 self._classify_counts["tier_2_prefix"] += 1
-                return {
-                    "business_term_id": business_term_id,
-                    "business_term": bt_name,
-                    "financial_statement": stmt,
-                    "category": cat,
-                    "tier": 2,
-                    "confidence": 0.7,
-                    "mapping_method": "prefix_match",
-                    "source_mapping": source,
-                }
+                return NormalizationResult(
+                    source_key=concept,
+                    canonical_concept=bt_name,
+                    business_term_id=business_term_id,
+                    financial_statement=stmt,
+                    category=cat,
+                    tier=2,
+                    confidence=0.7,
+                    match_method="prefix_match",
+                    matched_rule=prefix,
+                    source_mapping=source,
+                    requires_approval=0.7 < CONFIDENCE_FLOOR,
+                )
 
-        # Tier 2: Pattern match (confidence 0.6)
+        # Tier 3: Pattern match (confidence 0.6)
         for pattern, business_term_id, stmt, cat in self._pattern_rules:
             if re.match(pattern, concept):
                 bt_name = self._business_terms.get(business_term_id, {}).get("name")
                 self._classify_counts["tier_2_pattern"] += 1
-                return {
-                    "business_term_id": business_term_id,
-                    "business_term": bt_name,
-                    "financial_statement": stmt,
-                    "category": cat,
-                    "tier": 2,
-                    "confidence": 0.6,
-                    "mapping_method": "pattern_match",
-                    "source_mapping": source,
-                }
+                return NormalizationResult(
+                    source_key=concept,
+                    canonical_concept=bt_name,
+                    business_term_id=business_term_id,
+                    financial_statement=stmt,
+                    category=cat,
+                    tier=3,
+                    confidence=0.6,
+                    match_method="pattern_match",
+                    matched_rule=pattern,
+                    source_mapping=source,
+                    requires_approval=0.6 < CONFIDENCE_FLOOR,
+                )
 
-        # Tier 3: Unmapped — assign heuristic category
+        # Tier 4: Heuristic category fallback (confidence 0.3)
         stmt, cat = self._heuristic_category(concept)
-        self._classify_counts["tier_3"] += 1
-        return {
-            "business_term_id": None,
-            "business_term": None,
-            "financial_statement": stmt,
-            "category": cat,
-            "tier": 3,
-            "confidence": 0.0,
-            "mapping_method": "unmapped",
-            "source_mapping": source,
-        }
+        if stmt != "other":
+            self._classify_counts["tier_3"] += 1
+            return NormalizationResult(
+                source_key=concept,
+                canonical_concept=None,
+                business_term_id=None,
+                financial_statement=stmt,
+                category=cat,
+                tier=4,
+                confidence=0.3,
+                match_method="heuristic",
+                matched_rule=None,
+                source_mapping=source,
+                requires_approval=0.3 < CONFIDENCE_FLOOR,
+            )
+
+        # Tier 0: Truly unmapped
+        self._classify_counts["unmapped"] += 1
+        self._unmapped_concepts.append(concept)
+        return NormalizationResult(
+            source_key=concept,
+            canonical_concept=None,
+            business_term_id=None,
+            financial_statement=stmt,
+            category=cat,
+            tier=0,
+            confidence=0.0,
+            match_method="unmapped",
+            matched_rule=None,
+            source_mapping=source,
+            requires_approval=False,
+        )
 
     def _heuristic_category(self, concept: str) -> tuple[str, str]:
         """Assign a heuristic category based on substrings."""

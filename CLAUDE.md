@@ -29,6 +29,8 @@ Grist is a domain-agnostic AI agent data pipeline framework that transforms raw 
 - Business glossary: `governance/business-glossary.json`
 - Pipeline state: `governance/pipeline-state/` (programmatic gate enforcement per spec)
 - Pipeline gate module: `src/grist/infra/pipeline_gate.py` (state machine + CLI)
+- Data contracts: `governance/data-contracts/` (machine-readable YAML per table)
+- Contract module: `src/grist/infra/contract.py` (generate, verify, diff, list CLI)
 - Human approval documents: `governance/approvals/` (plain-English review docs for approval gates)
 - Audit trail: `governance/audit-trail/` (approval decisions, skip justifications, pipeline checklists)
 - Specs: `docs/specs/`
@@ -182,7 +184,18 @@ This step is SKIPPABLE only if the @principal-data-architect explicitly approves
 - DQ scorecards must be generated from real execution results (`python -m grist.infra.dq_runner scorecard`), not test results
 - @governance-reviewer post-implementation check verifies: DQ rules exist, rules have been executed (results file exists), no P0 failures in latest results
 - Domain packs extend `BaseIngestor` and implement `fetch()`, `flatten()`, and `get_schema()` — the framework handles Iceberg table management, dedup, metadata enrichment, and snapshot management
-- Concept normalization uses a tiered matching engine (exact → prefix → pattern → heuristic) with discovery mode when no mappings exist
+- Concept normalization uses a tiered matching engine (exact → prefix → pattern → heuristic) with discovery mode when no mappings exist. Returns `NormalizationResult` with confidence scores (1.0=exact, 0.7=prefix, 0.6=pattern, 0.3=heuristic, 0.0=unmapped). Mappings below `CONFIDENCE_FLOOR` (0.7) require human approval.
+- Collision resolution rules must be defined at `governance/concept-normalization/collision-rules.json` when multiple source codes map to the same canonical concept. @data-steward produces these; approval required before consumable spec implementation.
+- Business glossary terms require 14 fields per term (see @data-steward agent definition). Validate with `python3 -m grist.infra.glossary_validator validate`.
+- `BaseIngestor.ingest()` auto-emits runtime lineage events — no manual lineage creation needed for raw zone. Base/consumable/ai-ready zone transformations should call `emit_start()`/`emit_complete()` from `grist.infra.lineage`.
+- @lineage-tracker is a verifier, not a creator — it checks that lineage events exist with runtime metadata (snapshot IDs, row counts, DQ metrics), not static templates.
+- Golden datasets are verified with `python3 -m grist.infra.golden_dataset verify --spec {spec}`. Pipeline gate enforces existence + minimum 3 values for consumable specs.
+- Verification framework (`python3 -m grist.infra.verification run`) validates correctness: "is this number right?" not just "is this column non-null?". Pass rate >= 80% required for AI-Ready zone.
+- @staff-engineer enforces minimum test counts per zone: Raw=10, Base=15, Consumable=15, AI-Ready=10, Integration=5. Specs below minimum get CHANGES REQUESTED.
+- Consumable and AI-ready zone tables MUST have a data contract at `governance/data-contracts/{table-name}.yaml`. @doc-generator generates it from the actual Iceberg table schema.
+- Data contracts are machine-readable YAML with schema, quality, lineage, and consumer sections. Verify with `python3 -m grist.infra.contract verify {name}`.
+- Breaking schema changes (column removed/renamed/type changed/grain changed) require a major version bump. Non-breaking changes (column added) require minor bump.
+- Contract lifecycle: DRAFT (generated) → ACTIVE (staff-engineer approved) → DEPRECATED (superseded). Active contracts are enforced on every pipeline run.
 - Base/Consumable specs involving temporal data MUST use PeriodDisambiguator (`src/grist/infra/period_disambiguator.py`) for period classification rather than ad-hoc period logic. The framework utility handles annual vs quarterly vs point-in-time classification using date-span analysis.
 - Every consumable spec MUST have a golden dataset (`governance/golden-datasets/{spec}-golden.json`) with at least 3 independently verifiable values before @staff-engineer review
 - AI-Ready zone specs MUST include an evaluation set (`data/ai_ready/eval/{spec}-eval.json`) with at least 50 mechanically verifiable Q&A cases before @staff-engineer review

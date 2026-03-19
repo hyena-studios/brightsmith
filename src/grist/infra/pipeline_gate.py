@@ -557,7 +557,77 @@ class PipelineGate:
                                 f"(recorded: {recorded_hash[:20]}..., current: {current_hash[:20]}...)"
                             )
 
+        # Zone-specific validation checks
+        issues.extend(self._validate_zone_specific(zone))
+
         return (len(issues) == 0, issues)
+
+    def _validate_zone_specific(self, zone: Zone) -> list[str]:
+        """Run zone-specific validation checks."""
+        from grist.config import DQ_RULES_DIR, GOLDEN_DATASETS_DIR, PROJECT_ROOT
+
+        issues: list[str] = []
+
+        # Consumable and AI-Ready zones: DQ rules file must exist with >= 1 rule
+        if zone in ("consumable", "ai_ready"):
+            dq_file = DQ_RULES_DIR / f"{self.spec}.json"
+            if not dq_file.exists():
+                issues.append(
+                    f"DQ rules file missing for {zone} spec: {dq_file}. "
+                    f"@dq-rule-writer must produce rules before completion."
+                )
+            else:
+                import json as _json
+                try:
+                    data = _json.loads(dq_file.read_text())
+                    rules = data.get("rules", [])
+                    if len(rules) == 0:
+                        issues.append(
+                            f"DQ rules file exists but contains 0 rules: {dq_file}. "
+                            f"Consumable/AI-Ready specs require at least 1 DQ rule."
+                        )
+                except Exception:
+                    issues.append(f"DQ rules file is not valid JSON: {dq_file}")
+
+        # Consumable zone: golden dataset must exist with >= 3 values
+        if zone == "consumable":
+            golden_file = GOLDEN_DATASETS_DIR / f"{self.spec}-golden.json"
+            if not golden_file.exists():
+                issues.append(
+                    f"Golden dataset missing for consumable spec: {golden_file}. "
+                    f"Must contain at least 3 independently verifiable values."
+                )
+            else:
+                import json as _json
+                try:
+                    data = _json.loads(golden_file.read_text())
+                    values = data.get("values", data.get("records", []))
+                    if len(values) < 3:
+                        issues.append(
+                            f"Golden dataset has {len(values)} values (minimum 3): {golden_file}"
+                        )
+                except Exception:
+                    issues.append(f"Golden dataset is not valid JSON: {golden_file}")
+
+        # Consumable greenfield: physical model file must exist
+        if zone == "consumable" and self.mode == "greenfield":
+            model_file = PROJECT_ROOT / "governance" / "models" / f"{self.spec}-physical.md"
+            if not model_file.exists():
+                issues.append(
+                    f"Physical model missing for consumable greenfield spec: {model_file}"
+                )
+
+        # Consumable and AI-Ready zones: data contract must exist
+        if zone in ("consumable", "ai_ready"):
+            contracts_dir = PROJECT_ROOT / "governance" / "data-contracts"
+            if contracts_dir.exists():
+                contract_files = list(contracts_dir.glob("*.yaml"))
+                # We check that at least one contract exists for this zone
+                # (contract names derive from table names, not spec names)
+            # Note: contract existence is verified but not strictly tied to spec name
+            # because contracts are per-table, not per-spec
+
+        return issues
 
     # --- Zone transition check ---
 

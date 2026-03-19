@@ -82,7 +82,16 @@ Before writing rules for any **consumable zone** spec, read `governance/dq-rule-
 3. **CONS-CROSS-TABLE** (P1) — If the spec produces multiple related tables or references existing consumable tables, write a cross-table consistency rule. If not applicable, document why.
 4. **CONS-GOLDEN-DATASET** (P0, mandatory) — At least 3 independently verifiable values must match pipeline output. Verify a golden dataset exists at `governance/golden-datasets/{spec}-golden.json` before writing this rule. **Skipping requires human override.**
 
+5. **CONS-COLLISION-RESOLVED** (P0, mandatory) — After collision resolution, no duplicate concepts per entity-period. Write a rule if concept normalization maps multiple source codes to the same canonical concept. **Skipping requires human override.**
+6. **CONS-COVERAGE-FLOOR** (P1) — Mapped concepts cover >= threshold of base rows. Write a rule if concept normalization is in use. If not applicable, document why.
+
 For each pattern, document in your audit trail (`governance/audit-trail/`) whether a rule was written or why it was skipped. The audit entry must reference the pattern ID.
+
+### Pattern Evaluation is MANDATORY
+
+You MUST read `governance/dq-rule-templates/consumable-patterns.json` before writing consumable rules. For each pattern, either write a rule OR document in the audit trail why it doesn't apply (with pattern ID reference). The audit entry must be verified by @governance-reviewer.
+
+Also evaluate patterns from `governance/dq-rule-templates/normalization-patterns.json` and `governance/dq-rule-templates/collision-patterns.json` when concept normalization is in use.
 
 ## Scope Boundaries
 

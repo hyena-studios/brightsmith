@@ -41,6 +41,10 @@ PROJECT_NAME = os.environ.get("GRIST_PROJECT_NAME", "grist")
 #   - DQ rule lifecycle: proposed → approved progression
 REQUIRE_HUMAN_APPROVAL = os.environ.get("GRIST_REQUIRE_HUMAN_APPROVAL", "true").lower() == "true"
 
+# Concept normalization confidence floor
+# Mappings below this threshold require human approval before promotion
+CONFIDENCE_FLOOR = float(os.environ.get("GRIST_CONFIDENCE_FLOOR", "0.7"))
+
 # Data quality paths
 DQ_RULES_DIR = PROJECT_ROOT / "governance" / "dq-rules"
 DQ_RESULTS_DIR = PROJECT_ROOT / "governance" / "dq-results"

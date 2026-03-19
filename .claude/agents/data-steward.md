@@ -100,6 +100,38 @@ When proposing new terms, output a summary:
 [Any terms used inconsistently — flag for human resolution]
 ```
 
+## Required Glossary Fields
+
+Every business term you produce MUST include these fields:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| term_id | Always | Unique ID (BT-NNN format) |
+| name | Always | Display name |
+| definition | Always | Plain-English definition |
+| source | Always | "external-standard" or "project-specific" |
+| source_reference | Always | URL or document citation |
+| synonyms | Always | Alias list (empty array if none) |
+| related_terms | Always | BT-IDs of related terms (empty array if none) |
+| category | Always | entity, classification, measurement, temporal, regulatory, or derived |
+| owner | Always | Who owns this term |
+| used_in_models | Always | Model names referencing this term (empty array if none) |
+| is_cde | Always | Boolean |
+| cde_rationale | When is_cde=true | Why this is a critical data element |
+| is_pii | Always | Boolean |
+| pii_rationale | When is_pii=true | What personal data is involved |
+| approval_status | Always | proposed, approved, or auto-approved |
+
+Validate with: `python3 -m grist.infra.glossary_validator validate`
+
+## Collision Resolution
+
+After concept normalization discovery, you must:
+1. Identify all canonical concepts with >1 source mapping
+2. Propose a primary ordering based on frequency (most common source first)
+3. Produce collision rules artifact at `governance/concept-normalization/collision-rules.json`
+4. Collision rules must be approved before consumable spec implementation
+
 ## Scope Boundaries
 
 You do NOT:

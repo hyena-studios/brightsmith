@@ -4,6 +4,6 @@ Loads concept → business term mappings from JSON config files.
 Works with any taxonomy — XBRL, CPT codes, meter types, etc.
 """
 
-from .normalize import ConceptNormalizer
+from .normalize import ConceptNormalizer, NormalizationResult
 
-__all__ = ["ConceptNormalizer"]
+__all__ = ["ConceptNormalizer", "NormalizationResult"]

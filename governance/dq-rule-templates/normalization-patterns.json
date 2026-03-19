@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "description": "DQ rule patterns for concept normalization quality. @dq-rule-writer must evaluate each pattern when a base zone spec includes concept normalization.",
+  "patterns": [
+    {
+      "pattern_id": "NORM-CONFIDENCE-RANGE",
+      "dimension": "Validity",
+      "priority": "P0",
+      "description": "All confidence scores must be in [0.0, 1.0]",
+      "sql_template": "SELECT COUNT(*) FROM {table} WHERE confidence < 0.0 OR confidence > 1.0",
+      "threshold": "result = 0",
+      "mandatory": true
+    },
+    {
+      "pattern_id": "NORM-COVERAGE-FLOOR",
+      "dimension": "Coverage",
+      "priority": "P1",
+      "description": "Mapped concepts must cover >= {coverage_pct}% of source rows",
+      "sql_template": "SELECT CAST(COUNT(*) FILTER (WHERE canonical_concept IS NOT NULL) AS DOUBLE) * 100.0 / COUNT(*) FROM {table}",
+      "threshold": "result >= {coverage_pct}",
+      "mandatory": true
+    },
+    {
+      "pattern_id": "NORM-TIER1-APPROVED",
+      "dimension": "Completeness",
+      "priority": "P0",
+      "description": "All Tier 1 (exact match) concepts must have an approved business term",
+      "sql_template": "SELECT COUNT(*) FROM {table} WHERE tier = 1 AND (business_term_id IS NULL OR approval_status != 'approved')",
+      "threshold": "result = 0",
+      "mandatory": true
+    }
+  ]
+}

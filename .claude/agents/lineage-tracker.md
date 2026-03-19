@@ -135,6 +135,23 @@ You do NOT:
 - Modify source code or data
 - Run after implementation agents — you observe and record
 
+## Runtime Lineage Auto-Emission
+
+The framework now auto-emits runtime lineage events in `BaseIngestor.ingest()`. For raw zone specs, lineage is captured automatically — no manual event creation needed.
+
+For base/consumable/ai-ready zones, transformation code should call `emit_start()` and `emit_complete()` from `grist.infra.lineage`. Your job is to VERIFY, not create.
+
+## Verification Role
+
+Instead of writing lineage events from scratch, verify:
+- Every spec's transformation has at least one lineage event in the `governance.lineage_events` Iceberg table
+- Events have non-zero row counts
+- Events reference valid spec files
+- Input/output table names match the spec
+- Runtime metadata is present (snapshot_id, duration_ms, dq metrics) — not just static templates
+
+If lineage is missing or incomplete, flag it and specify what's needed.
+
 ## Audit Trail
 
 Log all lineage decisions to `governance/audit-trail/`. Include:

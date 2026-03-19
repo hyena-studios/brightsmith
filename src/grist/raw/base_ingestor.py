@@ -212,4 +212,52 @@ class BaseIngestor(ABC):
         if total_skipped:
             print(f"Dedup summary: {total_new} new facts ingested, {total_skipped} duplicates skipped")
 
+        # Auto-emit runtime lineage event
+        self._emit_lineage(table, results, total_new, total_skipped)
+
         return results
+
+    def _emit_lineage(
+        self,
+        table,
+        results: dict,
+        total_new: int,
+        total_skipped: int,
+    ) -> None:
+        """Emit a runtime lineage event after ingest completes.
+
+        Fault-tolerant: logs warning on failure, never raises.
+        Domain projects get lineage for free — no agent needed for raw zone.
+        """
+        try:
+            from grist.infra.lineage import emit_start, emit_complete
+
+            source_url = self.get_source_url(
+                list(results.keys())[0] if results else "unknown",
+                "api",
+            )
+
+            run_id = emit_start(
+                job_name=f"ingest:{self.source.name}",
+                input_tables=[source_url],
+                output_table=self.source.full_table_name,
+                producer="BaseIngestor",
+            )
+
+            # Get latest snapshot ID
+            snapshot_id = None
+            for r in results.values():
+                if r.get("snapshot_id"):
+                    snapshot_id = r["snapshot_id"]
+
+            emit_complete(
+                run_id=run_id,
+                job_name=f"ingest:{self.source.name}",
+                output_table=self.source.full_table_name,
+                producer="BaseIngestor",
+                snapshot_id=snapshot_id,
+                row_count=total_new,
+                skipped_duplicates=total_skipped,
+            )
+        except Exception:
+            logger.warning("Failed to emit lineage event for %s", self.source.name, exc_info=True)

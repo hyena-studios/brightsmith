@@ -106,6 +106,23 @@ This document was generated from governed data in [table]. Full lineage from thi
 
 Save grounding documents to: `data/ai_ready/grounding/`
 
+## Data Contract Generation
+
+For consumable and AI-ready zone specs, generate a machine-readable data contract after implementation:
+
+```bash
+python3 -m grist.infra.contract generate --table {namespace.table} --spec {spec-path} --grain {grain-cols} --dq-rules {rules-path} --golden-dataset {golden-path}
+```
+
+The contract is generated from the actual Iceberg table schema — it reflects reality, not aspirations. Save to `governance/data-contracts/{table-name}.yaml`.
+
+After generating, set `status: draft`. The contract becomes `active` after `@staff-engineer` approves. When a table is superseded, set `status: deprecated`.
+
+If the contract already exists and the schema changed, detect breaking vs non-breaking changes and bump the version appropriately:
+- Column removed/renamed/type changed/grain changed → major bump (BREAKING)
+- Column added → minor bump (NON-BREAKING)
+- Description changed → patch bump
+
 ## Plain-English Requirement
 
 Every definition must pass the "explain it to a business analyst" test:

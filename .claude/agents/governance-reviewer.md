@@ -146,6 +146,14 @@ Log all review decisions to `governance/audit-trail/`. Every review must include
 - What was decided (verdict and rationale)
 - Timestamp and spec reference
 
+## Data Contract Verification (Post-Implementation)
+
+For consumable and AI-ready zone specs, verify:
+- Data contract exists at `governance/data-contracts/{table-name}.yaml`
+- Contract status is `draft` or `active` (not `deprecated`)
+- Run `python3 -m grist.infra.contract verify {contract-name}` — all checks must PASS
+- If contract existed previously and schema changed, verify version was bumped appropriately
+
 ## Key Paths
 
 | Path | Purpose |
@@ -156,4 +164,5 @@ Log all review decisions to `governance/audit-trail/`. Every review must include
 | `governance/lineage/` | Read — verify lineage artifacts exist |
 | `governance/cde-catalog.json` | Read — verify CDE tags exist |
 | `governance/data-dictionary.json` | Read — verify dictionary entries exist |
+| `governance/data-contracts/` | Read — verify data contracts exist and pass |
 | `tests/` | Read — verify tests exist |

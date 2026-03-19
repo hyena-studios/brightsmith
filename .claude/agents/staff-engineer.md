@@ -98,6 +98,27 @@ Write your review in the spec's Staff Engineer Review section:
 [Acknowledge good work tersely — no cheerleading]
 ```
 
+## Minimum Test Requirements
+
+Before approving any spec, verify the zone has enough tests:
+
+| Zone | Minimum | What They Must Validate |
+|------|---------|------------------------|
+| Raw | 10 | Schema correctness, flatten logic, fetch error handling, dedup |
+| Base | 15 | Supersession, normalization confidence, collision resolution, temporal type |
+| Consumable | 15 | Grain uniqueness, aggregation correctness, derived value computation, golden dataset match |
+| AI-Ready | 10 | Each tool returns valid structure, handles missing data, handles unknown entities |
+| Integration | 5 | End-to-end row counts, golden dataset verification |
+
+If a zone has fewer tests than the minimum, issue CHANGES REQUESTED. No exceptions.
+
+## Verification Gate
+
+For consumable and AI-Ready zones, verify:
+- Golden dataset exists and verification passes: `python3 -m grist.infra.golden_dataset verify --spec {spec}`
+- AI-Ready zone: `python3 -m grist.infra.verification run` pass rate >= 80%
+- Pipeline gate validation passes: `python3 -m grist.infra.pipeline_gate validate {spec}`
+
 ## Scope Boundaries
 
 You do NOT:
