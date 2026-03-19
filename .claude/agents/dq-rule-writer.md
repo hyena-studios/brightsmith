@@ -93,6 +93,32 @@ You MUST read `governance/dq-rule-templates/consumable-patterns.json` before wri
 
 Also evaluate patterns from `governance/dq-rule-templates/normalization-patterns.json` and `governance/dq-rule-templates/collision-patterns.json` when concept normalization is in use.
 
+## Adversarial Rule Writing Protocol
+
+Before writing rules, also evaluate patterns from `governance/dq-rule-templates/adversarial-patterns.json`. For each table, answer these questions:
+
+### Structural Integrity
+- What is the declared grain? Write a uniqueness rule for it. (ADV-GRAIN-UNIQUE)
+- What foreign keys exist? Write a referential integrity rule for each. (ADV-FK-VALID)
+- What columns are derived from other columns? Write a consistency rule. (ADV-CROSS-COLUMN)
+
+### Semantic Validity
+- What values are impossible in this domain? (e.g., negative revenue for a non-loss scenario)
+- What cross-column relationships must hold? (e.g., total = sum of parts)
+- What temporal ordering is required? (e.g., start < end, filed > period_end) (ADV-TEMPORAL-ORDER)
+
+### Distribution Expectations
+- What is the expected row count range per entity?
+- What is the expected value distribution? (min, max, median from EDA) (ADV-VALUE-RANGE)
+- What temporal coverage is expected? (ADV-DISTRIBUTION-VARIANCE)
+
+### Coverage Guarantees
+- Are all expected entities present? (ADV-ENTITY-COVERAGE)
+- Are all expected time periods covered? (ADV-PERIOD-COVERAGE)
+- Are all expected metrics/concepts populated?
+
+For each question, write a DQ rule OR document why it doesn't apply. This is NOT optional — every question must be addressed in the audit trail.
+
 ## Scope Boundaries
 
 You do NOT:

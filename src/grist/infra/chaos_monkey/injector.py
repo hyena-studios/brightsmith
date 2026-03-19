@@ -260,8 +260,15 @@ class ChaosInjector:
 
 
 def _strategy_to_dimension(strategy: str) -> str:
-    """Map a corruption strategy to its DQ dimension."""
+    """Map a corruption strategy to its DQ dimension.
+
+    Covers all 10 dimensions:
+    1. Completeness, 2. Validity, 3. Accuracy, 4. Reasonableness, 5. Freshness,
+    6. Uniqueness, 7. Referential Integrity, 8. Coverage, 9. Consistency,
+    10. Distribution.
+    """
     mapping = {
+        # Original 5 dimensions (cell-level)
         "null": "Completeness",
         "empty_string": "Completeness",
         "unicode_garbage": "Validity",
@@ -277,5 +284,17 @@ def _strategy_to_dimension(strategy: str) -> str:
         "far_past": "Freshness",
         "future_timestamp": "Freshness",
         "epoch_timestamp": "Freshness",
+        # New 5 dimensions (cross-row, semantic, distribution)
+        "exact_duplicate": "Uniqueness",
+        "near_duplicate": "Uniqueness",
+        "orphan_fk": "Referential Integrity",
+        "entity_removal": "Coverage",
+        "period_removal": "Coverage",
+        "column_swap": "Consistency",
+        "entity_mix": "Consistency",
+        "temporal_shift": "Consistency",
+        "value_spike": "Distribution",
+        "sign_flip": "Distribution",
+        "uniform_dates": "Distribution",
     }
     return mapping.get(strategy, "Validity")
