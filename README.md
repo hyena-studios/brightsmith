@@ -31,15 +31,15 @@ claude --plugin-dir ~/code/brightsmith
 
 | Skill | Metaphor | What It Does |
 |-------|----------|-------------|
-| `/smitty:init SEC EDGAR` | — | Scaffold a new domain project |
-| `/smitty:mine raw-ingest-foo` | ⛏️ Mining | Run the Bronze zone pipeline |
-| `/smitty:smelt base-foo` | ⚒️ Smelting | Run the Silver zone pipeline |
-| `/smitty:cast consumable-foo` | 🥇 Casting | Run the Gold zone pipeline |
-| `/smitty:serve` | 🚀 Serving | Start the MCP server |
-| `/smitty:assay foo` | 🔬 Assaying | Full DQ audit (rules, chaos monkey, golden datasets, contracts) |
-| `/smitty:stamp foo` | 🔏 Stamping | Generate and verify data contracts |
-| `/smitty:run foo` | — | Auto-detect zone and run the right pipeline |
-| `/smitty:status` | — | Dashboard of project state |
+| `/bs:init SEC EDGAR` | — | Scaffold a new domain project |
+| `/bs:mine raw-ingest-foo` | ⛏️ Mining | Run the Bronze zone pipeline |
+| `/bs:smelt base-foo` | ⚒️ Smelting | Run the Silver zone pipeline |
+| `/bs:cast consumable-foo` | 🥇 Casting | Run the Gold zone pipeline |
+| `/bs:serve` | 🚀 Serving | Start the MCP server |
+| `/bs:assay foo` | 🔬 Assaying | Full DQ audit (rules, chaos monkey, golden datasets, contracts) |
+| `/bs:stamp foo` | 🔏 Stamping | Generate and verify data contracts |
+| `/bs:run foo` | — | Auto-detect zone and run the right pipeline |
+| `/bs:status` | — | Dashboard of project state |
 
 Each zone skill prints a celebration summary on completion with real stats — tables created, DQ rules active, business terms defined, artifacts produced, and links to everything.
 
@@ -283,21 +283,21 @@ When `False` (dev/demo mode):
 /plugin install    # point to git URL
 
 # Scaffold a domain project
-/smitty:init SEC EDGAR financial filings
+/bs:init SEC EDGAR financial filings
 
 # The setup agent asks for your email, then scaffolds everything.
 # cd into the project, then:
 
-/smitty:mine raw-ingest-company-facts    # Bronze zone
-/smitty:smelt base-financial-facts       # Silver zone
-/smitty:cast consumable-financial-ratios  # Gold zone
-/smitty:serve                            # Start MCP server
+/bs:mine raw-ingest-company-facts    # Bronze zone
+/bs:smelt base-financial-facts       # Silver zone
+/bs:cast consumable-financial-ratios  # Gold zone
+/bs:serve                            # Start MCP server
 
 # Check status anytime:
-/smitty:status
+/bs:status
 
 # Run DQ audit:
-/smitty:assay raw-ingest-company-facts
+/bs:assay raw-ingest-company-facts
 ```
 
 ### Option 2: Headless Pipeline
@@ -349,7 +349,7 @@ Every Claude Code session is logged to `docs/sessions/` for transparency and con
 brightsmith/
 ├── .claude-plugin/               Claude Code plugin manifest
 │   └── plugin.json
-├── skills/                       Plugin skills (/smitty:init, /smitty:mine, /smitty:smelt, etc.)
+├── skills/                       Plugin skills (/bs:init, /bs:mine, /bs:smelt, etc.)
 │   ├── init/                     Scaffold new domain projects
 │   ├── mine/                     Bronze zone pipeline
 │   ├── smelt/                    Silver zone pipeline

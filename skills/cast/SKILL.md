@@ -14,18 +14,18 @@ You run pipeline gate commands (Bash) and dispatch agents (Agent tool). You NEVE
 
 ## MANDATORY: How to Dispatch Agents
 
-All Brightsmith agents are plugin agents and MUST use the `smitty:` namespace prefix. This is non-negotiable.
+All Brightsmith agents are plugin agents and MUST use the `bs:` namespace prefix. This is non-negotiable.
 
 CORRECT:
 ```
 Agent(
   description: "EDA for $ARGUMENTS",
-  subagent_type: "smitty:data-analyst",
+  subagent_type: "bs:data-analyst",
   prompt: "..."
 )
 ```
 
-WRONG (agent not found — missing smitty: prefix):
+WRONG (agent not found — missing bs: prefix):
 ```
 Agent(
   description: "EDA for $ARGUMENTS",
@@ -54,17 +54,17 @@ Agent(
 
    For each agent step:
    a. Gate check: `python3 -m brightsmith.infra.pipeline_gate check "$ARGUMENTS" <step-name>`
-   b. Dispatch: `Agent(description: "<task>", subagent_type: "smitty:<agent-name>", prompt: "<full context>")`
+   b. Dispatch: `Agent(description: "<task>", subagent_type: "bs:<agent-name>", prompt: "<full context>")`
    c. Register: `python3 -m brightsmith.infra.pipeline_gate complete "$ARGUMENTS" <step-name> --output <path>`
 
    **Greenfield** pipeline order:
-   - `smitty:governance-reviewer` (pre) → `smitty:data-steward` → `smitty:semantic-modeler` (conceptual) → `smitty:semantic-modeler` (logical) → `smitty:semantic-modeler` (physical) → `smitty:data-analyst` (EDA) → `smitty:dq-rule-writer` → `smitty:primary-agent` (implementation) → `smitty:dq-engineer` → `smitty:chaos-monkey` → `smitty:lineage-tracker` → `smitty:cde-tagger` → `smitty:doc-generator` → `smitty:governance-reviewer` (post) → `smitty:staff-engineer`
+   - `bs:governance-reviewer` (pre) → `bs:data-steward` → `bs:semantic-modeler` (conceptual) → `bs:semantic-modeler` (logical) → `bs:semantic-modeler` (physical) → `bs:data-analyst` (EDA) → `bs:dq-rule-writer` → `bs:primary-agent` (implementation) → `bs:dq-engineer` → `bs:chaos-monkey` → `bs:lineage-tracker` → `bs:cde-tagger` → `bs:doc-generator` → `bs:governance-reviewer` (post) → `bs:staff-engineer`
 
    **Backfill** pipeline order:
-   - `smitty:semantic-modeler` (physical → logical) → `smitty:data-analyst` (EDA) → `smitty:dq-rule-writer` → `smitty:dq-engineer` → `smitty:chaos-monkey` → `smitty:semantic-modeler` (conceptual) → `smitty:data-steward` → `smitty:governance-reviewer` (post) → `smitty:staff-engineer`
+   - `bs:semantic-modeler` (physical → logical) → `bs:data-analyst` (EDA) → `bs:dq-rule-writer` → `bs:dq-engineer` → `bs:chaos-monkey` → `bs:semantic-modeler` (conceptual) → `bs:data-steward` → `bs:governance-reviewer` (post) → `bs:staff-engineer`
 
    Conditionally skippable (with justification via pipeline gate skip):
-   - `smitty:entity-resolver`, `smitty:pii-scanner`, `smitty:temporal-modeler`, `smitty:adversarial-auditor`
+   - `bs:entity-resolver`, `bs:pii-scanner`, `bs:temporal-modeler`, `bs:adversarial-auditor`
 
 7. Generate data contract: `python3 -m brightsmith.infra.contract generate --table {table} --spec {spec}`
 8. Verify golden dataset: `python3 -m brightsmith.infra.golden_dataset verify --spec "$ARGUMENTS"`
@@ -105,7 +105,7 @@ contracted, and ready for consumption.
   • Silver → [N] base tables, [N] business terms, [N] data models
   • Gold → [N] consumable tables, [N] data contracts, [N] golden dataset values
 
-🔜 Next: Run /smitty:serve to fire up the MCP server and make this data AI-ready.
+🔜 Next: Run /bs:serve to fire up the MCP server and make this data AI-ready.
    First, @principal-data-architect reviews the zone, then @insight-manager
    designs the MCP server's tools and grounding context.
 ```
