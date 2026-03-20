@@ -73,24 +73,12 @@ Everything else, infer or default:
 │   │   └── test_{source}_ingestor.py  Skeleton test
 │   └── infra/
 ├── .claude/
-│   └── agents/                     ALL Brightsmith pipeline agents (copied from plugin)
+│   └── agents/                     Domain-specific agents (if any)
 ├── .gitignore
 ├── CLAUDE.md                       Domain project CLAUDE.md
 ├── README.md                       Domain project README
 └── pyproject.toml                  With brightsmith as dependency
 ```
-
-### Install Brightsmith Agents (MANDATORY FIRST STEP)
-
-Before creating any other files, copy ALL Brightsmith agent definitions into the consumer project so they're available as project-local agents with colored labels:
-
-```bash
-cp ${CLAUDE_PLUGIN_ROOT}/.claude/agents/*.md {project-name}/.claude/agents/
-```
-
-This copies every agent (setup, governance-reviewer, data-analyst, dq-engineer, chaos-monkey, staff-engineer, etc.) into the project's `.claude/agents/` directory. This is critical — without it, pipeline skills can't dispatch agents with colored labels.
-
-**Verify after copying:** The `.claude/agents/` directory should contain 20+ `.md` files. If it's empty, the pipeline will not work correctly.
 
 ### pyproject.toml
 

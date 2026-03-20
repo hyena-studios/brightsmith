@@ -14,9 +14,18 @@ You run pipeline gate commands (Bash) and dispatch agents (Agent tool). You NEVE
 
 ## MANDATORY: How to Dispatch Agents
 
-Every agent MUST be invoked with `subagent_type` set to the agent name. This is what makes colored labels appear in the UI and loads the agent's dedicated context/instructions.
+All Brightsmith agents are plugin agents and MUST use the `bs:` namespace prefix. This is non-negotiable.
 
-CORRECT (colored label, agent gets its own context):
+CORRECT:
+```
+Agent(
+  description: "EDA for $ARGUMENTS",
+  subagent_type: "bs:data-analyst",
+  prompt: "..."
+)
+```
+
+WRONG (agent not found — missing bs: prefix):
 ```
 Agent(
   description: "EDA for $ARGUMENTS",
@@ -25,15 +34,13 @@ Agent(
 )
 ```
 
-WRONG (generic agent, no persona loaded, no colored label):
+ALSO WRONG (no subagent_type at all — blocked by hook):
 ```
 Agent(
   description: "data-analyst EDA for $ARGUMENTS",
   prompt: "..."
 )
 ```
-
-If you catch yourself about to invoke Agent() without `subagent_type`, STOP. You are doing it wrong. Fix it before proceeding.
 
 ## Pipeline Steps
 
@@ -47,17 +54,17 @@ If you catch yourself about to invoke Agent() without `subagent_type`, STOP. You
 
    For each agent step:
    a. Gate check: `python3 -m brightsmith.infra.pipeline_gate check "$ARGUMENTS" <step-name>`
-   b. Dispatch: `Agent(description: "<task>", subagent_type: "<agent-name>", prompt: "<full context>")`
+   b. Dispatch: `Agent(description: "<task>", subagent_type: "bs:<agent-name>", prompt: "<full context>")`
    c. Register: `python3 -m brightsmith.infra.pipeline_gate complete "$ARGUMENTS" <step-name> --output <path>`
 
    **Greenfield** pipeline order:
-   - `governance-reviewer` (pre) → `data-steward` → `semantic-modeler` (conceptual) → `semantic-modeler` (logical) → `semantic-modeler` (physical) → `data-analyst` (EDA) → `dq-rule-writer` → `primary-agent` (implementation) → `dq-engineer` → `chaos-monkey` → `lineage-tracker` → `cde-tagger` → `doc-generator` → `governance-reviewer` (post) → `staff-engineer`
+   - `bs:governance-reviewer` (pre) → `bs:data-steward` → `bs:semantic-modeler` (conceptual) → `bs:semantic-modeler` (logical) → `bs:semantic-modeler` (physical) → `bs:data-analyst` (EDA) → `bs:dq-rule-writer` → `bs:primary-agent` (implementation) → `bs:dq-engineer` → `bs:chaos-monkey` → `bs:lineage-tracker` → `bs:cde-tagger` → `bs:doc-generator` → `bs:governance-reviewer` (post) → `bs:staff-engineer`
 
    **Backfill** pipeline order:
-   - `semantic-modeler` (physical → logical) → `data-analyst` (EDA) → `dq-rule-writer` → `dq-engineer` → `chaos-monkey` → `semantic-modeler` (conceptual) → `data-steward` → `governance-reviewer` (post) → `staff-engineer`
+   - `bs:semantic-modeler` (physical → logical) → `bs:data-analyst` (EDA) → `bs:dq-rule-writer` → `bs:dq-engineer` → `bs:chaos-monkey` → `bs:semantic-modeler` (conceptual) → `bs:data-steward` → `bs:governance-reviewer` (post) → `bs:staff-engineer`
 
    Conditionally skippable (with justification via pipeline gate skip):
-   - `entity-resolver`, `pii-scanner`, `temporal-modeler`, `adversarial-auditor`
+   - `bs:entity-resolver`, `bs:pii-scanner`, `bs:temporal-modeler`, `bs:adversarial-auditor`
 
 7. Report final status: `python3 -m brightsmith.infra.pipeline_gate validate "$ARGUMENTS"`
 

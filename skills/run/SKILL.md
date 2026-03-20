@@ -12,26 +12,33 @@ You run pipeline gate commands (Bash) and dispatch agents (Agent tool). You NEVE
 
 ## MANDATORY: How to Dispatch Agents
 
-Every agent MUST be invoked with `subagent_type` set to the agent name. This is what makes colored labels appear in the UI and loads the agent's dedicated context/instructions.
+All Brightsmith agents are plugin agents and MUST use the `bs:` namespace prefix. This is non-negotiable.
 
-CORRECT (colored label appears in UI):
+CORRECT:
+```
+Agent(
+  description: "DQ execution for $ARGUMENTS",
+  subagent_type: "bs:dq-engineer",
+  prompt: "Execute DQ rules for spec '$ARGUMENTS'..."
+)
+```
+
+WRONG (agent not found — missing bs: prefix):
 ```
 Agent(
   description: "DQ execution for $ARGUMENTS",
   subagent_type: "dq-engineer",
-  prompt: "Execute DQ rules for spec '$ARGUMENTS'..."
+  prompt: "..."
 )
 ```
 
-WRONG (no colored label, agent name lost in description):
+ALSO WRONG (no subagent_type at all — blocked by hook):
 ```
 Agent(
   description: "dq-engineer DQ execution for $ARGUMENTS",
-  prompt: "Execute DQ rules for spec '$ARGUMENTS'..."
+  prompt: "..."
 )
 ```
-
-If you catch yourself about to invoke Agent() without `subagent_type`, STOP. Fix it before proceeding.
 
 ## Pipeline Execution Protocol
 
@@ -53,13 +60,13 @@ python3 -m brightsmith.infra.pipeline_gate init "$ARGUMENTS" --zone <zone> [--mo
 
 Execute the appropriate pipeline from CLAUDE.md:
 
-- **Bronze Zone:** governance-reviewer → primary-agent → data-analyst → domain-context → dq-rule-writer → dq-engineer → chaos-monkey → [entity-resolver, pii-scanner, temporal-modeler, adversarial-auditor] → lineage-tracker → cde-tagger → doc-generator → governance-reviewer → staff-engineer
-- **Base/Consumable Greenfield:** governance-reviewer → data-steward → semantic-modeler (conceptual → logical → physical) → data-analyst → dq-rule-writer → primary-agent → dq-engineer → chaos-monkey → [entity-resolver, pii-scanner, temporal-modeler, adversarial-auditor] → lineage-tracker → cde-tagger → doc-generator → governance-reviewer → staff-engineer
-- **Base/Consumable Backfill:** semantic-modeler (physical → logical) → data-analyst → dq-rule-writer → dq-engineer → chaos-monkey → semantic-modeler (conceptual) → data-steward → governance-reviewer → staff-engineer
+- **Bronze Zone:** bs:governance-reviewer → bs:primary-agent → bs:data-analyst → bs:domain-context → bs:dq-rule-writer → bs:dq-engineer → bs:chaos-monkey → [bs:entity-resolver, bs:pii-scanner, bs:temporal-modeler, bs:adversarial-auditor] → bs:lineage-tracker → bs:cde-tagger → bs:doc-generator → bs:governance-reviewer → bs:staff-engineer
+- **Base/Consumable Greenfield:** bs:governance-reviewer → bs:data-steward → bs:semantic-modeler (conceptual → logical → physical) → bs:data-analyst → bs:dq-rule-writer → bs:primary-agent → bs:dq-engineer → bs:chaos-monkey → [bs:entity-resolver, bs:pii-scanner, bs:temporal-modeler, bs:adversarial-auditor] → bs:lineage-tracker → bs:cde-tagger → bs:doc-generator → bs:governance-reviewer → bs:staff-engineer
+- **Base/Consumable Backfill:** bs:semantic-modeler (physical → logical) → bs:data-analyst → bs:dq-rule-writer → bs:dq-engineer → bs:chaos-monkey → bs:semantic-modeler (conceptual) → bs:data-steward → bs:governance-reviewer → bs:staff-engineer
 
 For each agent step:
 1. Gate check: `python3 -m brightsmith.infra.pipeline_gate check "$ARGUMENTS" <step-name>`
-2. Dispatch: `Agent(description: "<task>", subagent_type: "<agent-name>", prompt: "<full context>")`
+2. Dispatch: `Agent(description: "<task>", subagent_type: "bs:<agent-name>", prompt: "<full context>")`
 3. Register: `python3 -m brightsmith.infra.pipeline_gate complete "$ARGUMENTS" <step-name> --output <path>`
 
 If not applicable, skip with justification:
@@ -71,8 +78,8 @@ python3 -m brightsmith.infra.pipeline_gate skip "$ARGUMENTS" <step-name> --reaso
 
 After @staff-engineer signs off on the LAST spec in a zone:
 
-1. **principal-data-architect** — BLOCKING zone transition review
-2. **insight-manager** — Strategic analysis (silver->gold and gold->mcp ONLY)
+1. **bs:principal-data-architect** — BLOCKING zone transition review
+2. **bs:insight-manager** — Strategic analysis (silver->gold and gold->mcp ONLY)
 
 ### Step 4: Report Final Status
 
@@ -82,22 +89,22 @@ python3 -m brightsmith.infra.pipeline_gate validate "$ARGUMENTS"
 
 ## Agents That Are NEVER Skippable
 
-- governance-reviewer (pre and post)
-- staff-engineer (final gate)
-- data-analyst (EDA)
-- dq-rule-writer
-- dq-engineer (execution)
-- chaos-monkey (adversarial hardening)
-- lineage-tracker
-- cde-tagger
-- doc-generator
+- bs:governance-reviewer (pre and post)
+- bs:staff-engineer (final gate)
+- bs:data-analyst (EDA)
+- bs:dq-rule-writer
+- bs:dq-engineer (execution)
+- bs:chaos-monkey (adversarial hardening)
+- bs:lineage-tracker
+- bs:cde-tagger
+- bs:doc-generator
 
 ## Agents That Are Conditionally Skippable (with justification)
 
-- entity-resolver — skip only if domain-context.md says entity resolution is trivial
-- pii-scanner — skip only if domain-context.md PII section says no PII expected
-- temporal-modeler — skip only if no temporal data exists
-- adversarial-auditor — skip only if @chaos-monkey found no gaps in 5 cycles
+- bs:entity-resolver — skip only if domain-context.md says entity resolution is trivial
+- bs:pii-scanner — skip only if domain-context.md PII section says no PII expected
+- bs:temporal-modeler — skip only if no temporal data exists
+- bs:adversarial-auditor — skip only if @chaos-monkey found no gaps in 5 cycles
 
 ## 🎉 Spec Celebration (after pipeline validates)
 
