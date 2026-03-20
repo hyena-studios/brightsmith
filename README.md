@@ -15,7 +15,7 @@ Most data pipelines are built for a specific domain. Brightsmith discovers the d
 5. The pipeline builds governed data products through spec-driven development with human approval gates
 6. The MCP zone produces a **tool-use chat agent** that queries live Iceberg data
 
-Brightsmith was extracted from [sec_edgair](https://github.com/jcernauske/sec_edgair), a production-grade SEC EDGAR financial data pipeline. Everything domain-specific was replaced with a discovery mechanism. Same rigor, any data. Field-tested with [sec-edgar-brightsmith](https://github.com/jcernauske/sec_edgar_grist).
+Brightsmith was extracted from [sec-edgar-pipeline](https://github.com/jcernauske/sec_edgair), a production-grade SEC EDGAR financial data pipeline. Everything domain-specific was replaced with a discovery mechanism. Same rigor, any data. Field-tested with [sec-edgar-brightsmith](https://github.com/jcernauske/sec_edgar_grist).
 
 ## Install as Claude Code Plugin
 
@@ -132,11 +132,11 @@ At every zone boundary:
 
 | Component | Module | Purpose |
 |-----------|--------|---------|
-| Base ingestor | `brightsmith.raw.base_ingestor` | Abstract ingestor with dedup, metadata, snapshots |
+| Base ingestor | `brightsmith.bronze.base_ingestor` | Abstract ingestor with dedup, metadata, snapshots |
 | Period disambiguator | `brightsmith.infra.period_disambiguator` | Temporal period classification using date-span analysis |
 | Chaos monkey | `brightsmith.infra.chaos_monkey` | Schema-agnostic adversarial testing with type-appropriate corruptions |
 | Integration test harness | `brightsmith.infra.integration_test_harness` | Golden dataset validation against known-correct reference values |
-| Base chat agent | `brightsmith.ai_ready.base_chat_agent` | MCP zone base class — Anthropic SDK, tool registration, Iceberg queries |
+| Base MCP server | `brightsmith.mcp.base_mcp_server` | MCP zone base class — Anthropic SDK, tool registration, Iceberg queries |
 | Iceberg setup | `brightsmith.infra.iceberg_setup` | Table creation, append, read via PyIceberg + DuckDB |
 | DQ runner | `brightsmith.infra.dq_runner` | Execute SQL rules against Iceberg, threshold evaluation, P0 gating |
 | DQ scorecard | `brightsmith.infra.dq_scorecard` | Markdown scorecards from real execution results |
@@ -150,7 +150,7 @@ At every zone boundary:
 | Verification | `brightsmith.infra.verification` | Correctness validation ("is this number right?") |
 | Glossary validator | `brightsmith.infra.glossary_validator` | Validate 14-field business term completeness |
 | Glossary loader | `brightsmith.infra.glossary_loader` | Three-tier glossary composition (standards → domains → project) |
-| Concept normalizer | `brightsmith.base.concept_normalization` | Tiered matching (exact → prefix → pattern → heuristic) |
+| Concept normalizer | `brightsmith.silver.concept_normalization` | Tiered matching (exact → prefix → pattern → heuristic) |
 | Domain loader | `brightsmith.domain_loader` | Manifest parsing, source config, hints resolution |
 | Headless runner | `brightsmith.run` | Full pipeline without AI agents — `--zone`, `--validate-only`, `--dry-run` |
 | Setup CLI | `brightsmith.setup` | `python -m brightsmith.setup init` — scaffold domain projects |
@@ -327,7 +327,7 @@ If you improve the framework (fix a bug in `dq_runner.py`, add a feature to `Bas
 |------|-------|---------|
 | Manifest | `domain/manifest.yaml` | How to acquire your data |
 | Source config | `domain/sources/*.yaml` | Entity IDs, fetch methods, dedup grain |
-| Ingestor | `src/raw/my_ingestor.py` | `fetch()` and `flatten()` (extends `brightsmith.raw.BaseIngestor`) |
+| Ingestor | `src/raw/my_ingestor.py` | `fetch()` and `flatten()` (extends `brightsmith.bronze.BaseIngestor`) |
 | Concept mappings | `domain/concept-mappings/*.json` | Taxonomy → business term mappings (optional — discovery mode if absent) |
 | Glossaries | `glossaries/` | Standard/domain term definitions (optional) |
 
@@ -362,16 +362,15 @@ brightsmith/
 ├── hooks/                        Plugin hooks
 │   ├── hooks.json                Hook config (SessionStart, PreToolUse)
 │   └── require-subagent-type.sh  Enforces subagent_type on all Agent calls
-├── agents/                       Plugin agent definitions (copied to consumer projects)
+├── agents/                       Plugin agents (setup.md only — rest copied to consumer projects at init)
 ├── src/brightsmith/              Framework package (pip-installable)
 │   ├── config.py                 Global config (env var overrides for domain projects)
 │   ├── domain_loader.py          Manifest + source config parsing
 │   ├── setup.py                  Domain project scaffolding CLI
 │   ├── run.py                    Headless pipeline runner
-│   ├── raw/                      Bronze zone (BaseIngestor)
-│   ├── base/                     Silver zone (concept normalization)
-│   ├── consumable/               Gold zone (data products)
-│   ├── ai_ready/                 MCP zone (BaseChatAgent)
+│   ├── bronze/                    Bronze zone (BaseIngestor)
+│   ├── silver/                    Silver zone (concept normalization)
+│   ├── mcp/                       MCP zone (BaseMCPServer)
 │   └── infra/                    Cross-cutting infrastructure
 │       ├── pipeline_gate.py         State machine + CLI for spec tracking
 │       ├── period_disambiguator.py  Temporal period classification
@@ -390,7 +389,7 @@ brightsmith/
 │       ├── glossary_loader.py       Three-tier glossary composition
 │       └── staging.py               Proposal staging
 ├── .claude/
-│   └── agents/                   24 agent definitions (also in agents/ for plugin)
+│   └── agents/                   24 agent definitions (copied to consumer projects at init)
 ├── domain/                       Domain pack (your data source config)
 ├── governance/                   All governance artifacts (20+ directories)
 ├── docs/
