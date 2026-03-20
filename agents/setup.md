@@ -85,7 +85,7 @@ Everything else, infer or default:
 Before creating any other files, copy ALL Brightsmith agent definitions into the consumer project so they're available as project-local agents with colored labels:
 
 ```bash
-cp ${CLAUDE_PLUGIN_ROOT}/agents/*.md {project-name}/.claude/agents/
+cp ${CLAUDE_PLUGIN_ROOT}/.claude/agents/*.md {project-name}/.claude/agents/
 ```
 
 This copies every agent (setup, governance-reviewer, data-analyst, dq-engineer, chaos-monkey, staff-engineer, etc.) into the project's `.claude/agents/` directory. This is critical — without it, pipeline skills can't dispatch agents with colored labels.

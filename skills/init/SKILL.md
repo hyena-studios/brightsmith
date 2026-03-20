@@ -16,7 +16,7 @@ You do ONE thing: launch the @setup agent. You do NOT scaffold files, write code
 Agent(
   description: "scaffold project for $ARGUMENTS",
   subagent_type: "setup",
-  prompt: "Scaffold a new Brightsmith domain project for: $ARGUMENTS\n\nInfer everything you can from the data source description:\n- Project name (derive from source)\n- API URLs, fetch methods (use your knowledge of known public APIs)\n- Seed entities (well-known defaults for the domain)\n- Domain standards (XBRL, ICD-10, etc. if recognizable)\n\nThe ONLY thing to ask the user is their contact email (required for API User-Agent headers).\n\nThen scaffold the full project using python -m brightsmith.setup init and create all config files, ingestor skeleton, and first spec.\n\nCRITICAL FIRST STEP: Before creating any other files, copy ALL Brightsmith agent definitions into the project: cp ${CLAUDE_PLUGIN_ROOT}/agents/*.md {project-name}/.claude/agents/"
+  prompt: "Scaffold a new Brightsmith domain project for: $ARGUMENTS\n\nInfer everything you can from the data source description:\n- Project name (derive from source)\n- API URLs, fetch methods (use your knowledge of known public APIs)\n- Seed entities (well-known defaults for the domain)\n- Domain standards (XBRL, ICD-10, etc. if recognizable)\n\nThe ONLY thing to ask the user is their contact email (required for API User-Agent headers).\n\nThen scaffold the full project using python -m brightsmith.setup init and create all config files, ingestor skeleton, and first spec.\n\nCRITICAL FIRST STEP: Before creating any other files, copy ALL Brightsmith agent definitions into the project: cp ${CLAUDE_PLUGIN_ROOT}/.claude/agents/*.md {project-name}/.claude/agents/"
 )
 ```
 
