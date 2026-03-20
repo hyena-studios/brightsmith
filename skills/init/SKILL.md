@@ -15,7 +15,7 @@ You do ONE thing: launch the @setup agent. You do NOT scaffold files, write code
 ```
 Agent(
   description: "scaffold project for $ARGUMENTS",
-  subagent_type: "bs:setup",
+  subagent_type: "smitty:setup",
   prompt: "Scaffold a new Brightsmith domain project for: $ARGUMENTS\n\nThe Brightsmith framework is at: $CLAUDE_PROJECT_DIR\nThe plugin root is at: ${CLAUDE_PLUGIN_ROOT}\nDo NOT search for CLAUDE.md or other framework files — you already have everything you need in your agent definition.\n\nInfer everything you can from the data source description:\n- Project name (derive from source)\n- API URLs, fetch methods (use your knowledge of known public APIs)\n- Seed entities (well-known defaults for the domain)\n- Domain standards (XBRL, ICD-10, etc. if recognizable)\n\nThe ONLY thing to ask the user is their contact email (required for API User-Agent headers).\n\nThen scaffold the full project and run uv sync + uv run pytest before reporting back."
 )
 ```

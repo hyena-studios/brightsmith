@@ -12,18 +12,18 @@ You run pipeline gate commands (Bash) and dispatch agents (Agent tool). You NEVE
 
 ## MANDATORY: How to Dispatch Agents
 
-All Brightsmith agents are plugin agents and MUST use the `bs:` namespace prefix. This is non-negotiable.
+All Brightsmith agents are plugin agents and MUST use the `smitty:` namespace prefix. This is non-negotiable.
 
 CORRECT:
 ```
 Agent(
   description: "DQ execution for $ARGUMENTS",
-  subagent_type: "bs:dq-engineer",
+  subagent_type: "smitty:dq-engineer",
   prompt: "Execute DQ rules for spec '$ARGUMENTS'..."
 )
 ```
 
-WRONG (agent not found — missing bs: prefix):
+WRONG (agent not found — missing smitty: prefix):
 ```
 Agent(
   description: "DQ execution for $ARGUMENTS",
@@ -60,13 +60,13 @@ python3 -m brightsmith.infra.pipeline_gate init "$ARGUMENTS" --zone <zone> [--mo
 
 Execute the appropriate pipeline from CLAUDE.md:
 
-- **Bronze Zone:** bs:governance-reviewer → bs:primary-agent → bs:data-analyst → bs:domain-context → bs:dq-rule-writer → bs:dq-engineer → bs:chaos-monkey → [bs:entity-resolver, bs:pii-scanner, bs:temporal-modeler, bs:adversarial-auditor] → bs:lineage-tracker → bs:cde-tagger → bs:doc-generator → bs:governance-reviewer → bs:staff-engineer
-- **Base/Consumable Greenfield:** bs:governance-reviewer → bs:data-steward → bs:semantic-modeler (conceptual → logical → physical) → bs:data-analyst → bs:dq-rule-writer → bs:primary-agent → bs:dq-engineer → bs:chaos-monkey → [bs:entity-resolver, bs:pii-scanner, bs:temporal-modeler, bs:adversarial-auditor] → bs:lineage-tracker → bs:cde-tagger → bs:doc-generator → bs:governance-reviewer → bs:staff-engineer
-- **Base/Consumable Backfill:** bs:semantic-modeler (physical → logical) → bs:data-analyst → bs:dq-rule-writer → bs:dq-engineer → bs:chaos-monkey → bs:semantic-modeler (conceptual) → bs:data-steward → bs:governance-reviewer → bs:staff-engineer
+- **Bronze Zone:** smitty:governance-reviewer → smitty:primary-agent → smitty:data-analyst → smitty:domain-context → smitty:dq-rule-writer → smitty:dq-engineer → smitty:chaos-monkey → [smitty:entity-resolver, smitty:pii-scanner, smitty:temporal-modeler, smitty:adversarial-auditor] → smitty:lineage-tracker → smitty:cde-tagger → smitty:doc-generator → smitty:governance-reviewer → smitty:staff-engineer
+- **Base/Consumable Greenfield:** smitty:governance-reviewer → smitty:data-steward → smitty:semantic-modeler (conceptual → logical → physical) → smitty:data-analyst → smitty:dq-rule-writer → smitty:primary-agent → smitty:dq-engineer → smitty:chaos-monkey → [smitty:entity-resolver, smitty:pii-scanner, smitty:temporal-modeler, smitty:adversarial-auditor] → smitty:lineage-tracker → smitty:cde-tagger → smitty:doc-generator → smitty:governance-reviewer → smitty:staff-engineer
+- **Base/Consumable Backfill:** smitty:semantic-modeler (physical → logical) → smitty:data-analyst → smitty:dq-rule-writer → smitty:dq-engineer → smitty:chaos-monkey → smitty:semantic-modeler (conceptual) → smitty:data-steward → smitty:governance-reviewer → smitty:staff-engineer
 
 For each agent step:
 1. Gate check: `python3 -m brightsmith.infra.pipeline_gate check "$ARGUMENTS" <step-name>`
-2. Dispatch: `Agent(description: "<task>", subagent_type: "bs:<agent-name>", prompt: "<full context>")`
+2. Dispatch: `Agent(description: "<task>", subagent_type: "smitty:<agent-name>", prompt: "<full context>")`
 3. Register: `python3 -m brightsmith.infra.pipeline_gate complete "$ARGUMENTS" <step-name> --output <path>`
 
 If not applicable, skip with justification:
@@ -78,8 +78,8 @@ python3 -m brightsmith.infra.pipeline_gate skip "$ARGUMENTS" <step-name> --reaso
 
 After @staff-engineer signs off on the LAST spec in a zone:
 
-1. **bs:principal-data-architect** — BLOCKING zone transition review
-2. **bs:insight-manager** — Strategic analysis (silver->gold and gold->mcp ONLY)
+1. **smitty:principal-data-architect** — BLOCKING zone transition review
+2. **smitty:insight-manager** — Strategic analysis (silver->gold and gold->mcp ONLY)
 
 ### Step 4: Report Final Status
 
@@ -89,23 +89,23 @@ python3 -m brightsmith.infra.pipeline_gate validate "$ARGUMENTS"
 
 ## Agents That Are NEVER Skippable
 
-- bs:governance-reviewer (pre and post)
-- bs:staff-engineer (final gate)
-- bs:data-analyst (EDA)
-- bs:dq-rule-writer
-- bs:dq-engineer (execution)
-- bs:chaos-monkey (adversarial hardening)
-- bs:lineage-tracker
-- bs:cde-tagger
-- bs:doc-generator
+- smitty:governance-reviewer (pre and post)
+- smitty:staff-engineer (final gate)
+- smitty:data-analyst (EDA)
+- smitty:dq-rule-writer
+- smitty:dq-engineer (execution)
+- smitty:chaos-monkey (adversarial hardening)
+- smitty:lineage-tracker
+- smitty:cde-tagger
+- smitty:doc-generator
 
 ## Agents That Are Conditionally Skippable (with justification)
 
-- bs:entity-resolver — skip only if domain-context.md says entity resolution is trivial
-- bs:pii-scanner — skip only if domain-context.md PII section says no PII expected
-- bs:temporal-modeler — skip only if no temporal data exists
-- bs:adversarial-auditor — skip only if @chaos-monkey found no gaps in 5 cycles
+- smitty:entity-resolver — skip only if domain-context.md says entity resolution is trivial
+- smitty:pii-scanner — skip only if domain-context.md PII section says no PII expected
+- smitty:temporal-modeler — skip only if no temporal data exists
+- smitty:adversarial-auditor — skip only if @chaos-monkey found no gaps in 5 cycles
 
 ## 🎉 Spec Celebration (after pipeline validates)
 
-After the pipeline gate validates successfully, print the appropriate zone celebration based on which zone this spec belongs to. Use the same celebration format as the zone-specific skills (/bs:mine, /bs:smelt, /bs:cast). Gather real stats from the filesystem — don't guess or use placeholders.
+After the pipeline gate validates successfully, print the appropriate zone celebration based on which zone this spec belongs to. Use the same celebration format as the zone-specific skills (/smitty:mine, /smitty:smelt, /smitty:cast). Gather real stats from the filesystem — don't guess or use placeholders.

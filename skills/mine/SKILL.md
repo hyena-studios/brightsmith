@@ -14,18 +14,18 @@ You run pipeline gate commands (Bash) and dispatch agents (Agent tool). You NEVE
 
 ## MANDATORY: How to Dispatch Agents
 
-All Brightsmith agents are plugin agents and MUST use the `bs:` namespace prefix. This is non-negotiable.
+All Brightsmith agents are plugin agents and MUST use the `smitty:` namespace prefix. This is non-negotiable.
 
 CORRECT:
 ```
 Agent(
   description: "EDA for $ARGUMENTS",
-  subagent_type: "bs:data-analyst",
+  subagent_type: "smitty:data-analyst",
   prompt: "..."
 )
 ```
 
-WRONG (agent not found — missing bs: prefix):
+WRONG (agent not found — missing smitty: prefix):
 ```
 Agent(
   description: "EDA for $ARGUMENTS",
@@ -51,14 +51,14 @@ Agent(
 
    For each agent step:
    a. Gate check: `python3 -m brightsmith.infra.pipeline_gate check "$ARGUMENTS" <step-name>`
-   b. Dispatch: `Agent(description: "<task>", subagent_type: "bs:<agent-name>", prompt: "<full context>")`
+   b. Dispatch: `Agent(description: "<task>", subagent_type: "smitty:<agent-name>", prompt: "<full context>")`
    c. Register: `python3 -m brightsmith.infra.pipeline_gate complete "$ARGUMENTS" <step-name> --output <path>`
 
    Pipeline order:
-   - `bs:governance-reviewer` (pre) → `bs:primary-agent` (implementation) → `bs:data-analyst` (EDA) → `bs:domain-context` → `bs:dq-rule-writer` → `bs:dq-engineer` → `bs:chaos-monkey` → `bs:lineage-tracker` → `bs:cde-tagger` → `bs:doc-generator` → `bs:governance-reviewer` (post) → `bs:staff-engineer`
+   - `smitty:governance-reviewer` (pre) → `smitty:primary-agent` (implementation) → `smitty:data-analyst` (EDA) → `smitty:domain-context` → `smitty:dq-rule-writer` → `smitty:dq-engineer` → `smitty:chaos-monkey` → `smitty:lineage-tracker` → `smitty:cde-tagger` → `smitty:doc-generator` → `smitty:governance-reviewer` (post) → `smitty:staff-engineer`
 
    Conditionally skippable (with justification via pipeline gate skip):
-   - `bs:entity-resolver`, `bs:pii-scanner`, `bs:temporal-modeler`, `bs:adversarial-auditor`
+   - `smitty:entity-resolver`, `smitty:pii-scanner`, `smitty:temporal-modeler`, `smitty:adversarial-auditor`
 
 5. Report final status: `python3 -m brightsmith.infra.pipeline_gate validate "$ARGUMENTS"`
 
@@ -91,7 +91,7 @@ Congratulations! You've mined raw ore from the source and forged it into bronze.
   • Pipeline Checklist: governance/audit-trail/$ARGUMENTS-pipeline-checklist.md
   • Staff Engineer Review: governance/reviews/[filename]
 
-🔜 Next: Run /bs:smelt to refine this raw ore into clean silver.
+🔜 Next: Run /smitty:smelt to refine this raw ore into clean silver.
    First, @principal-data-architect will review the zone architecture.
 ```
 

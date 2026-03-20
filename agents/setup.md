@@ -258,7 +258,7 @@ Then tell the user concisely:
 1. What was created (project name, key files)
 2. Seed entities included and how to add more (edit `domain/sources/*.yaml`)
 3. That dependencies are already installed and tests pass
-4. Point to the first spec as the pipeline entry point — tell them to run `/bs:mine {spec-name}` or `/bs:run {spec-name}`
+4. Point to the first spec as the pipeline entry point — tell them to run `/smitty:mine {spec-name}` or `/smitty:run {spec-name}`
 5. Remind them @data-analyst discovers domain context — they don't need to know the taxonomy upfront
 
 Do NOT tell the user to run `uv sync` or `uv run pytest` — you already did it.
