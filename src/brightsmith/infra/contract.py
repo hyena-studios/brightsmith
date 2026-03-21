@@ -169,6 +169,41 @@ def list_contracts(contracts_dir: Path | None = None) -> list[dict]:
     return results
 
 
+def _build_lineage_section(table_name: str) -> dict:
+    """Build the lineage section for a contract from runtime lineage events.
+
+    Auto-populates sources from the input_tables of the latest lineage event
+    for this table. Falls back to empty sources if no events exist.
+    """
+    section: dict = {"sources": []}
+    try:
+        from brightsmith.infra.lineage import query_lineage_events
+        events = query_lineage_events(table_name, event_type="COMPLETE", limit=1)
+        if not events:
+            # Try START events for input_tables (COMPLETE doesn't repeat them)
+            events = query_lineage_events(table_name, event_type="START", limit=1)
+        if events:
+            latest = events[0]
+            input_tables_raw = latest.get("input_tables", "[]")
+            try:
+                input_tables = json.loads(input_tables_raw) if isinstance(input_tables_raw, str) else input_tables_raw
+            except (json.JSONDecodeError, TypeError):
+                input_tables = []
+            section["sources"] = [
+                {"table": t, "relationship": "direct_input"} for t in input_tables
+            ]
+            # Add latest run metadata
+            section["latest_run"] = {
+                "run_id": latest.get("run_id"),
+                "event_time": str(latest.get("event_time", "")),
+                "row_count": latest.get("row_count"),
+                "snapshot_id": latest.get("output_snapshot_id"),
+            }
+    except Exception:
+        logger.debug("Could not query lineage events for contract %s", table_name, exc_info=True)
+    return section
+
+
 # ---------------------------------------------------------------------------
 # Contract generation
 # ---------------------------------------------------------------------------
@@ -289,9 +324,7 @@ def generate_contract(
                 "p0_pass_required": True,
             },
         },
-        "lineage": {
-            "sources": [],
-        },
+        "lineage": _build_lineage_section(table_name),
         "consumers": [],
         "compatibility": {
             "breaking_changes": sorted(BREAKING_CHANGES),

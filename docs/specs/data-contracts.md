@@ -1,6 +1,6 @@
 # Framework Spec: Machine-Readable Data Contracts
 
-**Status:** DRAFT
+**Status:** COMPLETE
 **Zone:** Infrastructure (cross-cutting)
 **Primary Agent:** @primary-agent
 **Created:** 2026-03-19

@@ -91,6 +91,9 @@ class BaseMCPServer:
         catalog_path: Path to SQLite catalog.
         grounding_docs_path: Optional path to grounding docs directory.
         server_name: Name for the MCP server.
+        formatter: Optional value formatter for response enrichment.
+        anomaly_checker: Optional anomaly checker for response enrichment.
+        system_prompt: Optional system prompt builder.
     """
 
     def __init__(
@@ -99,11 +102,17 @@ class BaseMCPServer:
         catalog_path: str | Path,
         grounding_docs_path: str | Path | None = None,
         server_name: str = "brightsmith",
+        formatter: Any | None = None,
+        anomaly_checker: Any | None = None,
+        system_prompt: Any | None = None,
     ):
         self.warehouse_path = Path(warehouse_path)
         self.catalog_path = Path(catalog_path)
         self.grounding_docs_path = Path(grounding_docs_path) if grounding_docs_path else None
         self.server_name = server_name
+        self.formatter = formatter
+        self.anomaly_checker = anomaly_checker
+        self.system_prompt = system_prompt
         self._catalog = None
 
     @property
@@ -247,6 +256,16 @@ class BaseMCPServer:
                     handler=lambda p=md_file: p.read_text(),
                 ))
 
+        # System prompt (if configured)
+        if self.system_prompt is not None:
+            framework_resources.append(ResourceDef(
+                uri="brightsmith://system-prompt",
+                name="Recommended System Prompt",
+                description="Data-aware system prompt for LLM clients using this MCP server",
+                mime_type="text/markdown",
+                handler=self.system_prompt.build,
+            ))
+
         return framework_resources + self.get_resources()
 
     # --- Tool handlers ---
@@ -286,16 +305,47 @@ class BaseMCPServer:
         return {"table": table_name, "scorecard": "No scorecard found"}
 
     def _handle_get_lineage(self, input_dict: dict) -> dict:
-        """Get lineage for a table."""
-        from brightsmith.config import PROJECT_ROOT
+        """Get lineage for a table. Queries Iceberg events, falls back to governance docs."""
         table_name = input_dict["table"]
+
+        # 1. Try Iceberg lineage_events table (runtime data)
+        try:
+            from brightsmith.infra.lineage import query_lineage_events
+            events = query_lineage_events(table_name, limit=5)
+            if events:
+                latest = events[0]
+                input_tables_raw = latest.get("input_tables", "[]")
+                try:
+                    input_tables = json.loads(input_tables_raw) if isinstance(input_tables_raw, str) else input_tables_raw
+                except (json.JSONDecodeError, TypeError):
+                    input_tables = []
+                return self.attach_governance({
+                    "table": table_name,
+                    "source": "runtime",
+                    "latest_event": {
+                        "run_id": latest.get("run_id"),
+                        "event_time": str(latest.get("event_time", "")),
+                        "row_count": latest.get("row_count"),
+                        "snapshot_id": latest.get("output_snapshot_id"),
+                        "duration_ms": latest.get("duration_ms"),
+                        "dq_passed": latest.get("dq_rules_passed"),
+                        "dq_total": latest.get("dq_rules_total"),
+                    },
+                    "input_tables": input_tables,
+                    "event_count": len(events),
+                }, table_name)
+        except Exception:
+            pass
+
+        # 2. Fall back to governance/lineage/ files
+        from brightsmith.config import PROJECT_ROOT
         lineage_dir = PROJECT_ROOT / "governance" / "lineage"
         if lineage_dir.exists():
             for f in lineage_dir.glob("*.json"):
                 try:
                     data = json.loads(f.read_text())
                     if table_name in str(data):
-                        return {"table": table_name, "lineage": data}
+                        return {"table": table_name, "source": "governance_doc", "lineage": data}
                 except Exception:
                     pass
         return {"table": table_name, "lineage": "No lineage found"}
@@ -408,6 +458,28 @@ class BaseMCPServer:
 
         result["governance"] = governance
         return result
+
+    def enrich_response(self, result: dict, table_name: str) -> dict:
+        """Full response enrichment pipeline.
+
+        1. Format values (if formatter configured)
+        2. Flag anomalies (if anomaly checker configured)
+        3. Attach governance metadata (always)
+
+        This is the recommended wrapper for tool responses. Falls back to
+        ``attach_governance()`` behavior when no intelligence layer components
+        are configured.
+        """
+        # Step 1: Format values
+        if self.formatter and "data" in result and isinstance(result["data"], list):
+            result["data"] = self.formatter.format_rows(result["data"])
+
+        # Step 2: Flag anomalies
+        if self.anomaly_checker and "data" in result and isinstance(result["data"], list):
+            result["data"] = self.anomaly_checker.check_rows(result["data"])
+
+        # Step 3: Attach governance metadata (always)
+        return self.attach_governance(result, table_name)
 
     # --- Grounding docs ---
 
