@@ -76,6 +76,9 @@ class ColumnContract:
     required: bool
     business_term: str | None = None
     is_cde: bool = False
+    cde_rationale: str = ""
+    is_pii: bool = False
+    pii_rationale: str = ""
     description: str = ""
 
 
@@ -258,12 +261,15 @@ def generate_contract(
                 "required": iceberg_field.required,
                 "business_term": None,
                 "is_cde": False,
+                "cde_rationale": "",
+                "is_pii": False,
+                "pii_rationale": "",
                 "description": "",
             })
     except Exception as e:
         logger.warning("Could not load Iceberg table %s: %s — generating with empty schema", table_name, e)
 
-    # Cross-reference business glossary for term IDs
+    # Cross-reference business glossary for term IDs (semantic link only)
     try:
         glossary_path = PROJECT_ROOT / "governance" / "business-glossary.json"
         if glossary_path.exists():
@@ -275,7 +281,7 @@ def generate_contract(
                 match = term_lookup.get(col["name"].lower())
                 if match:
                     col["business_term"] = match.get("term_id")
-                    col["is_cde"] = match.get("is_cde", False)
+                    # CDE/PII flags are set by @cde-tagger, not derived from glossary
     except Exception:
         pass
 

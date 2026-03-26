@@ -19,8 +19,6 @@ def _make_valid_term(**overrides):
         "category": "measurement",
         "owner": "Data Governance",
         "used_in_models": [],
-        "is_cde": False,
-        "is_pii": False,
         "approval_status": "approved",
     }
     term.update(overrides)
@@ -61,27 +59,19 @@ def test_invalid_related_term_ref_fails(tmp_path):
     assert any("BT-999" in i for i in issues)
 
 
-def test_cde_without_rationale_fails(tmp_path):
-    """is_cde=True without cde_rationale should fail."""
-    term = _make_valid_term(is_cde=True)
+def test_term_without_cde_pii_fields_passes(tmp_path):
+    """Terms without is_cde/is_pii fields should pass (CDE/PII lives on contracts now)."""
+    term = _make_valid_term()
+    assert "is_cde" not in term
+    assert "is_pii" not in term
     path = _write_glossary(tmp_path, [term])
     valid, issues = validate_glossary(path)
-    assert valid is False
-    assert any("cde_rationale" in i for i in issues)
+    assert valid is True
 
 
-def test_pii_without_rationale_fails(tmp_path):
-    """is_pii=True without pii_rationale should fail."""
-    term = _make_valid_term(is_pii=True)
-    path = _write_glossary(tmp_path, [term])
-    valid, issues = validate_glossary(path)
-    assert valid is False
-    assert any("pii_rationale" in i for i in issues)
-
-
-def test_cde_with_rationale_passes(tmp_path):
-    """is_cde=True with cde_rationale should pass."""
-    term = _make_valid_term(is_cde=True, cde_rationale="Required for regulatory reporting")
+def test_extra_fields_ignored(tmp_path):
+    """Extra fields (e.g., legacy is_cde) should not cause validation failure."""
+    term = _make_valid_term(is_cde=True, cde_rationale="legacy field")
     path = _write_glossary(tmp_path, [term])
     valid, issues = validate_glossary(path)
     assert valid is True

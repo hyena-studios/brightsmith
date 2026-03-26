@@ -78,14 +78,14 @@ After implementation, verify every applicable item:
 - [ ] **DQ Execution:** Rules have been executed against real Iceberg data (`governance/dq-results/` has results for this spec)
 - [ ] **DQ P0 Gate:** No P0 failures in latest execution results (check `p0_passed` in results JSON)
 - [ ] **DQ Scorecard:** Scorecard produced from real execution results (not test-based) in `governance/dq-scorecards/`
-- [ ] **CDE Tags:** New or modified fields are tagged in `governance/cde-catalog.json`
+- [ ] **CDE/PII Tags:** New or modified fields have `is_cde`/`is_pii` flags set in their data contracts at `governance/data-contracts/`
 - [ ] **Data Dictionary:** New or modified fields have entries in `governance/data-dictionary.json`
 - [ ] **Data Contracts:** Gold zone tables have data contracts
 - [ ] **Audit Trail:** Agent decision logs exist in `governance/audit-trail/` for this spec
 - [ ] **Schema Changes:** Any schema changes match what the spec defined and the approved physical model
 - [ ] **Data Models (Base/Consumable only):** All three model stages exist in `governance/models/` and physical model matches implementation
 - [ ] **No Orphaned Artifacts:** No governance artifacts reference tables or fields that don't exist
-- [ ] **Consistency:** Lineage, CDE tags, data dictionary, and DQ rules all reference the same field names and table names
+- [ ] **Consistency:** Lineage, CDE/PII flags (on contracts), data dictionary, and DQ rules all reference the same field names and table names
 
 ### Insight Traceability (Zone Transitions)
 
@@ -162,7 +162,7 @@ For consumable and MCP zone specs, verify:
 | `governance/reviews/` | Write — review reports |
 | `governance/audit-trail/` | Write — decision logs |
 | `governance/lineage/` | Read — verify lineage artifacts exist |
-| `governance/cde-catalog.json` | Read — verify CDE tags exist |
+| `governance/data-contracts/` | Read — verify CDE/PII flags set on columns |
 | `governance/data-dictionary.json` | Read — verify dictionary entries exist |
 | `governance/data-contracts/` | Read — verify data contracts exist and pass |
 | `tests/` | Read — verify tests exist |

@@ -38,7 +38,8 @@ You are mandatory on every spec. You run after CDE tagging. You document what wa
           "data_type": "TYPE",
           "nullable": false,
           "definition": "Plain-English definition of what this field contains, with enough context for a business user to understand it.",
-          "cde_reference": "CDE-001 (Name)",
+          "is_cde": true,
+          "cde_rationale": "Feeds quarterly regulatory filing",
           "source": "Where this field comes from (source table.field or 'computed from X')",
           "dq_rules": ["RULE-001", "RULE-005"],
           "lineage": "governance/lineage/spec-name-timestamp.json",
@@ -170,7 +171,11 @@ These are the things the human should pay attention to.]
 - Are the definitions accurate for your domain?
 - Are any terms missing that your team uses?
 - Are project-specific terms correctly distinguished from external standards?
-- Do the is_cde and is_pii flags look right?
+
+### For CDE/PII Flags (@cde-tagger):
+- Are the right columns flagged as CDE?
+- Are the right columns flagged as PII?
+- Do the rationales explain WHY this specific column is critical/sensitive, not just repeat the flag?
 
 ### For Conceptual Model (@semantic-modeler):
 - Do the entity types match how you think about this data?
@@ -222,7 +227,7 @@ Log all documentation decisions to `governance/audit-trail/`. Include:
 | `docs/specs/` | Read — understand what was built |
 | `governance/data-dictionary.json` | Read/Write — the data dictionary |
 | `governance/data-contracts/` | Write — data contracts for consumable tables |
-| `governance/cde-catalog.json` | Read — cross-reference CDE tags |
+| `governance/data-contracts/` | Read — cross-reference CDE/PII flags on columns |
 | `governance/dq-scorecards/` | Read — cross-reference quality scores |
 | `governance/lineage/` | Read — cross-reference lineage |
 | `governance/audit-trail/` | Write — decision logs |

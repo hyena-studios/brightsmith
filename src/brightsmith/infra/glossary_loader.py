@@ -43,8 +43,6 @@ class GlossaryTerm:
     category: str | None = None
     synonyms: list[str] = field(default_factory=list)
     related_terms: list[str] = field(default_factory=list)
-    is_cde: bool = False
-    is_pii: bool = False
     status: str = "approved"
 
 
@@ -153,8 +151,6 @@ def load_standard_glossary(name: str, registry: GlossaryRegistry | None = None) 
             read_only=True,
             category=t.get("category"),
             synonyms=t.get("synonyms", []),
-            is_cde=t.get("is_cde", False),
-            is_pii=t.get("is_pii", False),
         ))
 
     logger.info("Loaded %d terms from glossary '%s' (tier %d)", len(terms), name, tier)
@@ -195,8 +191,6 @@ def load_project_glossary(
             category=t.get("category"),
             synonyms=t.get("synonyms", []),
             related_terms=t.get("related_terms", []),
-            is_cde=t.get("is_cde", False),
-            is_pii=t.get("is_pii", False),
             status=t.get("status", "approved"),
         )
 

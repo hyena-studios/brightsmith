@@ -73,11 +73,11 @@ Every model level must cross-reference business glossary terms from `governance/
 
 | Level | What to add | Format |
 |-------|-------------|--------|
-| Conceptual | `Business Term`, `CDE`, `PII` columns on Entities table | `BT-XXX` (ID only). |
-| Logical | `Business Term`, `PII` columns on each attribute table (CDE Reference already exists) | `BT-XXX` (ID only). |
-| Physical | `Business Term`, `CDE`, `PII` columns on each column table | `BT-XXX` (ID only). |
+| Conceptual | `Business Term`, `Is CDE`, `Is PII` columns on Entities table | `BT-XXX` (ID only) for Business Term. `true/false` for CDE/PII. |
+| Logical | `Business Term`, `Is CDE`, `Is PII` columns on each attribute table | `BT-XXX` (ID only) for Business Term. `true/false` for CDE/PII. |
+| Physical | `Business Term`, `Is CDE`, `Is PII` columns on each column table | `BT-XXX` (ID only) for Business Term. `true/false` for CDE/PII. |
 
-**IMPORTANT: Models store IDs only, never inline definitions.** The authoritative definitions live in `governance/business-glossary.json` (business terms) and `governance/cde-catalog.json` (CDEs). When generating documentation (README, reports), dereference IDs into human-readable names by looking up the authoritative source.
+**IMPORTANT: Models store IDs only for business terms, never inline definitions.** The authoritative definitions live in `governance/business-glossary.json`. CDE and PII flags are direct annotations on physical data elements, set by @cde-tagger on data contracts at `governance/data-contracts/`. Models mirror contract values. When generating documentation (README, reports), dereference term IDs into human-readable names by looking up the glossary.
 
 ## The 3-Stage Modeling Progression
 

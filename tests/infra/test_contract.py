@@ -39,8 +39,8 @@ def _make_contract(**overrides) -> dict:
             "namespace": "gold",
             "grain": {"columns": ["id"], "description": "One row per entity"},
             "columns": [
-                {"name": "id", "type": "integer", "required": True, "business_term": "BT-001", "is_cde": True, "description": "Entity ID"},
-                {"name": "value", "type": "double", "required": False, "business_term": None, "is_cde": False, "description": "Metric value"},
+                {"name": "id", "type": "integer", "required": True, "business_term": "BT-001", "is_cde": True, "cde_rationale": "Entity identifier required for regulatory filings", "is_pii": False, "pii_rationale": "", "description": "Entity ID"},
+                {"name": "value", "type": "double", "required": False, "business_term": None, "is_cde": False, "cde_rationale": "", "is_pii": False, "pii_rationale": "", "description": "Metric value"},
             ],
         },
         "quality": {
@@ -215,3 +215,36 @@ def test_contract_diff_item_fields():
     d = ContractDiffItem("BREAKING", "Column 'revenue' removed")
     assert d.change_type == "BREAKING"
     assert d.description == "Column 'revenue' removed"
+
+
+def test_column_contract_cde_pii_fields():
+    """ColumnContract should have CDE/PII fields as direct properties."""
+    from brightsmith.infra.contract import ColumnContract
+
+    col = ColumnContract(
+        name="revenue",
+        type="double",
+        required=True,
+        business_term="BT-005",
+        is_cde=True,
+        cde_rationale="Feeds quarterly regulatory filing",
+        is_pii=False,
+        pii_rationale="",
+        description="Total revenue",
+    )
+    assert col.is_cde is True
+    assert col.cde_rationale == "Feeds quarterly regulatory filing"
+    assert col.is_pii is False
+    assert col.pii_rationale == ""
+
+
+def test_contract_cde_pii_roundtrip(tmp_path):
+    """Save and load should preserve CDE/PII rationale on columns."""
+    contract = _make_contract()
+    save_contract(contract, contracts_dir=tmp_path)
+    loaded = load_contract("test-table", contracts_dir=tmp_path)
+    col = loaded["schema"]["columns"][0]
+    assert col["is_cde"] is True
+    assert col["cde_rationale"] == "Entity identifier required for regulatory filings"
+    assert col["is_pii"] is False
+    assert col["pii_rationale"] == ""

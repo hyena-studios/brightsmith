@@ -1,7 +1,7 @@
 """Business glossary schema validator.
 
-Validates that business-glossary.json terms have all required fields,
-valid cross-references, and consistent CDE/PII rationale.
+Validates that business-glossary.json terms have all required fields
+and valid cross-references.
 
 Usage:
     python -m brightsmith.infra.glossary_validator validate
@@ -20,8 +20,7 @@ logger = logging.getLogger(__name__)
 REQUIRED_FIELDS = {
     "term_id", "name", "definition", "source", "source_reference",
     "synonyms", "related_terms", "category", "owner",
-    "used_in_models", "is_cde", "is_pii",
-    "approval_status",
+    "used_in_models", "approval_status",
 }
 
 VALID_CATEGORIES = {
@@ -80,16 +79,6 @@ def validate_glossary(glossary_path: Path | None = None) -> tuple[bool, list[str
             if models_dir.exists():
                 matches = list(models_dir.glob(f"*{model_ref}*"))
                 # Don't flag if models dir doesn't exist yet (pre-modeling)
-
-        # CDE rationale required when is_cde is True
-        if term.get("is_cde") is True:
-            if not term.get("cde_rationale"):
-                issues.append(f"{prefix} is_cde=true but cde_rationale is missing or empty")
-
-        # PII rationale required when is_pii is True
-        if term.get("is_pii") is True:
-            if not term.get("pii_rationale"):
-                issues.append(f"{prefix} is_pii=true but pii_rationale is missing or empty")
 
         # Validate category
         cat = term.get("category")

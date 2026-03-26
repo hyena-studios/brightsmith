@@ -51,8 +51,6 @@ def tmp_glossary_dir(tmp_path):
                 "source_reference": "Widget Spec v1",
                 "synonyms": ["Gadget", "Thingamajig"],
                 "category": "entity",
-                "is_cde": True,
-                "is_pii": False,
             },
             {
                 "term_id": "ST-TEST-002",
@@ -61,8 +59,6 @@ def tmp_glossary_dir(tmp_path):
                 "source_reference": "Widget Spec v1",
                 "synonyms": ["WID"],
                 "category": "identifier",
-                "is_cde": True,
-                "is_pii": False,
             },
             {
                 "term_id": "ST-TEST-003",
@@ -71,8 +67,6 @@ def tmp_glossary_dir(tmp_path):
                 "source_reference": "Widget Spec v1",
                 "synonyms": [],
                 "category": "classification",
-                "is_cde": False,
-                "is_pii": False,
             },
         ],
     }
@@ -98,8 +92,6 @@ def tmp_glossary_dir(tmp_path):
                 "source_reference": None,
                 "synonyms": ["Processing Rate"],
                 "category": "metric",
-                "is_cde": False,
-                "is_pii": False,
             },
         ],
     }
@@ -157,8 +149,6 @@ def tmp_project_glossary(tmp_path):
                 "category": "entity",
                 "synonyms": ["Gadget"],
                 "related_terms": ["BT-002"],
-                "is_cde": True,
-                "is_pii": False,
                 "status": "approved",
             },
             {
@@ -172,8 +162,6 @@ def tmp_project_glossary(tmp_path):
                 "category": "identifier",
                 "synonyms": ["WID"],
                 "related_terms": [],
-                "is_cde": True,
-                "is_pii": False,
                 "status": "approved",
             },
             {
@@ -187,8 +175,6 @@ def tmp_project_glossary(tmp_path):
                 "category": "pipeline",
                 "synonyms": ["Run ID"],
                 "related_terms": [],
-                "is_cde": False,
-                "is_pii": False,
                 "status": "approved",
             },
             {
@@ -202,8 +188,6 @@ def tmp_project_glossary(tmp_path):
                 "category": "pipeline",
                 "synonyms": [],
                 "related_terms": [],
-                "is_cde": False,
-                "is_pii": False,
                 "status": "proposed",
             },
         ],

@@ -77,7 +77,7 @@ Congratulations! You've mined raw ore from the source and forged it into bronze.
 🛡️ Chaos Monkey: [X] hardening cycles survived
 📖 Domain Context: governance/domain-context.md
 🧬 Lineage Events: [count in governance/lineage/]
-🏷️ CDE Mappings: [count in governance/cde-catalog.json]
+🏷️ CDE Flags: [count columns with is_cde=true across governance/data-contracts/]
 
 📋 Artifacts Created:
   • Spec: docs/specs/$ARGUMENTS.md

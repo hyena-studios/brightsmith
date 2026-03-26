@@ -31,13 +31,12 @@ The glossary lives at `governance/business-glossary.json`. Each term has:
   "related_terms": ["BT-002", "BT-003"],
   "category": "domain category",
   "owner": "Ownership area",
-  "status": "approved | proposed | deprecated",
-  "approved_by": "human:name | auto | null",
-  "approved_at": "ISO-8601 timestamp | null",
-  "cde_reference": "CDE-XXX | null",
-  "used_in_models": ["spec-name-1", "spec-name-2"]
+  "used_in_models": ["spec-name-1", "spec-name-2"],
+  "approval_status": "approved | proposed | auto-approved"
 }
 ```
+
+**Note:** CDE and PII flags are NOT glossary fields. They live on physical data elements in data contracts, set by @cde-tagger. A business term is a pure semantic definition — the same term can be a CDE in one table and not in another.
 
 ## Term Sources and Approval Rules
 
@@ -56,8 +55,7 @@ Auto-approval for external/domain standards means: if `REQUIRE_HUMAN_APPROVAL = 
 1. **Identify business terms** — scan specs, EDA reports, models, and code for concepts that need formal definitions
 2. **Propose new terms** — write term entries with definitions, sources, and category assignments
 3. **Maintain glossary integrity** — no duplicate terms, no conflicting definitions, synonyms are linked
-4. **Map terms to CDEs** — where a business term corresponds to a CDE, link them via `cde_reference`
-5. **Track term usage** — `used_in_models` shows which conceptual models reference each term
+4. **Track term usage** — `used_in_models` shows which conceptual models reference each term
 6. **Flag ambiguity** — if a term is used inconsistently across specs or code, raise it for human resolution
 7. **Classify term sources** — determine whether terms come from external standards, domain standards, or are project-specific
 
@@ -109,18 +107,16 @@ Every business term you produce MUST include these fields:
 | term_id | Always | Unique ID (BT-NNN format) |
 | name | Always | Display name |
 | definition | Always | Plain-English definition |
-| source | Always | "external-standard" or "project-specific" |
+| source | Always | "external-standard", "domain-standard", or "project-specific" |
 | source_reference | Always | URL or document citation |
 | synonyms | Always | Alias list (empty array if none) |
 | related_terms | Always | BT-IDs of related terms (empty array if none) |
 | category | Always | entity, classification, measurement, temporal, regulatory, or derived |
 | owner | Always | Who owns this term |
 | used_in_models | Always | Model names referencing this term (empty array if none) |
-| is_cde | Always | Boolean |
-| cde_rationale | When is_cde=true | Why this is a critical data element |
-| is_pii | Always | Boolean |
-| pii_rationale | When is_pii=true | What personal data is involved |
 | approval_status | Always | proposed, approved, or auto-approved |
+
+**Note:** CDE/PII flags are NOT part of the glossary schema. They live on physical data elements in data contracts (`governance/data-contracts/*.yaml`), set by @cde-tagger.
 
 Validate with: `python3 -m brightsmith.infra.glossary_validator validate`
 
@@ -155,7 +151,7 @@ Log all term proposals and decisions to `governance/audit-trail/`. Include:
 |------|---------|
 | `src/config.py` | Read — check REQUIRE_HUMAN_APPROVAL |
 | `governance/business-glossary.json` | Read/Write — the glossary |
-| `governance/cde-catalog.json` | Read — cross-reference CDEs |
+| `governance/data-contracts/` | Read — see which columns reference which terms |
 | `governance/domain-context.md` | Read — canonical domain knowledge (PRIMARY for term source classification) |
 | `governance/eda/` | Read — detailed EDA findings from @data-analyst |
 | `governance/models/` | Read — identify terms used in models |

@@ -90,6 +90,9 @@ schema:
       required: true
       business_term: BT-001
       is_cde: true
+      cde_rationale: "Entity identifier required for all regulatory filings per BCBS 239"
+      is_pii: false
+      pii_rationale: ""
       description: Entity identifier
     - name: fy
       type: integer
@@ -161,7 +164,7 @@ def generate_contract(
 The generator:
 1. Loads the Iceberg table and reads its schema (actual columns, types, nullability)
 2. Reads the spec for metadata (name, description, grain)
-3. Reads the business glossary to attach `business_term` and `is_cde` per column
+3. Reads the business glossary to attach `business_term` per column (CDE/PII flags are set later by @cde-tagger, not derived from the glossary)
 4. Reads the DQ rules file path
 5. Reads the golden dataset path
 6. Produces the contract YAML

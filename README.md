@@ -236,8 +236,8 @@ Every transformation produces governance metadata:
 | Artifact | Location | Purpose |
 |----------|----------|---------|
 | Domain context | `governance/domain-context.md` | Canonical domain knowledge |
-| Business glossary | `governance/business-glossary.json` | Approved business term definitions (14 fields per term) |
-| CDE catalog | `governance/cde-catalog.json` | Critical Data Element mappings |
+| Business glossary | `governance/business-glossary.json` | Approved business term definitions (11 fields per term) |
+| CDE/PII flags | `governance/data-contracts/*.yaml` | Critical Data Element and PII flags on physical columns |
 | DQ rules | `governance/dq-rules/*.json` | SQL-based validation (P0/P1/P2 priority) |
 | DQ rule templates | `governance/dq-rule-templates/` | Mandatory patterns for gold zone |
 | DQ results | `governance/dq-results/` | Timestamped execution results |

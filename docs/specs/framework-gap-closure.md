@@ -271,7 +271,7 @@ Before marking a spec COMPLETE, verify every row:
 | @pii-scanner | EXECUTED / SKIPPED | governance/pii-scans/ | |
 | @temporal-modeler | EXECUTED / SKIPPED | | |
 | @lineage-tracker | EXECUTED / SKIPPED | governance/lineage/ | |
-| @cde-tagger | EXECUTED / SKIPPED | governance/cde-catalog.json | |
+| @cde-tagger | EXECUTED / SKIPPED | governance/data-contracts/*.yaml | |
 | @doc-generator | EXECUTED / SKIPPED | governance/data-dictionary.json | |
 | @adversarial-auditor | EXECUTED / SKIPPED | | |
 | @governance-reviewer (post) | EXECUTED / SKIPPED | governance/reviews/ | |

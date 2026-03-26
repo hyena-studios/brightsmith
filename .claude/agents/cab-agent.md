@@ -43,7 +43,7 @@ This classifies every change as PATCH, MINOR, or MAJOR:
 |---------------|-------------|---------|
 | PATCH | Metadata only | Description, comments |
 | MINOR | Additive, non-breaking | New nullable column, nullability relaxed |
-| MAJOR | Breaking | Column removed, type changed, grain shifted, CDE mapping altered |
+| MAJOR | Breaking | Column removed, type changed, grain shifted, CDE flag changed on active contract column |
 
 Overall classification = maximum severity across all individual changes.
 

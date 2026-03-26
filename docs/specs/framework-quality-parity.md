@@ -30,7 +30,7 @@ Field-testing the Grist framework against a manually-built domain-specific pipel
 
 3. **Consumable DQ rules are skippable.** The pipeline gate allows `@dq-rule-writer` to be marked complete without producing rules when fast-tracked.
 
-4. **Business glossary schema lacks relationship metadata.** No synonyms, related terms, model usage tracking, or CDE rationale — preventing impact analysis and stewardship.
+4. **Business glossary schema lacks relationship metadata.** No synonyms, related terms, or model usage tracking — preventing impact analysis and stewardship. (Note: CDE/PII flags have been moved from the glossary to physical data elements on data contracts per the cde-pii-governance-refactor spec.)
 
 5. **Lineage is static templates, not runtime capture.** No actual snapshot IDs, row counts, DQ metrics, or agent attribution.
 
@@ -261,36 +261,30 @@ Update agent definition: `@dq-rule-writer` MUST read `governance/dq-rule-templat
 
 ### 4a. Required fields per business term
 
+> **SUPERSEDED:** The `is_cde`, `cde_rationale`, `is_pii`, and `pii_rationale` fields have been moved from the business glossary to physical data elements on data contracts. See `docs/specs/cde-pii-governance-refactor.md`. The glossary now has 11 required fields (pure semantic definitions).
+
 ```json
 {
   "term_id": "BT-001",
   "name": "...",
   "definition": "...",
-  "source": "external-standard | project-specific",
+  "source": "external-standard | domain-standard | project-specific",
   "source_reference": "URL or document citation",
   "synonyms": ["alias1", "alias2"],
   "related_terms": ["BT-002", "BT-005"],
   "category": "entity | classification | measurement | temporal | regulatory | derived",
   "owner": "Data Governance | domain-specific role",
   "used_in_models": ["model-name-1", "model-name-2"],
-  "is_cde": false,
-  "cde_rationale": "Required when is_cde=true. Why this is critical.",
-  "is_pii": false,
-  "pii_rationale": "Required when is_pii=true. What personal data is involved.",
-  "approval_status": "proposed | approved | auto-approved",
-  "approved_by": null,
-  "approved_at": null
+  "approval_status": "proposed | approved | auto-approved"
 }
 ```
 
 ### 4b. Glossary validation module
 
 Add `src/grist/infra/glossary_validator.py`:
-- Validate all required fields present
+- Validate all required fields present (11 fields)
 - `related_terms` reference valid term IDs within the glossary
 - `used_in_models` reference files that exist in `governance/models/`
-- `cde_rationale` non-null when `is_cde: true`
-- `pii_rationale` non-null when `is_pii: true`
 - CLI: `python -m grist.infra.glossary_validator validate`
 
 ### 4c. Tests
@@ -298,7 +292,7 @@ Add `src/grist/infra/glossary_validator.py`:
 - `tests/infra/test_glossary_validator.py`:
   - `test_missing_required_field_fails`
   - `test_invalid_related_term_ref_fails`
-  - `test_cde_without_rationale_fails`
+  - `test_term_without_cde_pii_fields_passes`
   - `test_valid_glossary_passes`
 
 ---

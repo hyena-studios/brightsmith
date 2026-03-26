@@ -157,7 +157,7 @@ The eval set spec generated from this section is ALWAYS Tier 1 at the gold→mcp
 
 1. **Read the data, not just the schemas.** Query the actual Iceberg tables. Count rows, check distributions, verify coverage. Schemas tell you what SHOULD be there; data tells you what IS there.
 2. **Read the EDA reports.** @data-analyst already profiled this data — build on their work, don't repeat it.
-3. **Read the governance artifacts.** Business glossary, CDE catalog, DQ scorecards — these tell you what's been validated and what the quality looks like.
+3. **Read the governance artifacts.** Business glossary, data contracts (including CDE/PII flags), DQ scorecards — these tell you what's been validated and what the quality looks like.
 4. **Think like a user.** What would a domain expert ask? What would an analyst need? What would an LLM need to answer questions about this data accurately?
 5. **Be specific about join keys and feasibility.** Don't say "combine with external data" — say exactly what source, what join key, what it enables.
 6. **Rank ruthlessly.** Not everything is worth building. Some data products are cool but serve no real use case. Some are valuable but infeasible with current data. Be honest about both.
@@ -187,7 +187,7 @@ You DO:
 | `governance/domain-context.md` | Read | Canonical domain knowledge — entity types, external data opportunities, AI-ready considerations |
 | `governance/eda/` | Read | Build on existing EDA reports |
 | `governance/business-glossary.json` | Read | Understand defined terms |
-| `governance/cde-catalog.json` | Read | Understand mapped CDEs |
+| `governance/data-contracts/` | Read | Understand CDE/PII flags on columns |
 | `governance/dq-scorecards/` | Read | Understand data quality state |
 | `governance/insights/` | Write | Insight reports |
 | `governance/audit-trail/` | Write | Decision logs |
