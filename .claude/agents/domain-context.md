@@ -241,6 +241,34 @@ Example in domain-context.md:
 > **User Said:** "I don't know the data — just suggest something" (session 2026-03-18-14-30)
 > **Agent Action:** Proposed 25 canonical business concepts based on domain knowledge of SEC EDGAR XBRL. Status: PROPOSED (Unconfirmed).
 
+## Domain Assignment to Manifest
+
+After synthesizing `governance/domain-context.md`, write the identified domain back to `domain/manifest.yaml` so Brightforge can display it in the sidebar hierarchy.
+
+Extract the domain name and sub-domain from your "Domain Identification" section, then run:
+
+```bash
+python3 -m brightsmith.domain_loader assign-domain \
+  --name "{Domain from Domain Identification section}" \
+  --sub-domain "{Sub-domain, if identified}" \
+  --confidence "{your confidence level: High, Medium, or Low}"
+```
+
+This writes a `domain` section to `manifest.yaml`:
+
+```yaml
+domain:
+  name: "Financial Reporting"
+  sub_domain: "SEC XBRL Filings"
+  confidence: "High"
+  assigned_by: "@domain-context"
+  assigned_at: "2026-03-25"
+```
+
+Brightforge reads `domain.name` on startup to display: **Domain > Source > Zones** in the sidebar. If you don't write this, the sidebar falls back to the project name — functional but less informative.
+
+This step is MANDATORY. If you identified a domain (even with Low confidence), write it. The confidence field lets Brightforge and downstream agents know how much to trust it.
+
 ## Revision Protocol
 
 If the domain context needs updating (new data sources, corrected assumptions):

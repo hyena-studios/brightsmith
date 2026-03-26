@@ -607,6 +607,8 @@ def bump_version(version: str, change_type: str) -> str:
         return f"{major + 1}.0.0"
     elif change_type == "NON_BREAKING":
         return f"{major}.{minor + 1}.0"
+    elif change_type == "PATCH":
+        return f"{major}.{minor}.{patch + 1}"
     else:
         return f"{major}.{minor}.{patch + 1}"
 
@@ -632,6 +634,48 @@ def check_version_bump_required(diffs: list[ContractDiffItem], current_version: 
         return f"Non-breaking changes detected but minor version not bumped: {current_version} → {new_version}"
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Deprecation
+# ---------------------------------------------------------------------------
+
+
+def deprecate_contract(
+    name: str,
+    successor: str,
+    archive_after: str,
+    contracts_dir: Path | None = None,
+) -> dict | None:
+    """Mark a contract as deprecated with a successor reference.
+
+    Sets status to 'deprecated' and adds deprecation metadata to the
+    compatibility section. Used by @cab-agent when a MAJOR schema change
+    triggers a table fork.
+
+    Args:
+        name: Contract name to deprecate.
+        successor: Contract name of the replacement (e.g., "company-financials-v2").
+        archive_after: ISO date after which the contract can be archived.
+        contracts_dir: Override for contracts directory.
+
+    Returns:
+        Updated contract dict, or None if contract not found.
+    """
+    contract = load_contract(name, contracts_dir)
+    if contract is None:
+        logger.warning("Cannot deprecate contract '%s': not found", name)
+        return None
+
+    contract["metadata"]["status"] = "deprecated"
+
+    compat = contract.setdefault("compatibility", {})
+    compat["deprecated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    compat["archive_after"] = archive_after
+    compat["successor_contract"] = successor
+
+    save_contract(contract, contracts_dir)
+    return contract
 
 
 # ---------------------------------------------------------------------------

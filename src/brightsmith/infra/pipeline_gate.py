@@ -114,7 +114,12 @@ SILVER_GREENFIELD_STEPS: tuple[Step, ...] = (
     Step("dq-rule-writer", "@dq-rule-writer", requires=("data-analyst",)),
     Step("semantic-modeler-physical", "@semantic-modeler", requires=("semantic-modeler-logical",)),
     Step("primary-agent", "@primary-agent", requires=("semantic-modeler-physical",)),
-    Step("dq-engineer", "@dq-engineer", requires=("dq-rule-writer", "primary-agent")),
+    Step(
+        "cab-review", "@cab-agent", requires=("primary-agent",),
+        skippable=True,
+        skip_condition="Table is new (no existing contract) — CAB review only applies to schema modifications of existing tables",
+    ),
+    Step("dq-engineer", "@dq-engineer", requires=("dq-rule-writer", "primary-agent", "cab-review")),
     Step("chaos-monkey", "@chaos-monkey", requires=("dq-engineer",)),
     Step("entity-resolver", "@entity-resolver", requires=("primary-agent",)),
     Step("pii-scanner", "@pii-scanner", requires=("primary-agent",)),
@@ -123,7 +128,7 @@ SILVER_GREENFIELD_STEPS: tuple[Step, ...] = (
     Step("cde-tagger", "@cde-tagger", requires=("primary-agent",)),
     Step("doc-generator", "@doc-generator", requires=("cde-tagger",)),
     Step("adversarial-auditor", "@adversarial-auditor", requires=("chaos-monkey",)),
-    Step("governance-reviewer-post", "@governance-reviewer", requires=("doc-generator",)),
+    Step("governance-reviewer-post", "@governance-reviewer", requires=("doc-generator", "cab-review")),
     Step("staff-engineer", "@staff-engineer", requires=("governance-reviewer-post",)),
 )
 
@@ -137,9 +142,14 @@ SILVER_BACKFILL_STEPS: tuple[Step, ...] = (
     Step("dq-rule-writer", "@dq-rule-writer", requires=("data-analyst",)),
     Step("dq-engineer", "@dq-engineer", requires=("dq-rule-writer",)),
     Step("chaos-monkey", "@chaos-monkey", requires=("dq-engineer",)),
+    Step(
+        "cab-review", "@cab-agent", requires=("dq-engineer",),
+        skippable=True,
+        skip_condition="Table is new (no existing contract) — CAB review only applies to schema modifications of existing tables",
+    ),
     Step("semantic-modeler-conceptual", "@semantic-modeler", requires=("chaos-monkey",)),
     Step("data-steward", "@data-steward", requires=("semantic-modeler-conceptual",)),
-    Step("governance-reviewer-post", "@governance-reviewer", requires=("data-steward",)),
+    Step("governance-reviewer-post", "@governance-reviewer", requires=("data-steward", "cab-review")),
     Step("staff-engineer", "@staff-engineer", requires=("governance-reviewer-post",)),
 )
 
@@ -595,6 +605,23 @@ class PipelineGate:
                 # (contract names derive from table names, not spec names)
             # Note: contract existence is verified but not strictly tied to spec name
             # because contracts are per-table, not per-spec
+
+        # CAB decision: if silver/gold and a CAB decision exists, it must not be PENDING
+        if zone in ("silver", "gold"):
+            cab_dir = PROJECT_ROOT / "governance" / "cab-decisions"
+            if cab_dir.exists():
+                index_path = cab_dir / "index.json"
+                if index_path.exists():
+                    try:
+                        index_data = json.loads(index_path.read_text())
+                        for entry in index_data.get("decisions", []):
+                            if entry.get("spec") == self.spec and entry.get("decision") == "PENDING":
+                                issues.append(
+                                    f"CAB decision '{entry['decision_id']}' is PENDING — "
+                                    f"human approval required before spec completion"
+                                )
+                    except Exception:
+                        pass
 
         return issues
 

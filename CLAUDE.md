@@ -11,7 +11,7 @@ Brightsmith is a domain-agnostic AI agent data pipeline framework that transform
 
 ## Key Paths
 - Source code: `src/brightsmith/` (organized by zone: bronze, silver, gold, mcp)
-- Infrastructure: `src/brightsmith/infra/` (cross-cutting: iceberg_setup, dq_runner, dq_scorecard, lineage, staging, period_disambiguator, promote, grain, contract, golden_dataset, verification, glossary_validator, pipeline_gate)
+- Infrastructure: `src/brightsmith/infra/` (cross-cutting: iceberg_setup, dq_runner, dq_scorecard, lineage, staging, period_disambiguator, promote, grain, contract, golden_dataset, verification, glossary_validator, pipeline_gate, cab)
 - Period disambiguator: `src/brightsmith/infra/period_disambiguator.py` (temporal period classification)
 - Chaos monkey: `src/brightsmith/infra/chaos_monkey/` (schema-agnostic adversarial DQ testing)
 - Integration test harness: `src/brightsmith/infra/integration_test_harness.py` (golden dataset validation)
@@ -19,6 +19,7 @@ Brightsmith is a domain-agnostic AI agent data pipeline framework that transform
 - Golden datasets: `governance/golden-datasets/` (known-correct reference values)
 - Data: `data/` (gitignored, organized by zone)
 - Domain pack: `domain/` (manifest.yaml, sources/, concept-mappings/)
+- Domain assignment: `domain/manifest.yaml` → `domain.name` (written by @domain-context, read by Brightforge for sidebar display)
 - Insight reports: `governance/insights/` (zone transition analysis)
 - Governance artifacts: `governance/`
 - Data models: `governance/models/` (conceptual, logical, physical)
@@ -33,6 +34,8 @@ Brightsmith is a domain-agnostic AI agent data pipeline framework that transform
 - Contract module: `src/brightsmith/infra/contract.py` (generate, verify, diff, list CLI)
 - Human approval documents: `governance/approvals/` (plain-English review docs for approval gates)
 - Audit trail: `governance/audit-trail/` (approval decisions, skip justifications, pipeline checklists)
+- CAB decisions: `governance/cab-decisions/` (schema change reviews, deprecation registry)
+- CAB module: `src/brightsmith/infra/cab.py` (classification, blast radius, decision records CLI)
 - Specs: `docs/specs/`
 - Tests: `tests/` (organized by zone)
 - Agent definitions: `.claude/agents/`
@@ -49,7 +52,7 @@ Brightsmith does not assume domain knowledge upfront. The discovery process work
 2. **Bronze zone lands data as-is** — no interpretation, just storage with metadata
 3. **@data-analyst discovers context** — after raw ingestion, the data analyst profiles the data to determine: what entities exist, what the grain is, what fields mean, what patterns emerge, what the domain vocabulary looks like
 4. **@domain-context synthesizes domain knowledge** — takes the data analyst's EDA findings and produces `governance/domain-context.md`, the **canonical domain context document**. This replaces the hardcoded domain knowledge that would exist in a domain-specific pipeline. It covers: domain vocabulary, entity types, temporal patterns, applicable regulations, taxonomy/classification systems, edge cases, concept mapping guidance, and PII expectations.
-5. **All downstream agents reference domain context** — @data-steward, @cde-tagger, @entity-resolver, @dq-rule-writer, @pii-scanner, @temporal-modeler, @insight-manager, @bcbs239-auditor, @adversarial-auditor, @content-strategist, @principal-data-architect, @doc-generator, and @mcp-engineer all read `governance/domain-context.md` as their source of domain knowledge. No agent independently invents domain assumptions.
+5. **All downstream agents reference domain context** — @data-steward, @cde-tagger, @entity-resolver, @dq-rule-writer, @pii-scanner, @temporal-modeler, @insight-manager, @bcbs239-auditor, @adversarial-auditor, @content-strategist, @principal-data-architect, @doc-generator, @cab-agent, and @mcp-engineer all read `governance/domain-context.md` as their source of domain knowledge. No agent independently invents domain assumptions.
 
 This is the key difference from a domain-specific pipeline: specs for Silver and Gold zones may be written AFTER discovery, not before. The domain context document is the bridge between "we don't know what this data is" and "every agent operates with full domain awareness."
 
@@ -115,18 +118,19 @@ The pipeline auto-detects **greenfield** vs **backfill** mode:
 6. @dq-rule-writer — Write base DQ rules from EDA report + logical model (uniqueness, referential integrity, consistency, coverage)
 7. @semantic-modeler — Generate **physical model** from approved logical
 8. @primary-agent — Implementation (must match approved physical model)
-9. @dq-engineer — Execute all rules against real data, produce scorecard
-10. @chaos-monkey — 5-cycle adversarial hardening:
+9. @cab-agent — Schema change review (skipped for new tables; classifies PATCH/MINOR/MAJOR, maps blast radius, proposes fork for MAJOR)
+10. @dq-engineer — Execute all rules against real data, produce scorecard
+11. @chaos-monkey — 5-cycle adversarial hardening:
     a. Inject corruptions into shadow copy (rates: 5%, 6%, 7%, 8%, 10%)
     b. Run DQ rules against shadow tables (`--shadow` flag)
     c. @chaos-monkey generates After-Action Report
     d. If gaps found: @dq-rule-writer patches rules, return to (a)
     e. After 5 cycles or no new gaps for 2 consecutive cycles: proceed
-11. @lineage-tracker — OpenLineage capture
-12. @cde-tagger — CDE mapping update
-13. @doc-generator — Dictionary + contracts update
-14. @governance-reviewer — Post-implementation completeness check (verifies models match)
-15. @staff-engineer — Final quality review (LAST gate before completion)
+12. @lineage-tracker — OpenLineage capture
+13. @cde-tagger — CDE mapping update
+14. @doc-generator — Dictionary + contracts update
+15. @governance-reviewer — Post-implementation completeness check (verifies models match, verifies CAB decision exists if applicable)
+16. @staff-engineer — Final quality review (LAST gate before completion)
 
 #### Backfill Mode (existing tables, missing models)
 1. @semantic-modeler — Reverse-engineer **physical model** from existing tables/code
@@ -135,10 +139,11 @@ The pipeline auto-detects **greenfield** vs **backfill** mode:
 4. @dq-rule-writer — Write base DQ rules from EDA report + logical model
 5. @dq-engineer — Execute rules, produce scorecard
 6. @chaos-monkey — 5-cycle adversarial hardening (same protocol as Greenfield)
-7. @semantic-modeler — Abstract **conceptual model** from logical → HUMAN APPROVAL GATE
-8. @data-steward — Extract **business terms** from conceptual model → HUMAN APPROVAL GATE (project-specific terms only)
-9. @governance-reviewer — Post-backfill completeness check (verifies models and glossary are consistent with existing implementation)
-10. @staff-engineer — Final review
+7. @cab-agent — Schema change review (skipped for new tables; runs after DQ for backfill since implementation already exists)
+8. @semantic-modeler — Abstract **conceptual model** from logical → HUMAN APPROVAL GATE
+9. @data-steward — Extract **business terms** from conceptual model → HUMAN APPROVAL GATE (project-specific terms only)
+10. @governance-reviewer — Post-backfill completeness check (verifies models and glossary are consistent with existing implementation, verifies CAB decision if applicable)
+11. @staff-engineer — Final review
 
 #### Mode Detection
 @semantic-modeler determines the mode automatically:
@@ -170,7 +175,9 @@ This step is SKIPPABLE only if the @principal-data-architect explicitly approves
 - No changes to data schemas without a spec
 - Silver/Gold tables require approved business terms → conceptual → logical → physical models before implementation
 - Business terms from recognized external standards are auto-approved; project-specific terms require human approval
-- `REQUIRE_HUMAN_APPROVAL` in `src/config.py` is the single global toggle for all human-in-the-loop gates
+- `REQUIRE_HUMAN_APPROVAL` in `src/config.py` is the single global toggle for all human-in-the-loop gates (exception: MAJOR schema changes always require human approval via @cab-agent regardless of this toggle)
+- @domain-context MUST write `domain.name` to `manifest.yaml` after synthesizing domain knowledge (`python3 -m brightsmith.domain_loader assign-domain --name "..." --confidence "..."`). Brightforge reads this for sidebar display.
+- Schema modifications to existing Silver/Gold tables with active contracts trigger @cab-agent review — classifies changes as PATCH/MINOR/MAJOR, maps blast radius, proposes fork for MAJOR changes. CAB decisions are stored at `governance/cab-decisions/` as structured JSON.
 - @staff-engineer reviews last — no spec is marked complete until he approves
 - @staff-engineer can send work back to any agent for fixes
 - Test theater (tests that don't validate real behavior) is a rejection

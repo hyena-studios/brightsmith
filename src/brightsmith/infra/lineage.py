@@ -293,18 +293,54 @@ def query_lineage_events(
         if arrow_table.num_rows == 0:
             return []
         con = duckdb.connect()
-        rows = con.sql(f"""
+        rows = con.sql("""
             SELECT *
             FROM arrow_table
-            WHERE output_table = '{table_name}'
-              AND event_type = '{event_type}'
+            WHERE output_table = $1
+              AND event_type = $2
             ORDER BY event_time DESC
-            LIMIT {limit}
-        """).fetchall()
+            LIMIT $3
+        """, params=[table_name, event_type, limit]).fetchall()
         columns = [f.name for f in table.schema().fields]
         return [dict(zip(columns, row)) for row in rows]
     except Exception:
         logger.warning("Could not query lineage events for %s", table_name, exc_info=True)
+        return []
+
+
+def query_downstream_consumers(
+    table_name: str,
+    limit: int = 100,
+) -> list[dict]:
+    """Find lineage events where table_name appears as an input.
+
+    This is the reverse of query_lineage_events — it finds downstream
+    consumers of a table rather than events that produced it.
+
+    Returns events sorted by event_time descending.
+    """
+    import duckdb
+
+    try:
+        table = _get_lineage_table()
+        arrow_table = table.scan().to_arrow()
+        if arrow_table.num_rows == 0:
+            return []
+        con = duckdb.connect()
+        # Search for table_name in the JSON array string of input_tables
+        pattern = f'%"{table_name}"%'
+        rows = con.sql("""
+            SELECT *
+            FROM arrow_table
+            WHERE input_tables LIKE $1
+              AND event_type = 'START'
+            ORDER BY event_time DESC
+            LIMIT $2
+        """, params=[pattern, limit]).fetchall()
+        columns = [f.name for f in table.schema().fields]
+        return [dict(zip(columns, row)) for row in rows]
+    except Exception:
+        logger.warning("Could not query downstream consumers for %s", table_name, exc_info=True)
         return []
 
 

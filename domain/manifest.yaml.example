@@ -9,6 +9,16 @@ name: my-data-source
 version: "1.0"
 description: "Description of your data source"
 
+# Domain assignment — written by @domain-context agent after EDA.
+# Brightforge reads domain.name for sidebar display (Domain > Source > Zones).
+# You don't need to set this manually — the agent fills it in.
+# domain:
+#   name: "Financial Reporting"
+#   sub_domain: "SEC XBRL Filings"
+#   confidence: "High"
+#   assigned_by: "@domain-context"
+#   assigned_at: "2026-03-25"
+
 sources:
   - name: my_source
     source_config: domain/sources/my_source.yaml

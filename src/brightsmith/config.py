@@ -68,6 +68,9 @@ APPROVALS_DIR = PROJECT_ROOT / "governance" / "approvals"
 # Audit trail
 AUDIT_TRAIL_DIR = PROJECT_ROOT / "governance" / "audit-trail"
 
+# CAB (Change Approval Board) decisions
+CAB_DECISIONS_DIR = PROJECT_ROOT / "governance" / "cab-decisions"
+
 # Iceberg catalog paths (shared catalog, per-zone warehouses)
 WAREHOUSE_PATH = PROJECT_ROOT / "data" / "bronze" / "iceberg_warehouse"
 CATALOG_PATH = PROJECT_ROOT / "data" / "catalog" / "catalog.db"
@@ -90,7 +93,7 @@ def configure(
     global PROJECT_ROOT, PROJECT_NAME, REQUIRE_HUMAN_APPROVAL
     global DQ_RULES_DIR, DQ_RESULTS_DIR, DQ_SCORECARDS_DIR, DQ_TEMPLATES_DIR
     global GOLDEN_DATASETS_DIR
-    global PIPELINE_STATE_DIR, APPROVALS_DIR, AUDIT_TRAIL_DIR
+    global PIPELINE_STATE_DIR, APPROVALS_DIR, AUDIT_TRAIL_DIR, CAB_DECISIONS_DIR
     global WAREHOUSE_PATH, CATALOG_PATH
 
     if project_root is not None:
@@ -109,5 +112,6 @@ def configure(
     PIPELINE_STATE_DIR = PROJECT_ROOT / "governance" / "pipeline-state"
     APPROVALS_DIR = PROJECT_ROOT / "governance" / "approvals"
     AUDIT_TRAIL_DIR = PROJECT_ROOT / "governance" / "audit-trail"
+    CAB_DECISIONS_DIR = PROJECT_ROOT / "governance" / "cab-decisions"
     WAREHOUSE_PATH = PROJECT_ROOT / "data" / "bronze" / "iceberg_warehouse"
     CATALOG_PATH = PROJECT_ROOT / "data" / "catalog" / "catalog.db"
