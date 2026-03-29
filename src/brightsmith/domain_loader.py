@@ -94,6 +94,7 @@ class DomainManifest:
     sources: list[SourceConfig]
     hints: DomainHints
     domain: DomainAssignment | None = None
+    pipeline: dict | None = None
 
 
 def _resolve_path(path_str: str | None, project_root: Path) -> Path | None:
@@ -197,6 +198,7 @@ def load_manifest(manifest_path: Path | None = None) -> DomainManifest:
         sources=sources,
         hints=hints,
         domain=domain,
+        pipeline=data.get("pipeline"),
     )
 
     logger.info(
