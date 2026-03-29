@@ -127,3 +127,21 @@ Log all lineage decisions to `governance/audit-trail/`. Include:
 | `governance/lineage/` | Write — governance lineage docs and column lineage files |
 | `governance/audit-trail/` | Write — decision logs |
 | `governance/dq-rules/` | Read — referenced in DQ facets |
+
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@lineage-tracker', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='finding')
+"
+```
+
+**When to log:**
+- Lineage verification findings (missing events, incomplete metadata)
+- Warnings about lineage gaps
+
+**Activity types:** `finding`, `warning`
+**Severities:** `info` (observations), `warning` (missing lineage data)

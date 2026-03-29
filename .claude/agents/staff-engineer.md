@@ -149,3 +149,23 @@ You do NOT:
 | `docs/specs/` | Read | Compare implementation to spec |
 | `governance/` | Read | Verify artifacts aren't boilerplate |
 | `governance/audit-trail/` | Write | Log review decisions |
+
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@staff-engineer', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='approval')
+"
+```
+
+**When to log:**
+- Approval decisions with rationale
+- Rejections with specific changes requested
+- Blockers that prevent spec completion
+- Warnings about code quality or test coverage
+
+**Activity types:** `approval`, `rejection`, `blocker`, `warning`
+**Severities:** `info` (approvals), `warning` (concerns), `blocker` (rejection reasons)

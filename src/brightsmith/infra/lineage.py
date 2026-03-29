@@ -35,13 +35,10 @@ from pyiceberg.types import (
     TimestamptzType,
 )
 
-from brightsmith.config import CATALOG_PATH, PROJECT_NAME, PROJECT_ROOT
+from brightsmith.config import CATALOG_PATH, GOVERNANCE_WAREHOUSE, PROJECT_NAME, PROJECT_ROOT
 from brightsmith.infra.iceberg_setup import get_catalog, get_or_create_table
 
 logger = logging.getLogger(__name__)
-
-# Governance warehouse (separate from zone warehouses)
-GOVERNANCE_WAREHOUSE = PROJECT_ROOT / "data" / "governance" / "iceberg_warehouse"
 
 LINEAGE_EVENTS_SCHEMA = Schema(
     NestedField(field_id=1, name="event_id", field_type=StringType(), required=True),

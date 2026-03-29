@@ -121,3 +121,22 @@ Log all analysis to `governance/audit-trail/`. Include:
 | `governance/eda/` | Write — EDA reports |
 | `governance/audit-trail/` | Write — decision logs |
 | `governance/models/` | Read — logical/physical models for context |
+
+## Governance Database Logging
+
+At key decision points during your analysis, log structured findings to the governance database for Brightforge UI display:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@data-analyst', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='finding')
+"
+```
+
+**When to log:**
+- Key statistical findings (distributions, outliers, null rates)
+- Domain discovery observations
+- Threshold recommendations with evidence
+
+**Activity types:** `finding`
+**Severities:** `info` (observations), `warning` (concerning patterns)

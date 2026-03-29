@@ -339,7 +339,15 @@ def generate_contract(
         },
     }
 
-    save_contract(contract, contracts_dir)
+    path = save_contract(contract, contracts_dir)
+
+    # Sync to governance DB
+    try:
+        from brightsmith.infra.governance_db import sync_contract as _sync_contract
+        _sync_contract(contract, str(path.relative_to(PROJECT_ROOT)))
+    except Exception:
+        logger.debug("Could not sync contract to governance DB", exc_info=True)
+
     return contract
 
 

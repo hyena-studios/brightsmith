@@ -166,3 +166,23 @@ For consumable and MCP zone specs, verify:
 | `governance/data-dictionary.json` | Read — verify dictionary entries exist |
 | `governance/data-contracts/` | Read — verify data contracts exist and pass |
 | `tests/` | Read — verify tests exist |
+
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@governance-reviewer', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='finding')
+"
+```
+
+**When to log:**
+- Missing or incomplete governance artifacts
+- Warnings about governance gaps
+- Blockers that prevent spec completion
+- Approval decisions
+
+**Activity types:** `finding`, `warning`, `blocker`, `approval`
+**Severities:** `info`, `warning`, `blocker`

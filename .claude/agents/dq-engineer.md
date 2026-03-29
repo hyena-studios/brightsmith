@@ -99,3 +99,22 @@ Log all execution results to `governance/audit-trail/`. Include:
 | `governance/dq-scorecards/` | Write — scorecards from real execution |
 | `governance/audit-trail/` | Write — decision logs |
 | `docs/specs/` | Read — spec context |
+
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@dq-engineer', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='finding')
+"
+```
+
+**When to log:**
+- DQ execution findings (pass rates, failure patterns)
+- Warnings about data quality concerns
+- Blockers when P0 rules fail
+
+**Activity types:** `finding`, `warning`, `blocker`
+**Severities:** `info` (observations), `warning` (non-blocking concerns), `blocker` (P0 failures)

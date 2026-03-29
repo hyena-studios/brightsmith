@@ -401,8 +401,11 @@ def run_rules(
         "results": results,
     }
 
-    # Save results
-    _save_results(run_result)
+    # Save results to files
+    result_path = _save_results(run_result)
+
+    # Dual-write to governance Iceberg tables
+    _sync_to_governance_db(run_result, result_path, sql_rules)
 
     return run_result
 
@@ -424,6 +427,84 @@ def _save_results(run_result: dict) -> Path:
     path = DQ_RESULTS_DIR / filename
     path.write_text(json.dumps(run_result, indent=2, default=str) + "\n")
     return path
+
+
+def _sync_to_governance_db(run_result: dict, result_path: Path, rules: list[dict]) -> None:
+    """Dual-write DQ results to governance Iceberg tables. Fault-tolerant."""
+    try:
+        from brightsmith.infra.governance_db import (
+            write_dq_run,
+            write_dq_rule_results,
+            write_spec_registry,
+        )
+
+        spec = run_result.get("spec") or "all"
+        run_id = run_result["run_id"]
+        executed_at_str = run_result.get("executed_at", "")
+        executed_at = (
+            datetime.fromisoformat(executed_at_str)
+            if executed_at_str
+            else datetime.now(timezone.utc)
+        )
+
+        # Derive table name from rules
+        tables = set()
+        for r in rules:
+            tables.update(r.get("tables", []))
+        table_name = ", ".join(sorted(tables)) if tables else spec
+
+        total = run_result.get("rules_total", 0)
+        passed = run_result.get("rules_passed", 0)
+        failed = run_result.get("rules_failed", 0)
+        errored = run_result.get("rules_errored", 0)
+        score = (passed / total * 100) if total > 0 else 0.0
+
+        # Priority breakdowns
+        p0_results = [r for r in run_result.get("results", [])
+                      if _get_rule_priority(r["rule_id"], rules) == "P0"]
+        p1_results = [r for r in run_result.get("results", [])
+                      if _get_rule_priority(r["rule_id"], rules) == "P1"]
+
+        # Augment individual results with priority info from rules
+        enriched_results = []
+        for r in run_result.get("results", []):
+            enriched = {**r}
+            enriched["priority"] = _get_rule_priority(r["rule_id"], rules)
+            rule_def = next((rl for rl in rules if rl["rule_id"] == r["rule_id"]), {})
+            enriched.setdefault("description", rule_def.get("description", ""))
+            enriched_results.append(enriched)
+
+        # Write DQ run summary
+        write_dq_run(
+            run_id=run_id, spec_name=spec, table_name=table_name,
+            executed_at=executed_at, rules_total=total, rules_passed=passed,
+            rules_failed=failed, rules_errored=errored, score_pct=score,
+            p0_passed=run_result.get("p0_passed", True),
+            p0_total=len(p0_results),
+            p0_failed=sum(1 for r in p0_results if not r.get("passed")),
+            p1_total=len(p1_results),
+            p1_failed=sum(1 for r in p1_results if not r.get("passed")),
+            duration_ms=sum(r.get("execution_time_ms", 0) for r in run_result.get("results", [])),
+            result_file_path=str(result_path),
+        )
+
+        # Write individual rule results
+        write_dq_rule_results(run_id, spec, enriched_results)
+
+        # Update spec registry with DQ scores
+        if spec != "all":
+            write_spec_registry(
+                spec_name=spec, zone="", status="IN_PROGRESS",
+                output_tables=sorted(tables), updated_by="@dq-engineer",
+                dq_score_pct=score, dq_rules_total=total,
+                dq_rules_passing=passed, dq_rules_failing=failed,
+                dq_p0_passed=run_result.get("p0_passed", True),
+            )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Failed to sync DQ results to governance DB", exc_info=True,
+        )
 
 
 def _set_rule_status(rule_id: str, new_status: str) -> None:

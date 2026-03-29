@@ -62,3 +62,21 @@ The meta-question is: **can AI agents build data pipelines that are trustworthy 
 | `governance/domain-context.md` | Read — the canonical domain context (CRITICAL — verify its accuracy) |
 | `governance/eda/` | Read — verify domain discovery findings |
 | `governance/audit-trail/` | Read/Write — review and log decisions |
+
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@adversarial-auditor', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='finding')
+"
+```
+
+**When to log:**
+- Hallucination or governance gap findings
+- Warnings about artifacts that don't match reality
+
+**Activity types:** `finding`, `warning`
+**Severities:** `info` (observations), `warning` (gaps found)

@@ -139,3 +139,21 @@ Log all modeling decisions to `governance/audit-trail/`. Include:
 | `governance/eda/` | Read — use EDA results to inform modeling |
 | `governance/models/` | Write — model proposals (conceptual, logical, physical) |
 | `governance/audit-trail/` | Write — decision logs |
+
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@semantic-modeler', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='decision')
+"
+```
+
+**When to log:**
+- Model design decisions (greenfield vs backfill, normalization choices)
+- Mode detection results
+
+**Activity types:** `decision`
+**Severities:** `info`

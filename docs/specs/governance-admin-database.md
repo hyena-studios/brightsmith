@@ -1,6 +1,6 @@
 # Spec: Governance Admin Database
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Zone:** Infrastructure (cross-cutting)
 **Primary Agent:** @primary-agent
 **Created:** 2026-03-29
@@ -311,6 +311,32 @@ Agent definitions (`.claude/agents/*.md`) include instructions to call `log_agen
 - `export` — Regenerate file artifacts from Iceberg tables
 - `query <table>` — Ad-hoc DuckDB query against governance tables
 
+## Migration: Existing Projects
+
+Projects that ran pipeline specs before this spec will have governance data in files but empty Iceberg tables. The `sync` command backfills from existing artifacts:
+
+```
+python -m brightsmith.infra.governance_db sync
+```
+
+**What `sync` can backfill:**
+
+| Source Files | Target Table | Coverage |
+|-------------|-------------|----------|
+| `governance/dq-results/*.json` | `dq_runs` + `dq_rule_results` | Full — JSON has all fields |
+| `governance/pipeline-state/*.json` | `pipeline_events` + `spec_registry` | Full — JSON state machine has step history |
+| `governance/data-contracts/*.yaml` | `contract_metadata` | Full — YAML has all metadata |
+| `governance/business-glossary.json` | `glossary_terms` | Full — JSON has all term fields |
+| `governance/dq-rules/*.json` | `spec_registry` (table mappings) | Partial — extracts spec→table mapping |
+
+**What `sync` cannot backfill:**
+
+`governance.agent_activity` will be **permanently empty for historical work**. Agent findings, decisions, and recommendations were never written in a structured format — they exist only in free-form session logs (`docs/sessions/`) and audit trail markdown. Parsing these into structured activity records would be fragile and lossy. For existing projects, the agent activity feed starts from the first pipeline run after this spec is implemented.
+
+This means Brightforge's agent citation component will show "no activity" for specs completed before this spec, even if those specs had extensive agent review. This is an accepted trade-off — attempting to retroactively reconstruct agent activity from markdown would produce unreliable data, which is worse than showing nothing.
+
+The `sync` command is idempotent via `promote()` — safe to run repeatedly.
+
 ### Step 8: Governance summary query
 
 `get_governance_summary()` returns everything Brightforge needs for the dashboard in a single call — DQ score aggregation, governance completeness percentages, pipeline progress per spec, zone-level rollups. This replaces the broken `GovernanceStore.get_dq_scorecards()` and `/api/analytics/governance-completeness` logic in Brightforge.
@@ -405,3 +431,74 @@ Those are the next layer. This spec gives them a foundation by ensuring that the
 6. **Agent activity test**: Write findings, query back, verify correct spec_name/agent_id/severity
 7. **Activity feed test**: Multiple agents write activities, verify chronological ordering
 8. **Brightforge smoke test**: Point Brightforge at project with governance DB, verify non-zero DQ% and completeness%, verify agent citations render
+
+## Staff Engineer Review
+
+### Date: 2026-03-29
+### Reviewer: @staff-engineer
+### Status: APPROVED
+
+### Verdict
+
+This is solid infrastructure work. The module is well-structured, follows existing project patterns (promote, grain, iceberg_setup), and the dual-write instrumentation in dq_runner/pipeline_gate/contract is fault-tolerant without being sloppy. The code is readable and does what the spec says. I would put my name on this.
+
+### Code Quality
+
+**`src/brightsmith/infra/governance_db.py`** — Clean. 7 schemas defined inline with correct field IDs and types matching the spec exactly. The `_write_records` helper is the right abstraction — one place that handles grain ID computation and promote dispatch. Write functions are explicit about their parameters (no `**kwargs` bags except in the convenience wrapper where it makes sense). Query functions use parameterized SQL. The `_query_table` helper creates a new in-memory DuckDB connection per call and does not explicitly close it — DuckDB cleans up on garbage collection so this is not a leak, but it is slightly wasteful for batch query scenarios like `get_governance_summary()` which calls `get_current_specs()` then `get_agent_activity()`. Not worth blocking over. The `sync_from_files` function is the most complex function and it is appropriately so — file format parsing is inherently messy. The YAML import inside the contract sync loop is fine (only runs if contracts exist).
+
+**`src/brightsmith/config.py`** — `GOVERNANCE_WAREHOUSE` added correctly alongside other path constants. `configure()` rebuilds it. Clean.
+
+**`src/brightsmith/infra/lineage.py`** — Import updated from hardcoded path to `from brightsmith.config import ... GOVERNANCE_WAREHOUSE`. Correct.
+
+**`src/brightsmith/infra/dq_runner.py`** — `_sync_to_governance_db` is well-structured. Priority enrichment logic (lines 462-475) correctly maps rule IDs to priorities from the rule definitions before writing. The outer try/except with `logger.warning` is the right pattern for a dual-write that must not break the primary path.
+
+**`src/brightsmith/infra/pipeline_gate.py`** — Two `except Exception: pass` blocks (lines 340-341 and 386-387). The one at line 340 (init) should at minimum log a warning like the other instrumentation points do. Silent swallowing on init means you will never know if the governance DB is misconfigured until someone queries it and gets nothing. The one at line 386 (_emit_governance_event) has a comment ("file-based state is the fallback") which makes the intent clear, but still should log. These are minor — the file-based state machine remains the authoritative source, and the Iceberg writes are a secondary fan-out. Not blocking on this.
+
+**`src/brightsmith/infra/contract.py`** — Three lines of instrumentation. Uses `logger.debug` on failure. Appropriate.
+
+**Agent definitions (14 files)** — Consistent template: import, one-liner call, "When to log" guidance. The `python3 -c` pattern is the right way to give agents a copy-paste snippet.
+
+### Test Quality
+
+13 tests, all passing. These are real tests with meaningful assertions.
+
+- `test_governance_tables_created` — Verifies all 7 tables exist and schema field counts match definitions. Fine.
+- `test_write_spec_registry` — Writes a row, reads it back, asserts specific field values (`spec_name == "test-spec"`, `zone == "raw"`, `dq_rules_total == 20`). Real.
+- `test_spec_registry_latest_row_wins` — Writes two rows for the same spec with different statuses, verifies `get_current_specs()` returns exactly 1 row with the latest values. This validates the core "append-only, latest wins" design. Real and important.
+- `test_write_dq_run` — Verifies `run_id`, `score_pct` with `pytest.approx`. Real.
+- `test_write_dq_rule_results` — Writes 2 rules, verifies count == 2 and both rule_ids present. Could assert `passed` values too, but the set membership check is sufficient.
+- `test_write_pipeline_event` — Writes 2 events, verifies count and step name presence. Real.
+- `test_write_agent_activity` — Writes 2 activities with different severities, verifies filtered query by severity returns correct count and agent_id. Real.
+- `test_log_agent_finding_fault_tolerant` — Verifies the convenience wrapper succeeds (returns non-None). The name says "fault tolerant" but does not actually test the fault path (e.g., what happens when the write fails). Minor gap but not blocking — the function's error handling is trivially correct from code inspection.
+- `test_sync_contract` — Passes a realistic contract dict, verifies extraction logic (column_count == 3, has_dq_rules == True). Real.
+- `test_sync_glossary_term` — Writes a term, queries it back by term_id, verifies `term == "Revenue"`. Real.
+- `test_idempotent_writes` — The most important test. Writes the same DQ run twice with identical data. Asserts first write promoted 1 row, second write promoted 0 and skipped 1. This validates the grain-based dedup that the entire append-only design depends on. Real and critical.
+- `test_governance_summary` — Writes 2 spec registry rows, calls `get_governance_summary()`, asserts `rules_total == 15`, `score_pct == 93.3` (with tolerance), `total_specs == 2`, `with_dq == 2`, `with_contract == 1`. These are computed aggregations, not just "did it return something." Real.
+- `test_sync_from_files` — Creates realistic pipeline state and glossary files on disk, runs `sync_from_files()`, verifies counts >= 1 and that the spec appears in `get_current_specs()`. This is the integration-level sync test. Real.
+
+No test theater detected. The assertions validate specific values, not just existence.
+
+### Spec Compliance
+
+The implementation matches the spec. All 7 table schemas are present with correct columns and types. All write functions exist. All query functions exist. CLI commands (status, sync, export, query) are implemented. Dual-write instrumentation is in place for dq_runner, pipeline_gate, and contract. 14 agent definitions are updated.
+
+The spec lists `dq_scorecard.py` as a file to modify, but the implementation handles scorecard generation from within `governance_db.export_to_files()` instead. This is a better design — the scorecard module stays unaware of the governance DB, and the governance DB calls into it during export. The spec's intent (generate scorecards from Iceberg data) is met.
+
+One minor gap: the spec's verification section calls for an "Activity feed test: Multiple agents write activities, verify chronological ordering." The `test_write_agent_activity` test writes 2 activities but does not explicitly verify chronological ordering of the returned results. The query function uses `ORDER BY event_time DESC` so this is tested implicitly by the query implementation, but a pedantic reading of the spec would want an explicit ordering assertion. Not blocking.
+
+### Issues
+
+| # | Severity | File | Issue | Required Fix |
+|---|----------|------|-------|-------------|
+| 1 | Low | `pipeline_gate.py:340-341` | `except Exception: pass` silently swallows governance DB init failures. Should at minimum `logger.debug()`. | Recommended but not blocking. |
+| 2 | Low | `pipeline_gate.py:386-387` | `except Exception: pass` on event emission. Same — should log. | Recommended but not blocking. |
+| 3 | Low | `test_governance_db.py:209-217` | `test_log_agent_finding_fault_tolerant` does not test the actual fault path (what happens when write raises). | Recommended but not blocking. |
+
+### What's Acceptable
+
+- Append-only design with grain-based dedup is the right choice for governance state that needs history.
+- `_write_records` as the single write path with `compute_grain_id` is clean.
+- Fault-tolerant dual-writes that never break the primary code path.
+- `sync_from_files` handles the migration story without over-engineering it.
+- The orchestrator-agnostic principle is correctly applied — no Claude Code coupling in the write path.
+- Tests are real.

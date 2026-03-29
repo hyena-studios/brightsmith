@@ -327,6 +327,71 @@ class PipelineGate:
         }
         self._save()
 
+        # Write initial spec registry row
+        try:
+            from brightsmith.infra.governance_db import write_spec_registry
+            write_spec_registry(
+                spec_name=self.spec, zone=zone, status="IN_PROGRESS",
+                output_tables=[], updated_by="pipeline-gate",
+                pipeline_steps_total=len(steps),
+                pipeline_steps_completed=0,
+                spec_file_path=f"docs/specs/{self.spec}.md",
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "Failed to write initial spec registry row for %s", self.spec, exc_info=True,
+            )
+
+    # --- Governance DB event emission ---
+
+    def _emit_governance_event(
+        self, step_name: str, event_type: str, **kwargs,
+    ) -> None:
+        """Emit a pipeline event to the governance DB. Fault-tolerant."""
+        try:
+            from brightsmith.infra.governance_db import (
+                write_pipeline_event,
+                write_spec_registry,
+            )
+
+            steps = self._state.get("steps", {})
+            step_data = steps.get(step_name, {})
+            agent_id = step_data.get("agent")
+
+            write_pipeline_event(
+                spec_name=self.spec,
+                step_name=step_name,
+                event_type=event_type,
+                agent_id=agent_id,
+                output_path=kwargs.get("output_path"),
+                skip_reason=kwargs.get("skip_reason"),
+                approval_decision=kwargs.get("approval_decision"),
+                approval_by=kwargs.get("approval_by"),
+                notes=kwargs.get("notes"),
+            )
+
+            # Update spec registry with pipeline progress
+            completed = sum(
+                1 for s in steps.values()
+                if s.get("status") in ("COMPLETED", "SKIPPED")
+            )
+            write_spec_registry(
+                spec_name=self.spec,
+                zone=self._state.get("zone", ""),
+                status=self._state.get("status", "IN_PROGRESS"),
+                output_tables=self._state.get("output_tables", []),
+                updated_by=agent_id or "pipeline-gate",
+                pipeline_step_current=step_name,
+                pipeline_steps_total=len(steps),
+                pipeline_steps_completed=completed,
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "Failed to emit governance event for %s/%s", self.spec, step_name, exc_info=True,
+            )
+
     # --- Pre-step gate check ---
 
     def check_prerequisites(self, step_name: str) -> None:
@@ -408,6 +473,7 @@ class PipelineGate:
                 steps[step_name]["output_hash"] = file_hash
 
         self._save()
+        self._emit_governance_event(step_name, "COMPLETED", output_path=output)
 
     def skip_step(self, step_name: str, reason: str, evidence: str) -> None:
         """Record that a step was intentionally skipped.
@@ -446,6 +512,7 @@ class PipelineGate:
             steps[step_name]["status"] = "SKIPPED"
 
         self._save()
+        self._emit_governance_event(step_name, "SKIPPED", skip_reason=reason)
 
     # --- Approval tracking ---
 
@@ -474,6 +541,10 @@ class PipelineGate:
             "notes": notes,
         }
         self._save()
+        self._emit_governance_event(
+            artifact, "APPROVED" if decision == "APPROVED" else "FAILED",
+            approval_decision=decision, approval_by=decided_by, notes=notes,
+        )
 
     # --- Validation ---
 

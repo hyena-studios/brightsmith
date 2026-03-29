@@ -157,3 +157,22 @@ Log all term proposals and decisions to `governance/audit-trail/`. Include:
 | `governance/models/` | Read — identify terms used in models |
 | `docs/specs/` | Read — identify terms in spec prose |
 | `governance/audit-trail/` | Write — decision logs |
+
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@data-steward', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='decision')
+"
+```
+
+**When to log:**
+- Business term proposals with rationale
+- Collision resolution decisions
+- Recommendations for future glossary work
+
+**Activity types:** `decision`, `recommendation`
+**Severities:** `info`

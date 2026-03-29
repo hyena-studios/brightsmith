@@ -133,3 +133,23 @@ Log the override in the CAB decision record's `human_override` field.
 | `domain/manifest.yaml` | MCP tool definitions (blast radius scan) |
 | `src/brightsmith/infra/cab.py` | Core CAB module (classification, blast radius, decisions) |
 | `src/brightsmith/infra/contract.py` | Contract diff and deprecation functions |
+
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@cab-agent', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='decision')
+"
+```
+
+**When to log:**
+- Schema change classifications (PATCH/MINOR/MAJOR)
+- Blast radius analysis results
+- Blockers requiring human approval for MAJOR changes
+- Warnings about downstream impact
+
+**Activity types:** `decision`, `warning`, `blocker`
+**Severities:** `info` (classifications), `warning` (impact concerns), `blocker` (MAJOR changes requiring approval)

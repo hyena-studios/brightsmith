@@ -75,6 +75,9 @@ CAB_DECISIONS_DIR = PROJECT_ROOT / "governance" / "cab-decisions"
 WAREHOUSE_PATH = PROJECT_ROOT / "data" / "bronze" / "iceberg_warehouse"
 CATALOG_PATH = PROJECT_ROOT / "data" / "catalog" / "catalog.db"
 
+# Governance warehouse (separate from zone warehouses, shared by lineage + governance DB)
+GOVERNANCE_WAREHOUSE = PROJECT_ROOT / "data" / "governance" / "iceberg_warehouse"
+
 
 def configure(
     project_root: Path | str | None = None,
@@ -94,7 +97,7 @@ def configure(
     global DQ_RULES_DIR, DQ_RESULTS_DIR, DQ_SCORECARDS_DIR, DQ_TEMPLATES_DIR
     global GOLDEN_DATASETS_DIR
     global PIPELINE_STATE_DIR, APPROVALS_DIR, AUDIT_TRAIL_DIR, CAB_DECISIONS_DIR
-    global WAREHOUSE_PATH, CATALOG_PATH
+    global WAREHOUSE_PATH, CATALOG_PATH, GOVERNANCE_WAREHOUSE
 
     if project_root is not None:
         PROJECT_ROOT = Path(project_root).resolve()
@@ -115,3 +118,4 @@ def configure(
     CAB_DECISIONS_DIR = PROJECT_ROOT / "governance" / "cab-decisions"
     WAREHOUSE_PATH = PROJECT_ROOT / "data" / "bronze" / "iceberg_warehouse"
     CATALOG_PATH = PROJECT_ROOT / "data" / "catalog" / "catalog.db"
+    GOVERNANCE_WAREHOUSE = PROJECT_ROOT / "data" / "governance" / "iceberg_warehouse"
