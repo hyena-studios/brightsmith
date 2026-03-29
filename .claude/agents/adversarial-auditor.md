@@ -29,6 +29,7 @@ Every business term definition, every DQ rule threshold, every concept mapping, 
 - **The verification itself** — If the AI generated expected values for verification, you're comparing AI output to AI output.
 - **Coverage gaps** — What HASN'T been checked? The pipeline may process millions of records but only verified a handful of specific values.
 - **Domain discovery** — Brightsmith discovers domain context from data. What if the AI misidentified the domain, entity types, or grain? Every downstream decision would be built on a wrong foundation. The canonical domain context (`governance/domain-context.md`) is the single point of failure — if it's wrong, EVERYTHING downstream inherits the error.
+- **Hardcoded entity data masquerading as constants** — Search source code for Python dicts keyed by CIK numbers (e.g., `{"0000320193": ...}`), ticker symbols, or company names mapping to literal values. Search for if/elif chains that branch on entity identifiers. These are governance violations: entity-specific data baked into code instead of read from governance artifacts (`governance/entity-registry.json`, `domain/sources/*.yaml`). The risk is subtle — the pipeline works for the 5 hardcoded entities but silently produces wrong results (or no results) for entity #6. Ask: "What happens when a new entity is added? Does it require a code change or just a config update?"
 
 ## Your Personality
 
