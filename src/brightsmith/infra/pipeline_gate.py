@@ -623,6 +623,68 @@ class PipelineGate:
                     except Exception:
                         pass
 
+        # Warehouse population: verify tables exist in the persistent Iceberg catalog
+        issues.extend(self._validate_warehouse_population(zone))
+
+        return issues
+
+    def _validate_warehouse_population(self, zone: Zone) -> list[str]:
+        """Verify that the pipeline has written tables to the persistent warehouse.
+
+        Loads the PyIceberg catalog and checks that the zone's namespace
+        contains tables with non-zero row counts.
+        """
+        from brightsmith.config import CATALOG_PATH, WAREHOUSE_PATH
+
+        issues: list[str] = []
+
+        if not CATALOG_PATH.exists():
+            issues.append(
+                f"Iceberg catalog not found at {CATALOG_PATH} — "
+                f"pipeline has not written to the persistent warehouse"
+            )
+            return issues
+
+        try:
+            from brightsmith.infra.iceberg_setup import get_catalog
+
+            catalog = get_catalog(WAREHOUSE_PATH, CATALOG_PATH)
+            namespaces = [ns[0] for ns in catalog.list_namespaces()]
+
+            if zone not in namespaces:
+                issues.append(
+                    f"Namespace '{zone}' not found in Iceberg catalog — "
+                    f"pipeline has not written to the persistent warehouse. "
+                    f"Available namespaces: {namespaces}"
+                )
+                return issues
+
+            tables = catalog.list_tables(zone)
+            if not tables:
+                issues.append(
+                    f"No tables found in '{zone}' namespace — "
+                    f"pipeline has not written to the persistent warehouse"
+                )
+                return issues
+
+            for ns, table_name in tables:
+                try:
+                    table = catalog.load_table(f"{ns}.{table_name}")
+                    arrow = table.scan().to_arrow()
+                    row_count = len(arrow)
+                    if row_count == 0:
+                        issues.append(
+                            f"Table {ns}.{table_name} has 0 rows — "
+                            f"pipeline has not populated this table"
+                        )
+                except Exception as exc:
+                    issues.append(
+                        f"Failed to read table {ns}.{table_name}: {exc}"
+                    )
+
+        except Exception as exc:
+            issues.append(f"Warehouse verification failed: {exc}")
+
         return issues
 
     # --- Zone transition check ---

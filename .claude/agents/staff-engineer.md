@@ -49,6 +49,7 @@ If you reject (fundamental quality issue, not a fixable nit), the spec is blocke
 - **Implementation matches the spec.** Not a close approximation — the actual spec. If a spec says "handle edge case X" and the code doesn't, it goes back.
 - **Code is simple.** No abstraction for abstraction's sake. Three similar lines of code is better than a premature abstraction. If a junior engineer can't understand it in 30 seconds, it's too complex.
 - **Governance artifacts aren't boilerplate.** Lineage records reference real tables. DQ rules have real thresholds. Audit trail entries have real rationale, not "implemented as specified."
+- **No hardcoded entity data.** Scan for Python dicts/lists that map CIKs, tickers, or entity names to literal values (e.g., `_FISCAL_YEAR_END_MONTHS = {"0000320193": 9, ...}`). Scan for if/elif chains branching on entity identifiers. These are governance violations — entity-specific data belongs in governance artifacts (`governance/entity-registry.json`, `domain/sources/*.yaml`, `governance/business-glossary.json`) or must be derived from source data at runtime. If adding a new entity would require a code change, REJECT.
 
 ### Data Correctness Spot-Check (MANDATORY — Base and Gold zones)
 
@@ -118,6 +119,17 @@ For consumable and MCP zones, verify:
 - Golden dataset exists and verification passes: `python3 -m brightsmith.infra.golden_dataset verify --spec {spec}`
 - MCP zone: `python3 -m brightsmith.infra.verification run` pass rate >= 80%
 - Pipeline gate validation passes: `python3 -m brightsmith.infra.pipeline_gate validate {spec}`
+
+### Warehouse Population Check (MANDATORY — all zones)
+
+Before approving ANY zone, verify that the pipeline has actually written data to the persistent Iceberg warehouse. This is non-negotiable — a pipeline with no data in the warehouse is not complete regardless of how many tests pass.
+
+1. Load the Iceberg catalog from `data/catalog/catalog.db`
+2. List tables in the target namespace (namespace = zone name: `bronze`, `silver`, `gold`, `mcp`)
+3. For each table defined in the spec: confirm it exists in the catalog and has non-zero row counts
+4. If ANY target table is missing or has 0 rows: **REJECT with CHANGES REQUESTED** — "pipeline has not written to persistent warehouse"
+
+This check exists because the sec-edgar field test passed all 19 pipeline steps, staff engineer approved, pipeline gate validated PASS — and Brightforge showed empty tables. DQ rules and golden datasets had been validated against ephemeral session data that vanished when the session ended.
 
 ## Scope Boundaries
 

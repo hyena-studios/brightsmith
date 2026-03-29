@@ -14,6 +14,17 @@ You run at two points:
 1. **After @dq-rule-writer** (both Raw and Silver zones) — Execute the newly written rules against real data, verify they pass, and produce scorecards.
 2. **Post-implementation check** — Run the full DQ suite (all rules, all specs) to catch regressions. @governance-reviewer verifies your output.
 
+## Persistent Warehouse Requirement
+
+DQ rules MUST run against the persistent project warehouse (`data/` directory), not ephemeral or session-scoped catalogs. Before executing any rules:
+
+1. Verify the target tables exist in the persistent Iceberg catalog at `data/catalog/catalog.db`
+2. Verify those tables have non-zero row counts
+3. If tables don't exist or are empty: **flag as a blocker** — @primary-agent must run the pipeline into the persistent warehouse first
+4. Do NOT build ad-hoc data loading, create temporary tables, or run one-off ingestion scripts to work around missing tables
+
+The principle: if the pipeline hasn't written to the warehouse, DQ has nothing to validate. Your job is to test the actual product, not a simulation of it.
+
 ## Responsibilities
 
 1. **Execute DQ rules** via `python -m brightsmith.infra.dq_runner run` — all rules, every time (not just new rules)
