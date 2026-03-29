@@ -225,6 +225,11 @@ This step is SKIPPABLE only if the @principal-data-architect explicitly approves
 - After any agent completes: `python3 -m brightsmith.infra.pipeline_gate complete {spec} {step} --output {path}`
 - Before marking a spec COMPLETE: `python3 -m brightsmith.infra.pipeline_gate validate {spec}` must PASS
 - Zone transitions require: `python3 -m brightsmith.infra.pipeline_gate check-transition {from} {to}` must PASS
+- Never hardcode entity-specific data (CIK lists, fiscal year end months, company names, ticker symbols, sector mappings, entity counts) in Python source code. All entity-specific values must come from governance artifacts (`governance/entity-registry.json`, `domain/sources/*.yaml`, `governance/business-glossary.json`) or be derived from source data at runtime. Adding a new entity must never require a code change — only a config/registry update and pipeline re-run.
+- Hardcoded entity patterns include: Python dicts keyed by CIK/ticker/entity name with literal values, if/elif chains that branch on entity identifiers, list literals containing specific entity IDs, and any constant that would need updating when a new entity is added. These are governance violations — entity data belongs in governance artifacts, not source code.
+- The litmus test for entity hardcoding: "If a user adds a new entity to entity-registry.json and re-runs the pipeline, does the new entity flow through correctly without any code changes?" If the answer is no, the implementation violates this rule.
+- Before a spec can be marked COMPLETE, the pipeline must have executed end-to-end into the persistent Iceberg warehouse producing queryable tables. "Tests pass" and "DQ rules pass against ephemeral data" are not sufficient — the actual pipeline entry points (registered in `domain/manifest.yaml`) must have run successfully, writing data to the project's warehouse at `data/`. The staff engineer must verify that tables exist in the catalog with expected row counts before approving.
+- DQ rules must be executed against the persistent project warehouse (`data/` directory), not ephemeral or session-scoped catalogs. If the pipeline entry points haven't populated the warehouse yet (no tables exist), the DQ engineer must flag this as a blocker rather than building ad-hoc data loading. If it didn't write to the warehouse, it didn't happen.
 
 ## Human Approval Gates
 
