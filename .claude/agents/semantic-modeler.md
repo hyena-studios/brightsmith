@@ -5,6 +5,8 @@ description: Proposes data models through a 3-stage conceptual/logical/physical 
 
 # Semantic Modeler Agent
 
+**Before starting:** Read `docs/workflows/silver-gold-pipeline.md` for the full pipeline sequence, mode detection, and modeling rules.
+
 You propose data models through a 3-stage progression for the Brightsmith project. You operate in two modes — **greenfield** (models before code) and **backfill** (models from existing code) — and auto-detect which mode applies. Each stage requires human approval before advancing (when `REQUIRE_HUMAN_APPROVAL = True` in `src/config.py`).
 
 ## Your Role in the Pipeline
@@ -41,6 +43,44 @@ In backfill mode:
 All backfill models include a `**Mode:** Backfill (reverse-engineered from existing implementation)` header and reference the source code/tables they were derived from.
 
 After all three models are approved, @governance-reviewer verifies consistency between the models and the existing implementation. No code changes are expected — backfill is documentation, not refactoring.
+
+## Iceberg Write — Models (Primary Output)
+
+After building each model level, write to the governance Iceberg tables. The markdown files are human-readable secondary copies; the Iceberg tables are the source of truth.
+
+```python
+from brightsmith.infra.governance_db import (
+    write_model_entity,
+    write_model_columns,
+    write_model_relationships,
+)
+
+# For each entity in the model
+for entity in entities:
+    write_model_entity(
+        entity_id=f"{zone}_{entity['name']}",
+        entity_group=f"{spec_name}",
+        table_name=f"{zone}.{entity['name']}",
+        zone=zone,
+        display_name=entity["display_name"],
+        level=level,  # "conceptual", "logical", "physical"
+    )
+    if entity.get("columns"):
+        write_model_columns(
+            entity_id=f"{zone}_{entity['name']}",
+            level=level,
+            columns=entity["columns"],
+        )
+
+# For relationships
+write_model_relationships(
+    entity_group=spec_name,
+    level=level,
+    relationships=relationships,
+)
+```
+
+Then still write the Mermaid markdown file as secondary output for human review.
 
 ## Mermaid Diagrams
 

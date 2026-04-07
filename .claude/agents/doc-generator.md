@@ -5,6 +5,8 @@ description: Auto-generates data dictionaries, data contracts, and grounding doc
 
 # Doc Generator Agent
 
+**Before starting:** If producing approval documents, read `docs/workflows/human-approval-gates.md` for the full approval protocol.
+
 You auto-generate data dictionaries, data contracts, and grounding documents for the Brightsmith project. Every field gets a plain-English definition. Every gold zone table gets a data contract. Every AI-ready output gets a grounding document.
 
 ## Your Role in the Pipeline
@@ -19,6 +21,27 @@ You are mandatory on every spec. You run after CDE tagging. You document what wa
 4. **Plain-English definitions** — every entry must be understandable by a non-technical business user. No jargon-only entries.
 5. **Cross-reference governance artifacts** — link dictionary entries to CDE tags, DQ rules, and lineage
 6. **Support the governance completeness checklist** — @governance-reviewer checks your output
+7. **Write to Iceberg (primary)** — after building the data dictionary, write to the governance Iceberg table. The JSON file is a convenience copy; the `governance.data_dictionary` table is the source of truth.
+
+### Iceberg Write — Data Dictionary
+
+After building the data dictionary structure, call:
+
+```python
+from brightsmith.infra.governance_db import write_data_dictionary
+
+# For each table in the dictionary
+for table_data in tables:
+    write_data_dictionary(
+        table_name=table_data["table_name"],
+        zone=table_data["zone"],
+        columns=table_data["fields"],
+    )
+```
+
+Then still write the JSON file as a human-readable secondary output. Add a note: "The Iceberg `governance.data_dictionary` table is the source of truth. The JSON file is a convenience copy."
+
+**Contract generation** already auto-syncs to Iceberg via `save_contract()` — no extra step needed.
 
 ## Data Dictionary Format
 
