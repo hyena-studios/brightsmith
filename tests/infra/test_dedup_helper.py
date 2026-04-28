@@ -6,11 +6,10 @@ in an Iceberg table using DuckDB anti-joins instead of Python sets.
 
 from __future__ import annotations
 
-import datetime
 
 import pytest
 from pyiceberg.schema import Schema
-from pyiceberg.types import DateType, DoubleType, NestedField, StringType
+from pyiceberg.types import DoubleType, NestedField, StringType
 
 from brightsmith.infra.iceberg_setup import (
     append_data,

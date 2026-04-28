@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import os
-from datetime import date, datetime, timezone
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+import random
+from datetime import date
 
 import pytest
 
 from brightsmith.infra.chaos_monkey.injector import (
-    ChaosInjector,
-    InjectionConfig,
     SchemaIntrospector,
     _corrupt_date,
     _corrupt_double,
@@ -120,8 +116,6 @@ class TestSchemaIntrospector:
 # ---------------------------------------------------------------------------
 # Corruption functions
 # ---------------------------------------------------------------------------
-
-import random
 
 
 class TestCorruptionStrategies:

@@ -1,7 +1,7 @@
 """DQ execution engine — runs governance rules against real Iceberg data.
 
-Reads JSON rules from governance/dq-rules/, executes SQL against Iceberg tables
-via PyIceberg scan → Arrow → DuckDB, evaluates thresholds, and stores results.
+Executes SQL rules against Iceberg tables via PyIceberg scan -> Arrow ->
+DuckDB, evaluates thresholds, and stores runtime results in Iceberg.
 
 Usage:
     python -m brightsmith.infra.dq_runner status [--spec NAME]
@@ -25,14 +25,11 @@ from pathlib import Path
 
 import duckdb
 
-from brightsmith.config import (
-    CATALOG_PATH,
-    DQ_RESULTS_DIR,
-    DQ_RULES_DIR,
-    REQUIRE_HUMAN_APPROVAL,
-    WAREHOUSE_PATH,
-)
+from brightsmith.config import CATALOG_PATH, DQ_RESULTS_DIR, DQ_RULES_DIR, WAREHOUSE_PATH
+from brightsmith.infra.governance.serializers import ZONE_ALIASES, normalize_table_name
 from brightsmith.infra.iceberg_setup import get_catalog
+
+_COMPAT_DQ_RESULTS_DIR = DQ_RESULTS_DIR
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +133,7 @@ def evaluate_threshold(raw_result: object, threshold_expr: str) -> tuple[bool, s
 # ---------------------------------------------------------------------------
 
 # Known Iceberg namespaces in the project (zones)
-_KNOWN_NAMESPACES = {"bronze", "silver", "gold", "mcp"}
+_KNOWN_NAMESPACES = {"bronze", "silver", "gold", "mcp", "raw", "base", "consumable", "ai_ready"}
 
 # Matches namespace.table references in SQL (e.g., base.financial_facts)
 _TABLE_REF_RE = re.compile(r"\b([a-z_]+)\.([a-z_]+)\b")
@@ -247,7 +244,8 @@ def _register_iceberg_views(
     views = []
     for ns, tbl in table_refs:
         view_name = f"{ns}_{tbl}"
-        catalog_ns = f"shadow_{ns}" if shadow else ns
+        canonical_ns = ZONE_ALIASES.get(ns, ns)
+        catalog_ns = f"shadow_{canonical_ns}" if shadow else canonical_ns
         try:
             iceberg_table = catalog.load_table(f"{catalog_ns}.{tbl}")
             metadata_path = iceberg_table.metadata_location
@@ -378,11 +376,6 @@ def run_rules(
         result = execute_sql_rule(rule_copy, con)
         results.append(result)
 
-        # Update rule status to ACTIVE on first successful execution
-        if result["passed"] and result["error"] is None:
-            if rule.get("status", "").lower() == "approved":
-                _set_rule_status(rule["rule_id"], "active")
-
     con.close()
 
     # Build run summary
@@ -401,11 +394,7 @@ def run_rules(
         "results": results,
     }
 
-    # Save results to files
-    result_path = _save_results(run_result)
-
-    # Dual-write to governance Iceberg tables
-    _sync_to_governance_db(run_result, result_path, sql_rules)
+    _write_governance_results(run_result, sql_rules)
 
     return run_result
 
@@ -418,108 +407,69 @@ def _get_rule_priority(rule_id: str, rules: list[dict]) -> str:
     return "P3"
 
 
-def _save_results(run_result: dict) -> Path:
-    """Save run results to governance/dq-results/."""
-    DQ_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    spec_part = run_result["spec"] or "all"
-    filename = f"{spec_part}-{timestamp}.json"
-    path = DQ_RESULTS_DIR / filename
-    path.write_text(json.dumps(run_result, indent=2, default=str) + "\n")
-    return path
+def _write_governance_results(run_result: dict, rules: list[dict]) -> None:
+    """Write DQ run and rule results to Iceberg governance tables."""
+    from brightsmith.infra.governance_db import write_dq_run, write_dq_rule_results, write_spec_registry
 
+    spec = run_result.get("spec") or "all"
+    run_id = run_result["run_id"]
+    executed_at_str = run_result.get("executed_at", "")
+    executed_at = datetime.fromisoformat(executed_at_str) if executed_at_str else datetime.now(timezone.utc)
 
-def _sync_to_governance_db(run_result: dict, result_path: Path, rules: list[dict]) -> None:
-    """Dual-write DQ results to governance Iceberg tables. Fault-tolerant."""
-    try:
-        from brightsmith.infra.governance_db import (
-            write_dq_run,
-            write_dq_rule_results,
-            write_spec_registry,
+    tables = set()
+    for rule in rules:
+        tables.update(normalize_table_name(table) for table in rule.get("tables", []))
+    table_name = ", ".join(sorted(tables)) if tables else spec
+
+    total = run_result.get("rules_total", 0)
+    passed = run_result.get("rules_passed", 0)
+    failed = run_result.get("rules_failed", 0)
+    errored = run_result.get("rules_errored", 0)
+    score = (passed / total * 100) if total > 0 else 0.0
+
+    p0_results = [r for r in run_result.get("results", []) if _get_rule_priority(r["rule_id"], rules) == "P0"]
+    p1_results = [r for r in run_result.get("results", []) if _get_rule_priority(r["rule_id"], rules) == "P1"]
+
+    enriched_results = []
+    for result in run_result.get("results", []):
+        enriched = {**result}
+        enriched["priority"] = _get_rule_priority(result["rule_id"], rules)
+        rule_def = next((rule for rule in rules if rule["rule_id"] == result["rule_id"]), {})
+        enriched.setdefault("description", rule_def.get("description", ""))
+        enriched_results.append(enriched)
+
+    write_dq_run(
+        run_id=run_id,
+        spec_name=spec,
+        table_name=table_name,
+        executed_at=executed_at,
+        rules_total=total,
+        rules_passed=passed,
+        rules_failed=failed,
+        rules_errored=errored,
+        score_pct=score,
+        p0_passed=run_result.get("p0_passed", True),
+        p0_total=len(p0_results),
+        p0_failed=sum(1 for r in p0_results if not r.get("passed")),
+        p1_total=len(p1_results),
+        p1_failed=sum(1 for r in p1_results if not r.get("passed")),
+        duration_ms=sum(r.get("execution_time_ms", 0) for r in run_result.get("results", [])),
+    )
+    write_dq_rule_results(run_id, spec, enriched_results)
+
+    if spec != "all":
+        write_spec_registry(
+            spec_name=spec,
+            zone="",
+            status="IN_PROGRESS",
+            output_tables=sorted(tables),
+            updated_by="@dq-engineer",
+            dq_score_pct=score,
+            dq_rules_total=total,
+            dq_rules_passing=passed,
+            dq_rules_failing=failed,
+            dq_p0_passed=run_result.get("p0_passed", True),
         )
-
-        spec = run_result.get("spec") or "all"
-        run_id = run_result["run_id"]
-        executed_at_str = run_result.get("executed_at", "")
-        executed_at = (
-            datetime.fromisoformat(executed_at_str)
-            if executed_at_str
-            else datetime.now(timezone.utc)
-        )
-
-        # Derive table name from rules
-        tables = set()
-        for r in rules:
-            tables.update(r.get("tables", []))
-        table_name = ", ".join(sorted(tables)) if tables else spec
-
-        total = run_result.get("rules_total", 0)
-        passed = run_result.get("rules_passed", 0)
-        failed = run_result.get("rules_failed", 0)
-        errored = run_result.get("rules_errored", 0)
-        score = (passed / total * 100) if total > 0 else 0.0
-
-        # Priority breakdowns
-        p0_results = [r for r in run_result.get("results", [])
-                      if _get_rule_priority(r["rule_id"], rules) == "P0"]
-        p1_results = [r for r in run_result.get("results", [])
-                      if _get_rule_priority(r["rule_id"], rules) == "P1"]
-
-        # Augment individual results with priority info from rules
-        enriched_results = []
-        for r in run_result.get("results", []):
-            enriched = {**r}
-            enriched["priority"] = _get_rule_priority(r["rule_id"], rules)
-            rule_def = next((rl for rl in rules if rl["rule_id"] == r["rule_id"]), {})
-            enriched.setdefault("description", rule_def.get("description", ""))
-            enriched_results.append(enriched)
-
-        # Write DQ run summary
-        write_dq_run(
-            run_id=run_id, spec_name=spec, table_name=table_name,
-            executed_at=executed_at, rules_total=total, rules_passed=passed,
-            rules_failed=failed, rules_errored=errored, score_pct=score,
-            p0_passed=run_result.get("p0_passed", True),
-            p0_total=len(p0_results),
-            p0_failed=sum(1 for r in p0_results if not r.get("passed")),
-            p1_total=len(p1_results),
-            p1_failed=sum(1 for r in p1_results if not r.get("passed")),
-            duration_ms=sum(r.get("execution_time_ms", 0) for r in run_result.get("results", [])),
-            result_file_path=str(result_path),
-        )
-
-        # Write individual rule results
-        write_dq_rule_results(run_id, spec, enriched_results)
-
-        # Update spec registry with DQ scores
-        if spec != "all":
-            write_spec_registry(
-                spec_name=spec, zone="", status="IN_PROGRESS",
-                output_tables=sorted(tables), updated_by="@dq-engineer",
-                dq_score_pct=score, dq_rules_total=total,
-                dq_rules_passing=passed, dq_rules_failing=failed,
-                dq_p0_passed=run_result.get("p0_passed", True),
-            )
-    except Exception:
-        import logging
-        logging.getLogger(__name__).warning(
-            "Failed to sync DQ results to governance DB", exc_info=True,
-        )
-
-
-def _set_rule_status(rule_id: str, new_status: str) -> None:
-    """Update a rule's status in its JSON file."""
-    for path in DQ_RULES_DIR.glob("*.json"):
-        data = _load_rules_file(path)
-        modified = False
-        for rule in data.get("rules", []):
-            if rule["rule_id"] == rule_id:
-                rule["status"] = new_status
-                modified = True
-                break
-        if modified:
-            _save_rules_file(path, data)
-            break
 
 
 # ---------------------------------------------------------------------------
@@ -563,38 +513,26 @@ def approve_rules(rule_ids: list[str]) -> list[dict]:
 
 
 def get_latest_results(spec: str | None = None) -> dict | None:
-    """Get the most recent results file for a spec (or all specs).
-
-    If spec is given, first looks for spec-specific results files,
-    then falls back to 'all-*' results files (filtering to that spec's rules).
-    """
-    if not DQ_RESULTS_DIR.exists():
+    """Get the most recent DQ results for a spec from Iceberg."""
+    if not spec:
         return None
 
-    if spec:
-        # Try spec-specific results first
-        files = sorted(DQ_RESULTS_DIR.glob(f"{spec}-*.json"), reverse=True)
-        # Exclude acknowledgment files
-        files = [f for f in files if "-ack-" not in f.name]
-        if files:
-            return json.loads(files[0].read_text())
-        # Fall back to all-specs results, filtering to this spec
-        files = sorted(DQ_RESULTS_DIR.glob("all-*.json"), reverse=True)
-        if files:
-            data = json.loads(files[0].read_text())
-            data["results"] = [r for r in data.get("results", []) if r.get("spec") == spec]
-            return data
-        return None
+    from brightsmith.infra.governance_db import get_dq_rule_results, get_latest_dq_run
 
-    # Prefer all-specs results when no spec filter
-    files = sorted(DQ_RESULTS_DIR.glob("all-*.json"), reverse=True)
-    if not files:
-        # Fall back to any results file
-        files = sorted(DQ_RESULTS_DIR.glob("*.json"), reverse=True)
-        files = [f for f in files if "-ack-" not in f.name]
-    if not files:
+    latest = get_latest_dq_run(spec)
+    if not latest:
         return None
-    return json.loads(files[0].read_text())
+    return {
+        "run_id": latest["run_id"],
+        "spec": spec,
+        "executed_at": str(latest["executed_at"]),
+        "rules_total": latest["rules_total"],
+        "rules_passed": latest["rules_passed"],
+        "rules_failed": latest["rules_failed"],
+        "rules_errored": latest["rules_errored"],
+        "p0_passed": latest["p0_passed"],
+        "results": get_dq_rule_results(latest["run_id"]),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -605,9 +543,8 @@ def get_latest_results(spec: str | None = None) -> dict | None:
 def acknowledge_failures(spec: str, run_id: str, reason: str) -> dict:
     """Acknowledge failures in a specific run with a reason.
 
-    Writes an acknowledgment record alongside the results.
+    Writes to Iceberg governance tables.
     """
-    DQ_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     ack = {
         "spec": spec,
         "run_id": run_id,
@@ -615,8 +552,16 @@ def acknowledge_failures(spec: str, run_id: str, reason: str) -> dict:
         "acknowledged_at": datetime.now(timezone.utc).isoformat(),
         "reason": reason,
     }
-    path = DQ_RESULTS_DIR / f"{spec}-ack-{run_id}.json"
-    path.write_text(json.dumps(ack, indent=2) + "\n")
+
+    from brightsmith.infra.governance_db import write_dq_acknowledgment
+
+    write_dq_acknowledgment(
+        run_id=run_id,
+        rule_id="*",
+        spec_name=spec,
+        acknowledged_by="human",
+        reason=reason,
+    )
     return ack
 
 
@@ -737,7 +682,7 @@ def main() -> None:
                 path = generate_scorecard(spec_results, s)
                 print(f"Scorecard written: {path}")
     elif args.command == "acknowledge":
-        ack = acknowledge_failures(args.spec, args.run_id, args.reason)
+        acknowledge_failures(args.spec, args.run_id, args.reason)
         print(f"Acknowledged failures for run {args.run_id}: {args.reason}")
     elif args.command == "badge":
         _update_readme_badges()

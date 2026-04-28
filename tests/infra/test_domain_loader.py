@@ -4,17 +4,12 @@ Validates: manifest parsing, source config loading, hints parsing,
 missing manifest handling, and get_source lookup.
 """
 
-import json
-from pathlib import Path
 
 import pytest
 import yaml
 
 from brightsmith.domain_loader import (
     DomainAssignment,
-    DomainHints,
-    DomainManifest,
-    SourceConfig,
     assign_domain,
     get_source,
     load_manifest,

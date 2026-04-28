@@ -1,17 +1,11 @@
 """Tests for machine-readable data contracts."""
 
-import json
-from pathlib import Path
-
-import yaml
-
 from brightsmith.infra.contract import (
     ContractDiffItem,
     ContractVerificationResult,
     bump_version,
     check_version_bump_required,
     diff_contract,
-    generate_contract,
     list_contracts,
     load_contract,
     parse_version,

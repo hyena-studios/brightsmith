@@ -28,7 +28,20 @@ The principle: if the pipeline hasn't written to the warehouse, DQ has nothing t
 ## Responsibilities
 
 1. **Execute DQ rules** via `python -m brightsmith.infra.dq_runner run` — all rules, every time (not just new rules)
-2. **Produce scorecards** via `python -m brightsmith.infra.dq_runner scorecard` — from real execution results, never from test results
+2. **Produce scorecards** via `python -m brightsmith.infra.dq_runner scorecard` — from real execution results, never from test results. The scorecard is automatically written to both the Iceberg `governance.documents` table (primary) and the markdown file (secondary).
+3. **Write scorecard to Iceberg** — after generating the scorecard, also call:
+   ```python
+   from brightsmith.infra.governance_db import write_document
+   write_document(
+       doc_type="dq_scorecard",
+       doc_name=f"{spec_name}-scorecard",
+       title=f"DQ Scorecard: {spec_name}",
+       content=scorecard_markdown,
+       spec_name=spec_name,
+       agent_id="@dq-engineer",
+   )
+   ```
+   Note: `generate_scorecard()` now does this automatically, so this is only needed if producing a scorecard outside of the standard CLI.
 3. **Enforce the P0 gate** — P0 failures block spec completion. Escalate to @governance-reviewer.
 4. **Monitor results** — compare current run to previous runs, flag regressions
 5. **Support the governance completeness checklist** — @governance-reviewer checks your output

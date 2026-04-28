@@ -1,13 +1,10 @@
 """Pipeline gate — programmatic enforcement of agent execution order.
 
-Tracks pipeline step execution as a state machine per spec. Each spec gets a
-JSON state file at governance/pipeline-state/{spec}-pipeline.json. The gate
-enforces prerequisites (steps that must complete before others), records
-completions with output artifact paths and SHA-256 hashes, validates skip
-justifications, and checks zone transition readiness.
+Tracks pipeline step execution as a state machine per spec and writes runtime
+governance events to Iceberg. JSON pipeline state is an explicit export path.
 
 Usage:
-    python -m brightsmith.infra.pipeline_gate init <spec-name> --zone raw|base|consumable|ai_ready [--mode greenfield|backfill]
+    python -m brightsmith.infra.pipeline_gate init <spec-name> --zone bronze|silver|gold|mcp [--mode greenfield|backfill]
     python -m brightsmith.infra.pipeline_gate check <spec-name> <step-name>
     python -m brightsmith.infra.pipeline_gate complete <spec-name> <step-name> --output <path>
     python -m brightsmith.infra.pipeline_gate skip <spec-name> <step-name> --reason "..." --evidence <path>
@@ -24,7 +21,7 @@ import argparse
 import hashlib
 import json
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -67,7 +64,7 @@ class Step:
         }
 
 
-# --- Raw Zone ---
+# --- Bronze Zone ---
 
 BRONZE_ZONE_STEPS: tuple[Step, ...] = (
     Step("governance-reviewer-pre", "@governance-reviewer"),
@@ -99,11 +96,11 @@ ZONE_TRANSITION_STEPS: tuple[Step, ...] = (
         "insight-manager", "@insight-manager",
         requires=("principal-data-architect",),
         skippable=True,
-        skip_condition="raw-to-base transition (insight-manager runs at base→consumable and consumable→ai-ready only)",
+        skip_condition="bronze-to-silver transition (insight-manager runs at silver-to-gold and gold-to-mcp only)",
     ),
 )
 
-# --- Base Zone (Greenfield) ---
+# --- Silver Zone (Greenfield) ---
 
 SILVER_GREENFIELD_STEPS: tuple[Step, ...] = (
     Step("governance-reviewer-pre", "@governance-reviewer"),
@@ -132,7 +129,7 @@ SILVER_GREENFIELD_STEPS: tuple[Step, ...] = (
     Step("staff-engineer", "@staff-engineer", requires=("governance-reviewer-post",)),
 )
 
-# --- Base Zone (Backfill) ---
+# --- Silver Zone (Backfill) ---
 
 SILVER_BACKFILL_STEPS: tuple[Step, ...] = (
     Step("semantic-modeler-physical", "@semantic-modeler"),
@@ -153,15 +150,15 @@ SILVER_BACKFILL_STEPS: tuple[Step, ...] = (
     Step("staff-engineer", "@staff-engineer", requires=("governance-reviewer-post",)),
 )
 
-# --- Consumable Zone (Greenfield — same structure as base greenfield) ---
+# --- Gold Zone (Greenfield; same structure as silver greenfield) ---
 
 GOLD_GREENFIELD_STEPS: tuple[Step, ...] = SILVER_GREENFIELD_STEPS
 
-# --- Consumable Zone (Backfill) ---
+# --- Gold Zone (Backfill) ---
 
 GOLD_BACKFILL_STEPS: tuple[Step, ...] = SILVER_BACKFILL_STEPS
 
-# --- AI-Ready Zone ---
+# --- MCP Zone ---
 
 MCP_ZONE_STEPS: tuple[Step, ...] = (
     Step("governance-reviewer-pre", "@governance-reviewer"),
@@ -282,9 +279,8 @@ class PipelineGate:
         return {}
 
     def _save(self) -> None:
-        """Persist state to disk."""
-        self._state_dir.mkdir(parents=True, exist_ok=True)
-        self._state_path.write_text(json.dumps(self._state, indent=2) + "\n")
+        """Retain state in memory; file generation is handled by exporters."""
+        return None
 
     @property
     def zone(self) -> Zone:
@@ -305,6 +301,9 @@ class PipelineGate:
             zone: Which zone this spec belongs to.
             mode: greenfield (new tables) or backfill (existing tables).
         """
+        from brightsmith.infra.governance.serializers import normalize_zone
+
+        zone = normalize_zone(zone)  # type: ignore[assignment]
         now = datetime.now(timezone.utc).isoformat()
         steps = {}
         for step in _get_steps(zone, mode):
@@ -327,70 +326,54 @@ class PipelineGate:
         }
         self._save()
 
-        # Write initial spec registry row
-        try:
-            from brightsmith.infra.governance_db import write_spec_registry
-            write_spec_registry(
-                spec_name=self.spec, zone=zone, status="IN_PROGRESS",
-                output_tables=[], updated_by="pipeline-gate",
-                pipeline_steps_total=len(steps),
-                pipeline_steps_completed=0,
-                spec_file_path=f"docs/specs/{self.spec}.md",
-            )
-        except Exception:
-            import logging
-            logging.getLogger(__name__).debug(
-                "Failed to write initial spec registry row for %s", self.spec, exc_info=True,
-            )
+        from brightsmith.infra.governance_db import write_spec_registry
+
+        write_spec_registry(
+            spec_name=self.spec,
+            zone=zone,
+            status="IN_PROGRESS",
+            output_tables=[],
+            updated_by="pipeline-gate",
+            pipeline_steps_total=len(steps),
+            pipeline_steps_completed=0,
+            spec_file_path=f"docs/specs/{self.spec}.md",
+        )
 
     # --- Governance DB event emission ---
 
     def _emit_governance_event(
         self, step_name: str, event_type: str, **kwargs,
     ) -> None:
-        """Emit a pipeline event to the governance DB. Fault-tolerant."""
-        try:
-            from brightsmith.infra.governance_db import (
-                write_pipeline_event,
-                write_spec_registry,
-            )
+        """Emit a pipeline event to Iceberg governance tables."""
+        from brightsmith.infra.governance_db import write_pipeline_event, write_spec_registry
 
-            steps = self._state.get("steps", {})
-            step_data = steps.get(step_name, {})
-            agent_id = step_data.get("agent")
+        steps = self._state.get("steps", {})
+        step_data = steps.get(step_name, {})
+        agent_id = step_data.get("agent")
 
-            write_pipeline_event(
-                spec_name=self.spec,
-                step_name=step_name,
-                event_type=event_type,
-                agent_id=agent_id,
-                output_path=kwargs.get("output_path"),
-                skip_reason=kwargs.get("skip_reason"),
-                approval_decision=kwargs.get("approval_decision"),
-                approval_by=kwargs.get("approval_by"),
-                notes=kwargs.get("notes"),
-            )
+        write_pipeline_event(
+            spec_name=self.spec,
+            step_name=step_name,
+            event_type=event_type,
+            agent_id=agent_id,
+            output_path=kwargs.get("output_path"),
+            skip_reason=kwargs.get("skip_reason"),
+            approval_decision=kwargs.get("approval_decision"),
+            approval_by=kwargs.get("approval_by"),
+            notes=kwargs.get("notes"),
+        )
 
-            # Update spec registry with pipeline progress
-            completed = sum(
-                1 for s in steps.values()
-                if s.get("status") in ("COMPLETED", "SKIPPED")
-            )
-            write_spec_registry(
-                spec_name=self.spec,
-                zone=self._state.get("zone", ""),
-                status=self._state.get("status", "IN_PROGRESS"),
-                output_tables=self._state.get("output_tables", []),
-                updated_by=agent_id or "pipeline-gate",
-                pipeline_step_current=step_name,
-                pipeline_steps_total=len(steps),
-                pipeline_steps_completed=completed,
-            )
-        except Exception:
-            import logging
-            logging.getLogger(__name__).debug(
-                "Failed to emit governance event for %s/%s", self.spec, step_name, exc_info=True,
-            )
+        completed = sum(1 for s in steps.values() if s.get("status") in ("COMPLETED", "SKIPPED"))
+        write_spec_registry(
+            spec_name=self.spec,
+            zone=self._state.get("zone", ""),
+            status=self._state.get("status", "IN_PROGRESS"),
+            output_tables=self._state.get("output_tables", []),
+            updated_by=agent_id or "pipeline-gate",
+            pipeline_step_current=step_name,
+            pipeline_steps_total=len(steps),
+            pipeline_steps_completed=completed,
+        )
 
     # --- Pre-step gate check ---
 
@@ -440,6 +423,7 @@ class PipelineGate:
             steps[step_name]["status"] = "IN_PROGRESS"
         steps[step_name]["started_at"] = datetime.now(timezone.utc).isoformat()
         self._save()
+        self._emit_governance_event(step_name, "STARTED")
 
     def complete_step(self, step_name: str, output: str = "") -> None:
         """Record that a step completed successfully.
@@ -659,23 +643,19 @@ class PipelineGate:
                 except Exception:
                     issues.append(f"Golden dataset is not valid JSON: {golden_file}")
 
-        # Consumable greenfield: physical model file must exist
+        # Gold greenfield: physical model file must exist
         if zone == "gold" and self.mode == "greenfield":
             model_file = PROJECT_ROOT / "governance" / "models" / f"{self.spec}-physical.md"
             if not model_file.exists():
                 issues.append(
-                    f"Physical model missing for consumable greenfield spec: {model_file}"
+                    f"Physical model missing for gold greenfield spec: {model_file}"
                 )
 
-        # Consumable and AI-Ready zones: data contract must exist
+        # Gold and MCP zones: data contract must exist
         if zone in ("gold", "mcp"):
-            contracts_dir = PROJECT_ROOT / "governance" / "data-contracts"
-            if contracts_dir.exists():
-                contract_files = list(contracts_dir.glob("*.yaml"))
-                # We check that at least one contract exists for this zone
-                # (contract names derive from table names, not spec names)
             # Note: contract existence is verified but not strictly tied to spec name
             # because contracts are per-table, not per-spec
+            pass
 
         # CAB decision: if silver/gold and a CAB decision exists, it must not be PENDING
         if zone in ("silver", "gold"):

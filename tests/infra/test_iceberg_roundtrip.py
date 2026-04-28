@@ -7,9 +7,6 @@ on local file storage with zero external infrastructure.
 from __future__ import annotations
 
 import datetime
-import shutil
-import tempfile
-from pathlib import Path
 
 import pytest
 from pyiceberg.schema import Schema

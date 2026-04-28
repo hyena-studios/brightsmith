@@ -1,8 +1,6 @@
 """Tests for generic concept normalization engine."""
 
 import json
-from pathlib import Path
-from unittest.mock import patch
 
 from brightsmith.silver.concept_normalization.normalize import ConceptNormalizer, NormalizationResult
 

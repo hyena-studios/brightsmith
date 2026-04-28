@@ -1,7 +1,6 @@
 """Tests for business glossary schema validator."""
 
 import json
-from unittest.mock import patch
 
 from brightsmith.infra.glossary_validator import validate_glossary
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from brightsmith.mcp.base_anomaly_checker import (
-    AnomalyFlag,
     AnomalyRule,
     BaseAnomalyChecker,
 )

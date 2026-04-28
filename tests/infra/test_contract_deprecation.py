@@ -1,7 +1,5 @@
 """Tests for contract deprecation extensions."""
 
-import yaml
-
 from brightsmith.infra.contract import (
     bump_version,
     deprecate_contract,

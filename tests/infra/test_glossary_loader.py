@@ -5,20 +5,14 @@ composition, term search, tier filtering, and read-only enforcement.
 """
 
 import json
-import tempfile
-from pathlib import Path
 
 import pytest
 import yaml
 
 from brightsmith.infra.glossary_loader import (
-    ComposedGlossary,
-    GlossaryRegistry,
-    GlossaryTerm,
     find_matching_term,
     load_project_glossary,
     load_registry,
-    load_standard_glossary,
 )
 
 

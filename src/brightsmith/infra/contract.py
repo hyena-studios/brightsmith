@@ -5,7 +5,7 @@ tables. Contracts are the guarantee layer — specs are proposals, contracts
 are what was actually built and what consumers can rely on.
 
 Usage:
-    python -m brightsmith.infra.contract generate --table consumable.company_financials --spec my-spec
+    python -m brightsmith.infra.contract generate --table gold.company_financials --spec my-spec
     python -m brightsmith.infra.contract verify {contract-name} | --all
     python -m brightsmith.infra.contract diff {contract-name}
     python -m brightsmith.infra.contract list
@@ -17,7 +17,7 @@ import argparse
 import json
 import logging
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -74,6 +74,7 @@ class ColumnContract:
     name: str
     type: str
     required: bool
+    business_term_id: str | None = None
     business_term: str | None = None
     is_cde: bool = False
     cde_rationale: str = ""
@@ -127,20 +128,28 @@ def load_contract(name: str, contracts_dir: Path | None = None) -> dict | None:
 
 
 def save_contract(contract: dict, contracts_dir: Path | None = None) -> Path:
-    """Save a contract YAML file.
+    """Save a contract to Iceberg governance tables.
 
     Args:
         contract: Contract dict to save.
         contracts_dir: Override for contracts directory.
 
     Returns:
-        Path to the saved file.
+        The export path that an explicit exporter would write.
     """
+    from brightsmith.config import PROJECT_ROOT
+
     cdir = contracts_dir or _contracts_dir()
-    cdir.mkdir(parents=True, exist_ok=True)
     name = contract.get("metadata", {}).get("name", "unnamed")
     path = cdir / f"{name}.yaml"
-    path.write_text(yaml.dump(contract, default_flow_style=False, sort_keys=False))
+
+    from brightsmith.infra.governance_db import sync_contract as _sync_contract
+
+    rel_path = str(path.relative_to(PROJECT_ROOT)) if path.is_relative_to(PROJECT_ROOT) else str(path)
+    _sync_contract(contract, rel_path)
+    if contracts_dir is not None and not path.is_relative_to(PROJECT_ROOT):
+        cdir.mkdir(parents=True, exist_ok=True)
+        path.write_text(yaml.dump(contract, default_flow_style=False, sort_keys=False))
     return path
 
 
@@ -228,7 +237,7 @@ def generate_contract(
     the contract. The contract always reflects reality.
 
     Args:
-        table_name: Full table name (e.g., "consumable.company_financials").
+        table_name: Full table name (e.g., "gold.company_financials").
         spec_path: Path to the spec that built this table.
         grain_columns: Columns that define the grain.
         grain_description: Human description of the grain.
@@ -241,13 +250,15 @@ def generate_contract(
         Contract dict (also saved to disk).
     """
     from brightsmith.config import CATALOG_PATH, PROJECT_ROOT, WAREHOUSE_PATH
+    from brightsmith.infra.governance.serializers import normalize_table_name, normalize_zone
     from brightsmith.infra.iceberg_setup import get_catalog
 
     parts = table_name.split(".")
     if len(parts) != 2:
         raise ValueError(f"Table name must be namespace.table format: {table_name}")
 
-    namespace, tbl = parts
+    table_name = normalize_table_name(table_name)
+    namespace, tbl = table_name.split(".", 1)
 
     # Try to load the Iceberg table for schema
     columns = []
@@ -259,7 +270,7 @@ def generate_contract(
                 "name": iceberg_field.name,
                 "type": _iceberg_type_to_str(iceberg_field.field_type),
                 "required": iceberg_field.required,
-                "business_term": None,
+                "business_term_id": None,
                 "is_cde": False,
                 "cde_rationale": "",
                 "is_pii": False,
@@ -280,8 +291,8 @@ def generate_contract(
             for col in columns:
                 match = term_lookup.get(col["name"].lower())
                 if match:
-                    col["business_term"] = match.get("term_id")
-                    # CDE/PII flags are set by @cde-tagger, not derived from glossary
+                    col["business_term_id"] = match.get("term_id")
+                    # CDE/PII flags are independent product classifications.
     except Exception:
         pass
 
@@ -302,7 +313,7 @@ def generate_contract(
         },
         "schema": {
             "table": table_name,
-            "namespace": namespace,
+            "namespace": normalize_zone(namespace),
             "grain": {
                 "columns": grain_columns or [],
                 "description": grain_description,
@@ -339,14 +350,7 @@ def generate_contract(
         },
     }
 
-    path = save_contract(contract, contracts_dir)
-
-    # Sync to governance DB
-    try:
-        from brightsmith.infra.governance_db import sync_contract as _sync_contract
-        _sync_contract(contract, str(path.relative_to(PROJECT_ROOT)))
-    except Exception:
-        logger.debug("Could not sync contract to governance DB", exc_info=True)
+    save_contract(contract, contracts_dir)
 
     return contract
 
@@ -443,7 +447,6 @@ def verify_contract(
     max_hours = freshness.get("max_staleness_hours")
     measured_by = freshness.get("measured_by", "ingested_at")
     if max_hours and rows:
-        from datetime import timedelta
         timestamps = [r.get(measured_by) for r in rows if r.get(measured_by)]
         if timestamps:
             latest = max(timestamps)

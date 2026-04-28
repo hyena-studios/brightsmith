@@ -1,7 +1,6 @@
-"""DQ scorecard generator — creates markdown scorecards from execution results.
+"""DQ scorecard exporter — creates markdown scorecards from governance data.
 
-Reads timestamped results from governance/dq-results/ and generates
-human-readable scorecards in governance/dq-scorecards/.
+Scorecard files are generated only by explicit export/reporting calls.
 """
 
 from __future__ import annotations
@@ -35,13 +34,12 @@ def generate_scorecard(run_result: dict, spec: str) -> Path:
     lines = []
     passed = sum(1 for r in spec_results if r["passed"])
     total = len(spec_results)
-    errored = sum(1 for r in spec_results if r.get("error"))
     executed_at = run_result.get("executed_at", datetime.now(timezone.utc).isoformat())
 
     lines.append(f"## DQ Scorecard: {spec}")
     lines.append(f"**Spec:** {spec}")
     lines.append(f"**Date:** {executed_at[:10]}")
-    lines.append(f"**Agent:** @dq-engineer")
+    lines.append("**Agent:** @dq-engineer")
     lines.append(f"**Overall Score:** {passed}/{total} rules passing ({_pct(passed, total)}%)")
     lines.append(f"**Data Source:** Production Data Validation (executed {executed_at})")
     lines.append(f"**Run ID:** {run_result.get('run_id', 'unknown')}")
@@ -114,10 +112,23 @@ def generate_scorecard(run_result: dict, spec: str) -> Path:
         lines.append(f"- **P1 Warnings:** {len(p1_failures)} warning(s) — human review recommended.")
     lines.append("")
 
-    # Write file
+    scorecard_content = "\n".join(lines) + "\n"
+
+    from brightsmith.infra.governance_db import write_document
+
+    write_document(
+        doc_type="dq_scorecard",
+        doc_name=f"{spec}-scorecard",
+        title=f"DQ Scorecard: {spec}",
+        content=scorecard_content,
+        spec_name=spec,
+        agent_id="@dq-engineer",
+    )
+
+    # Explicit scorecard export.
     DQ_SCORECARDS_DIR.mkdir(parents=True, exist_ok=True)
     path = DQ_SCORECARDS_DIR / f"{spec}-scorecard.md"
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text(scorecard_content)
     return path
 
 

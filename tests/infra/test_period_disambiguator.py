@@ -5,7 +5,6 @@ from datetime import date
 import pytest
 
 from brightsmith.infra.period_disambiguator import (
-    PeriodClassification,
     PeriodDisambiguator,
     PeriodThresholds,
 )

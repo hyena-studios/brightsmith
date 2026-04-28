@@ -1,14 +1,11 @@
 """Tests for Change Approval Board (CAB) module."""
 
 import json
-from dataclasses import asdict
-from pathlib import Path
 from unittest.mock import patch
 
 import yaml
 
 from brightsmith.infra.cab import (
-    BlastRadiusItem,
     CabDecisionRecord,
     ChangeType,
     Decision,
@@ -446,7 +443,6 @@ def test_build_schema_diff():
 
 def test_decision_id_format():
     """ID follows cab-{timestamp}-{table} pattern."""
-    record = _make_record()
     # The _make_record uses a pre-set ID, but let's test the generator
     from brightsmith.infra.cab import _next_decision_id
     did = _next_decision_id("consumable.company_financials")

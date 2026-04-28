@@ -18,8 +18,6 @@ def test_column_swap_exchanges_values():
     """Column swap should exchange values between two columns."""
     sc = SemanticCorruptor()
     records = _make_records()
-    original_rev = records[0]["revenue"]
-    original_ni = records[0]["net_income"]
 
     result, corruptions = sc.swap_columns(
         records, rate=1.0, rng=random.Random(42), col_a="revenue", col_b="net_income",

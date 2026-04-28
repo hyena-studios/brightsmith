@@ -3,13 +3,11 @@
 import json
 
 from brightsmith.run import (
-    EXIT_CONFIG_ERROR,
     EXIT_SUCCESS,
     GoldenResult,
     PipelineResult,
     ZoneResult,
     previous_zone,
-    register_zone,
     run_pipeline,
 )
 

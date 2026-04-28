@@ -7,12 +7,9 @@ parsing, and the rule lifecycle (proposed -> approved -> active).
 from __future__ import annotations
 
 import json
-import tempfile
-from pathlib import Path
 from unittest.mock import patch
 
 import duckdb
-import pyarrow as pa
 import pytest
 
 from brightsmith.infra.dq_runner import (
@@ -528,16 +525,14 @@ class TestRunRulesIntegration:
         rule_ids = [r["rule_id"] for r in result["results"]]
         assert "INT-SKIP" not in rule_ids
 
-    def test_run_rules_saves_results_file(self, iceberg_env):
-        """Results should be written to DQ_RESULTS_DIR."""
+    def test_run_rules_does_not_write_results_file(self, iceberg_env):
+        """Runtime results should be written to Iceberg, not DQ_RESULTS_DIR."""
         with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
              patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
             run_rules(spec="test-integration", catalog=iceberg_env["catalog"])
 
         files = list(iceberg_env["results_dir"].glob("*.json"))
-        assert len(files) == 1
-        saved = json.loads(files[0].read_text())
-        assert saved["rules_total"] == 3
+        assert len(files) == 0
 
     def test_run_rules_priority_filter(self, iceberg_env):
         """Filtering by priority should only run matching rules."""
@@ -561,7 +556,7 @@ class TestValidateAfterWrite:
     def passing_env(self, tmp_path):
         """Iceberg env where all rules pass."""
         from pyiceberg.schema import Schema
-        from pyiceberg.types import DoubleType, IntegerType, NestedField, StringType
+        from pyiceberg.types import DoubleType, NestedField, StringType
 
         from brightsmith.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
 
