@@ -1,0 +1,154 @@
+{
+  "spec": "brightgemma-deepagents-runtime",
+  "zone": "bronze",
+  "mode": "greenfield",
+  "started": "2026-04-29T15:58:19.742659+00:00",
+  "steps": {
+    "governance-reviewer-pre": {
+      "status": "COMPLETED",
+      "agent": "@governance-reviewer",
+      "requires": [],
+      "blocking": false,
+      "skippable": false,
+      "completed_at": "2026-04-29T15:58:19.743175+00:00",
+      "output": "governance/runtime-artifacts/manual.md"
+    },
+    "primary-agent": {
+      "status": "NOT_STARTED",
+      "agent": "@primary-agent",
+      "requires": [
+        "governance-reviewer-pre"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "data-analyst": {
+      "status": "NOT_STARTED",
+      "agent": "@data-analyst",
+      "requires": [
+        "primary-agent"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "domain-context": {
+      "status": "NOT_STARTED",
+      "agent": "@domain-context",
+      "requires": [
+        "data-analyst"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "dq-rule-writer": {
+      "status": "NOT_STARTED",
+      "agent": "@dq-rule-writer",
+      "requires": [
+        "data-analyst"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "dq-engineer": {
+      "status": "NOT_STARTED",
+      "agent": "@dq-engineer",
+      "requires": [
+        "dq-rule-writer"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "chaos-monkey": {
+      "status": "NOT_STARTED",
+      "agent": "@chaos-monkey",
+      "requires": [
+        "dq-engineer"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "entity-resolver": {
+      "status": "NOT_STARTED",
+      "agent": "@entity-resolver",
+      "requires": [
+        "primary-agent"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "pii-scanner": {
+      "status": "NOT_STARTED",
+      "agent": "@pii-scanner",
+      "requires": [
+        "primary-agent"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "temporal-modeler": {
+      "status": "NOT_STARTED",
+      "agent": "@temporal-modeler",
+      "requires": [
+        "data-analyst"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "lineage-tracker": {
+      "status": "NOT_STARTED",
+      "agent": "@lineage-tracker",
+      "requires": [
+        "primary-agent"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "cde-tagger": {
+      "status": "NOT_STARTED",
+      "agent": "@cde-tagger",
+      "requires": [
+        "primary-agent"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "doc-generator": {
+      "status": "NOT_STARTED",
+      "agent": "@doc-generator",
+      "requires": [
+        "cde-tagger"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "adversarial-auditor": {
+      "status": "NOT_STARTED",
+      "agent": "@adversarial-auditor",
+      "requires": [
+        "chaos-monkey"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "governance-reviewer-post": {
+      "status": "NOT_STARTED",
+      "agent": "@governance-reviewer",
+      "requires": [
+        "doc-generator"
+      ],
+      "blocking": false,
+      "skippable": false
+    },
+    "staff-engineer": {
+      "status": "NOT_STARTED",
+      "agent": "@staff-engineer",
+      "requires": [
+        "governance-reviewer-post"
+      ],
+      "blocking": false,
+      "skippable": false
+    }
+  },
+  "skipped_steps": {},
+  "approvals": {}
+}

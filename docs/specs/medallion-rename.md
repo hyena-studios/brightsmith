@@ -224,7 +224,7 @@ packages = ["src/brightsmith"]
 | Item | Old | New |
 |------|-----|-----|
 | GitHub repo | `jcernauske/grist` | `jcernauske/brightsmith` (rename on GitHub) |
-| CLAUDE.md project path | `/Users/jcernauske/code/grist` | `/Users/jcernauske/code/brightsmith` |
+| CLAUDE.md project path | `~/code/grist` | `~/code/brightsmith` |
 
 ## Backward Compatibility
 

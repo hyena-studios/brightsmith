@@ -4,8 +4,8 @@ This document translates the existing Claude Code plugin workflow into a Codex-n
 
 ## Design Goals
 
-- Preserve the Brightsmith pipeline contract defined in [CLAUDE.md](/Users/jcernauske/code/bright/brightsmith/CLAUDE.md), [docs/workflows/bronze-pipeline.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/bronze-pipeline.md), [docs/workflows/silver-gold-pipeline.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/silver-gold-pipeline.md), [docs/workflows/mcp-pipeline.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/mcp-pipeline.md), and [docs/workflows/human-approval-gates.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/human-approval-gates.md).
-- Reuse the repository's top-level [agents/](/Users/jcernauske/code/bright/brightsmith/agents) and [skills/](/Users/jcernauske/code/bright/brightsmith/skills) directories as the source of agent behavior.
+- Preserve the Brightsmith pipeline contract defined in [CLAUDE.md](../../CLAUDE.md), [docs/workflows/bronze-pipeline.md](../../docs/workflows/bronze-pipeline.md), [docs/workflows/silver-gold-pipeline.md](../../docs/workflows/silver-gold-pipeline.md), [docs/workflows/mcp-pipeline.md](../../docs/workflows/mcp-pipeline.md), and [docs/workflows/human-approval-gates.md](../../docs/workflows/human-approval-gates.md).
+- Reuse the repository's top-level [agents/](../../agents) and [skills/](../../skills) directories as the source of agent behavior.
 - Replace Claude-only concepts such as `Agent(...)`, `subagent_type: "bs:..."`, hooks, and `AskUserQuestion` with Codex-native equivalents.
 - Keep the same review gates, triple-write approval logging, and pipeline gate enforcement.
 
@@ -21,7 +21,7 @@ Codex model:
 - The main Codex session is the orchestrator
 - When delegation is useful, Codex uses `spawn_agent` or `send_input`
 - Agent identity lives in the prompt context, not in a plugin namespace
-- The source of truth for each agent remains its markdown definition in [agents/](/Users/jcernauske/code/bright/brightsmith/agents)
+- The source of truth for each agent remains its markdown definition in [agents/](../../agents)
 
 Recommended dispatch pattern:
 
@@ -45,7 +45,7 @@ Codex model:
 ### Hook Enforcement
 
 Claude plugin model:
-- [hooks/hooks.json](/Users/jcernauske/code/bright/brightsmith/hooks/hooks.json) enforces typed subagent usage
+- [hooks/hooks.json](../../hooks/hooks.json) enforces typed subagent usage
 
 Codex model:
 - No hook is required
@@ -56,7 +56,7 @@ Codex model:
 
 ## Codex Agent Catalog
 
-The Codex version keeps the same Brightsmith specialist roles. The repository already mirrors almost all Claude agent specs in [agents/](/Users/jcernauske/code/bright/brightsmith/agents); `cab-agent` is added there as well.
+The Codex version keeps the same Brightsmith specialist roles. The repository already mirrors almost all Claude agent specs in [agents/](../../agents); `cab-agent` is added there as well.
 
 Core agents:
 - `setup`
@@ -100,15 +100,15 @@ The existing Brightsmith skills remain valid conceptually, but they should be tr
 
 | Claude Skill | Codex Equivalent |
 |---|---|
-| `/bs:init` | Main Codex session follows [skills/init/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/init/SKILL.md) as a runbook and optionally delegates to `setup` |
-| `/bs:mine` | Execute bronze runbook in [skills/mine/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/mine/SKILL.md) using Codex orchestration |
-| `/bs:smelt` | Execute silver runbook in [skills/smelt/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/smelt/SKILL.md) using Codex orchestration |
-| `/bs:cast` | Execute gold runbook in [skills/cast/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/cast/SKILL.md) using Codex orchestration |
-| `/bs:serve` | Execute [skills/serve/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/serve/SKILL.md) directly from the main session |
-| `/bs:run` | Use [skills/run/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/run/SKILL.md) as the master orchestration checklist |
-| `/bs:assay` | Execute [skills/assay/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/assay/SKILL.md) directly |
-| `/bs:stamp` | Execute [skills/stamp/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/stamp/SKILL.md) directly |
-| `/bs:status` | Execute [skills/status/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/status/SKILL.md) directly |
+| `/bs:init` | Main Codex session follows [skills/init/SKILL.md](../../skills/init/SKILL.md) as a runbook and optionally delegates to `setup` |
+| `/bs:mine` | Execute bronze runbook in [skills/mine/SKILL.md](../../skills/mine/SKILL.md) using Codex orchestration |
+| `/bs:smelt` | Execute silver runbook in [skills/smelt/SKILL.md](../../skills/smelt/SKILL.md) using Codex orchestration |
+| `/bs:cast` | Execute gold runbook in [skills/cast/SKILL.md](../../skills/cast/SKILL.md) using Codex orchestration |
+| `/bs:serve` | Execute [skills/serve/SKILL.md](../../skills/serve/SKILL.md) directly from the main session |
+| `/bs:run` | Use [skills/run/SKILL.md](../../skills/run/SKILL.md) as the master orchestration checklist |
+| `/bs:assay` | Execute [skills/assay/SKILL.md](../../skills/assay/SKILL.md) directly |
+| `/bs:stamp` | Execute [skills/stamp/SKILL.md](../../skills/stamp/SKILL.md) directly |
+| `/bs:status` | Execute [skills/status/SKILL.md](../../skills/status/SKILL.md) directly |
 
 Required translation rule:
 - Anywhere a skill says `Agent(description: ..., subagent_type: "bs:<name>", prompt: ...)`, replace it with "read `agents/<name>.md`, then either execute locally or delegate via `spawn_agent` with the same contextual prompt."
@@ -117,7 +117,7 @@ Required translation rule:
 
 ### Session Start
 
-1. Create a session log per [docs/workflows/session-logging.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/session-logging.md)
+1. Create a session log per [docs/workflows/session-logging.md](../../docs/workflows/session-logging.md)
 2. Record the exact user prompt
 3. Read the relevant zone workflow documents on demand
 4. If this is a new domain project, follow the `setup` runbook first
@@ -135,7 +135,7 @@ For every Brightsmith step:
 
 ### Bronze
 
-Use the same order as [docs/workflows/bronze-pipeline.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/bronze-pipeline.md):
+Use the same order as [docs/workflows/bronze-pipeline.md](../../docs/workflows/bronze-pipeline.md):
 
 1. `governance-reviewer`
 2. `primary-agent`
@@ -153,7 +153,7 @@ Use the same order as [docs/workflows/bronze-pipeline.md](/Users/jcernauske/code
 
 ### Silver/Gold
 
-Use the same greenfield/backfill branching and ordering from [docs/workflows/silver-gold-pipeline.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/silver-gold-pipeline.md), including:
+Use the same greenfield/backfill branching and ordering from [docs/workflows/silver-gold-pipeline.md](../../docs/workflows/silver-gold-pipeline.md), including:
 
 - business term, conceptual model, and logical model approval gates
 - CAB review for changes to existing contracted tables
@@ -163,7 +163,7 @@ Use the same greenfield/backfill branching and ordering from [docs/workflows/sil
 
 ### MCP
 
-Use the same rules from [docs/workflows/mcp-pipeline.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/mcp-pipeline.md):
+Use the same rules from [docs/workflows/mcp-pipeline.md](../../docs/workflows/mcp-pipeline.md):
 
 - evaluation set with at least 50 mechanically verifiable cases
 - correctness verification, not just structure checks
@@ -240,8 +240,8 @@ Recommended sub-agent usage:
 
 If you want to operationalize this in Codex without building a plugin, the smallest coherent setup is:
 
-1. Keep [agents/](/Users/jcernauske/code/bright/brightsmith/agents) as the specialist instruction library
-2. Keep [skills/](/Users/jcernauske/code/bright/brightsmith/skills) as human-readable runbooks
+1. Keep [agents/](../../agents) as the specialist instruction library
+2. Keep [skills/](../../skills) as human-readable runbooks
 3. Use this document as the Claude-to-Codex translation layer
 4. Optionally add thin wrapper prompts or scripts later, but do not move workflow authority out of the markdown specs and pipeline gate commands
 
@@ -249,6 +249,6 @@ If you want to operationalize this in Codex without building a plugin, the small
 
 - The top-level skill docs still mention Claude-only `Agent(...)`, `bs:` namespaces, and hook behavior
 - Several agent docs still mention `AskUserQuestion` literally; under Codex that should be read as "ask the user directly and log the answer"
-- `cab-agent` existed only in `.claude/agents/` and has been mirrored into [agents/cab-agent.md](/Users/jcernauske/code/bright/brightsmith/agents/cab-agent.md)
+- `cab-agent` existed only in `.claude/agents/` and has been mirrored into [agents/cab-agent.md](../../agents/cab-agent.md)
 
 Those are documentation and orchestration gaps, not workflow gaps. The underlying Brightsmith governance model ports cleanly to Codex.

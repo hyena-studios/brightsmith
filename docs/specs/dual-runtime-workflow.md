@@ -56,10 +56,10 @@ Runtime mechanics are adapters.
 
 This spec covers:
 
-- [CLAUDE.md](/Users/jcernauske/code/bright/brightsmith/CLAUDE.md)
-- [agents/](/Users/jcernauske/code/bright/brightsmith/agents)
-- [skills/](/Users/jcernauske/code/bright/brightsmith/skills)
-- [docs/workflows/](/Users/jcernauske/code/bright/brightsmith/docs/workflows)
+- [CLAUDE.md](../../CLAUDE.md)
+- [agents/](../../agents)
+- [skills/](../../skills)
+- [docs/workflows/](../workflows)
 - Claude-specific mirror content under `.claude/`
 - Human approval and session logging instructions where they currently reference Claude-only tools
 
@@ -93,12 +93,12 @@ unless a later implementation uncovers a real enforcement gap.
 ### What Is Already Portable
 
 - Pipeline sequencing in:
-  - [docs/workflows/bronze-pipeline.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/bronze-pipeline.md)
-  - [docs/workflows/silver-gold-pipeline.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/silver-gold-pipeline.md)
-  - [docs/workflows/mcp-pipeline.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/mcp-pipeline.md)
-- Approval semantics in [docs/workflows/human-approval-gates.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/human-approval-gates.md)
-- Session logging semantics in [docs/workflows/session-logging.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/session-logging.md)
-- Agent behavior in [agents/](/Users/jcernauske/code/bright/brightsmith/agents)
+  - [docs/workflows/bronze-pipeline.md](../../docs/workflows/bronze-pipeline.md)
+  - [docs/workflows/silver-gold-pipeline.md](../../docs/workflows/silver-gold-pipeline.md)
+  - [docs/workflows/mcp-pipeline.md](../../docs/workflows/mcp-pipeline.md)
+- Approval semantics in [docs/workflows/human-approval-gates.md](../../docs/workflows/human-approval-gates.md)
+- Session logging semantics in [docs/workflows/session-logging.md](../../docs/workflows/session-logging.md)
+- Agent behavior in [agents/](../../agents)
 - Enforcement CLIs in `src/brightsmith/infra/`
 
 ### What Is Still Claude-Specific
@@ -106,7 +106,7 @@ unless a later implementation uncovers a real enforcement gap.
 - `skills/*.md` using `Agent(...)`, `subagent_type`, and `bs:` dispatch as primary instructions
 - references to `AskUserQuestion` as if it were the only valid human-input mechanism
 - `.claude/agents/` as a parallel agent tree
-- hook assumptions from [hooks/hooks.json](/Users/jcernauske/code/bright/brightsmith/hooks/hooks.json)
+- hook assumptions from [hooks/hooks.json](../../hooks/hooks.json)
 
 ## Proposed Design
 
@@ -279,15 +279,15 @@ Each adapter must map:
 
 Update:
 
-- [skills/init/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/init/SKILL.md)
-- [skills/run/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/run/SKILL.md)
-- [skills/mine/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/mine/SKILL.md)
-- [skills/smelt/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/smelt/SKILL.md)
-- [skills/cast/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/cast/SKILL.md)
-- [skills/assay/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/assay/SKILL.md)
-- [skills/stamp/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/stamp/SKILL.md)
-- [skills/serve/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/serve/SKILL.md)
-- [skills/status/SKILL.md](/Users/jcernauske/code/bright/brightsmith/skills/status/SKILL.md)
+- [skills/init/SKILL.md](../../skills/init/SKILL.md)
+- [skills/run/SKILL.md](../../skills/run/SKILL.md)
+- [skills/mine/SKILL.md](../../skills/mine/SKILL.md)
+- [skills/smelt/SKILL.md](../../skills/smelt/SKILL.md)
+- [skills/cast/SKILL.md](../../skills/cast/SKILL.md)
+- [skills/assay/SKILL.md](../../skills/assay/SKILL.md)
+- [skills/stamp/SKILL.md](../../skills/stamp/SKILL.md)
+- [skills/serve/SKILL.md](../../skills/serve/SKILL.md)
+- [skills/status/SKILL.md](../../skills/status/SKILL.md)
 
 Required outcome:
 - primary instructions are runtime-neutral
@@ -306,8 +306,8 @@ If a generation flow is chosen, the spec should define the source of truth and a
 
 Update:
 
-- [docs/workflows/human-approval-gates.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/human-approval-gates.md)
-- [docs/workflows/session-logging.md](/Users/jcernauske/code/bright/brightsmith/docs/workflows/session-logging.md)
+- [docs/workflows/human-approval-gates.md](../../docs/workflows/human-approval-gates.md)
+- [docs/workflows/session-logging.md](../../docs/workflows/session-logging.md)
 - agent docs that refer directly to `AskUserQuestion`
 
 Required outcome:
