@@ -17,6 +17,11 @@ build/
 # OS
 .DS_Store
 
+# Coverage
+.coverage
+htmlcov/
+coverage.xml
+
 # DQ results (timestamped, can regenerate)
 governance/dq-results/*.json
 
@@ -25,3 +30,15 @@ governance/run-history/
 
 # Staging archives
 governance/tag-normalization/archive/
+
+# Runtime governance outputs — produced when the framework runs its OWN pipeline
+# during development. These are per-run artifacts, not shippable framework content
+# (only governance/dq-rule-templates/ is tracked). Consumer projects track their own.
+governance/reviews/
+governance/audit-trail/
+governance/runtime-artifacts/
+governance/pipeline-state/
+governance/dq-scorecards/
+governance/insights/
+governance/approvals/
+governance/cab-decisions/
