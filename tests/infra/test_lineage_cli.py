@@ -7,9 +7,9 @@ no-data and error paths here.
 
 from brightsmith.infra.lineage import (
     _job_name_to_slug,
-    cmd_status,
-    cmd_history,
     cmd_graph,
+    cmd_history,
+    cmd_status,
     cmd_verify,
 )
 

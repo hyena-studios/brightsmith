@@ -282,13 +282,17 @@ def rebase_avro(path: Path, plan: Plan, mode: str) -> int:
 
     new_records = [_swap_tree(r, plan, mode, counter) for r in records]
     if counter[0]:
+        if schema is None:  # pragma: no cover - a valid avro file always carries a writer schema
+            raise RuntimeError(f"avro file has no writer schema: {path}")
         # Preserve Iceberg's avro metadata keys (e.g. schema, content) verbatim.
         passthrough = {
             k: v for k, v in meta.items() if k not in ("avro.schema", "avro.codec")
         }
+        # Bind here so the nested closure keeps fastavro's non-None narrowing (checked above).
+        avro_writer = fastavro.writer
 
         def _write(f) -> None:
-            fastavro.writer(f, schema, new_records, codec=codec, metadata=passthrough)
+            avro_writer(f, schema, new_records, codec=codec, metadata=passthrough)
 
         _atomic_write(path, _write)
     return counter[0]

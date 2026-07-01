@@ -27,7 +27,6 @@ from brightsmith.infra.dq_runner import (
     validate_after_write,
 )
 
-
 # ---------------------------------------------------------------------------
 # Threshold evaluation
 # ---------------------------------------------------------------------------
@@ -400,7 +399,7 @@ class TestRunRulesIntegration:
         from pyiceberg.schema import Schema
         from pyiceberg.types import DateType, DoubleType, IntegerType, NestedField, StringType
 
-        from brightsmith.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
+        from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
 
         warehouse = tmp_path / "warehouse"
         catalog_db = tmp_path / "catalog.db"
@@ -561,7 +560,7 @@ class TestValidateAfterWrite:
         from pyiceberg.schema import Schema
         from pyiceberg.types import DoubleType, NestedField, StringType
 
-        from brightsmith.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
+        from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
 
         catalog = get_catalog(tmp_path / "wh", tmp_path / "cat.db")
         schema = Schema(
@@ -599,7 +598,7 @@ class TestValidateAfterWrite:
         from pyiceberg.schema import Schema
         from pyiceberg.types import DoubleType, NestedField, StringType
 
-        from brightsmith.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
+        from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
 
         catalog = get_catalog(tmp_path / "wh", tmp_path / "cat.db")
         schema = Schema(
@@ -730,8 +729,9 @@ class TestValidateAfterWrite:
 
         Uses a separate env with only the P1 rule so p0_passed stays True.
         """
-        from brightsmith.infra.iceberg_setup import get_catalog
         import json
+
+        from brightsmith.infra.iceberg_setup import get_catalog
 
         catalog = get_catalog(tmp_path / "wh2", tmp_path / "cat2.db")
         rules_dir = tmp_path / "dq-rules2"

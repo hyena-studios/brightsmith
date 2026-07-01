@@ -35,13 +35,14 @@ FULL_SCOPE_FILES = [
     # Out of scope for fixing, but explicitly covered so its deliberately
     # fault-tolerant lineage wrapper stays documented on the allowlist.
     SRC / "infra" / "promote.py",
+    # M2.3 — full-scope coverage of the governance-read + observability modules.
+    SRC / "infra" / "governance" / "queries.py",
+    SRC / "infra" / "lineage.py",
+    SRC / "infra" / "cab.py",
 ]
 
-# queries.py houses _query_table (WP-2.3 moved it from the former product.py
-# monolith). Restrict the check to that function in its canonical location.
-PARTIAL_SCOPE_FILES = {
-    SRC / "infra" / "governance" / "queries.py": {"_query_table"},
-}
+# All previously-partial files now graduate to FULL_SCOPE (M2.3).
+PARTIAL_SCOPE_FILES: dict = {}
 
 # Allowlist: (file_name, enclosing_function_name) -> justification.
 # Every entry is a broad handler that is loud-by-design: it either converts the
@@ -72,6 +73,29 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     # base_ingestor.py — by-design fault-tolerant lineage emission (explicitly
     # OUT of WP-2.1 scope).
     ("base_ingestor.py", "_emit_lineage"): "by-design fault-tolerant lineage emission (out of scope)",
+    # --- M2.3: lineage.py (observability module — never a data-correctness gate) ---
+    # Lineage EMISSION wrappers: same by-design fault-tolerance as promote/base_ingestor.
+    ("lineage.py", "emit_start"): "fault-tolerant lineage emission (observability, not a gate)",
+    ("lineage.py", "emit_complete"): "fault-tolerant lineage emission (observability, not a gate)",
+    ("lineage.py", "emit_fail"): "fault-tolerant lineage emission (observability, not a gate)",
+    # Lineage READ helpers: a read failure yields an empty result AND logs with
+    # exc_info. Downstream `cmd_verify` treats missing lineage as a P0 BLOCK, so a
+    # swallowed read fails conservatively (blocks) — it can never become a false pass.
+    ("lineage.py", "_read_all_events"): "read failure -> empty + logged; verify blocks on empty, never false-passes",
+    ("lineage.py", "query_lineage_events"): "read failure -> empty + logged; verify blocks on empty, never false-passes",
+    ("lineage.py", "query_downstream_consumers"): "read failure -> empty + logged; verify blocks on empty, never false-passes",
+    # Lineage CLI command boundaries: convert any error into a printed message +
+    # non-zero/None return to the operator — loud at the process boundary, not silent.
+    ("lineage.py", "cmd_status"): "CLI boundary: error printed + error return, loud to operator",
+    ("lineage.py", "cmd_history"): "CLI boundary: error printed + error return, loud to operator",
+    ("lineage.py", "cmd_graph"): "CLI boundary: error printed + error return, loud to operator",
+    ("lineage.py", "cmd_generate_docs"): "CLI boundary + best-effort optional facet enrichment (schema/column lineage)",
+    ("lineage.py", "cmd_verify"): "CLI boundary: verification error printed + returns exit code 1 (loud)",
+    # --- M2.3: cab.py ---
+    # compute_blast_radius: the remaining broad handler is a best-effort lineage
+    # query for an ADVISORY report (logs debug). Per-file parse loops were NARROWED
+    # to (OSError/parse/AttributeError/TypeError) so a logic bug still surfaces.
+    ("cab.py", "compute_blast_radius"): "advisory blast-radius: best-effort lineage query, logged; file parses narrowed",
 }
 
 

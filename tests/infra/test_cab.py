@@ -27,7 +27,6 @@ from brightsmith.infra.cab import (
 )
 from brightsmith.infra.contract import ContractDiffItem
 
-
 # ---------------------------------------------------------------------------
 # Classification tests
 # ---------------------------------------------------------------------------

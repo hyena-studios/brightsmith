@@ -7,7 +7,7 @@ feedback loop that drives DQ rule improvement.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from brightsmith.infra.chaos_monkey.manifest import ChaosManifest
@@ -45,7 +45,7 @@ class AfterActionReconciler:
         return {
             "source_table": manifest.source_table,
             "shadow_table": manifest.shadow_table,
-            "reconciled_at": datetime.now(timezone.utc).isoformat(),
+            "reconciled_at": datetime.now(UTC).isoformat(),
             "manifest_summary": {
                 "total_rows": manifest.total_rows,
                 "rows_corrupted": manifest.rows_corrupted,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from brightsmith.infra.governance.sync import sync_from_files
 from brightsmith.infra.governance.writers import (
@@ -25,25 +25,33 @@ __all__ = ["cmd_migrate", "migrate_files_to_iceberg", "sync_from_files"]
 def migrate_files_to_iceberg() -> dict:
     """One-time migration of all governance file artifacts to Iceberg.
 
-    Reads existing governance files and writes them to the 7 new Iceberg tables.
-    Produces a validation report comparing file counts to Iceberg row counts.
+    Orchestrates one ``_migrate_*`` helper per source artifact type, each of
+    which reads its files, writes its Iceberg table, and returns its slice of
+    the ``{table: {"files": n, "rows": m}}`` report. Idempotent via promote() —
+    safe to run repeatedly. Also runs :func:`sync_from_files` for the original
+    tables.
 
-    Idempotent via promote() — safe to run repeatedly.
-
-    Returns a migration report dict with per-table counts and spot-check results.
+    Returns a migration report dict with per-table counts.
     """
-    from brightsmith.config import (
-        AUDIT_TRAIL_DIR,
-        CAB_DECISIONS_DIR,
-        DQ_RESULTS_DIR,
-        DQ_RULES_DIR,
-        GOLDEN_DATASETS_DIR,
-        PROJECT_ROOT,
-    )
-
     report: dict = {}
+    for step in (
+        _migrate_dq_rules,
+        _migrate_dq_acknowledgments,
+        _migrate_cab_decisions,
+        _migrate_golden_datasets,
+        _migrate_run_history,
+        _migrate_chaos_manifests,
+        _migrate_documents,
+    ):
+        report.update(step())
+    report["existing_sync"] = sync_from_files()
+    return report
 
-    # 1. DQ Rules -> governance.dq_rules
+
+# 1. DQ Rules -> governance.dq_rules
+def _migrate_dq_rules() -> dict:
+    from brightsmith.config import DQ_RULES_DIR
+
     dq_rules_files = 0
     dq_rules_rows = 0
     if DQ_RULES_DIR.exists():
@@ -60,9 +68,13 @@ def migrate_files_to_iceberg() -> dict:
                     dq_rules_rows += result.get("promoted", 0)
             except Exception:
                 logger.warning("Failed to migrate DQ rules from %s", path, exc_info=True)
-    report["dq_rules"] = {"files": dq_rules_files, "rows": dq_rules_rows}
+    return {"dq_rules": {"files": dq_rules_files, "rows": dq_rules_rows}}
 
-    # 2. DQ Acknowledgments -> governance.dq_acknowledgments
+
+# 2. DQ Acknowledgments -> governance.dq_acknowledgments
+def _migrate_dq_acknowledgments() -> dict:
+    from brightsmith.config import DQ_RESULTS_DIR
+
     ack_files = 0
     ack_rows = 0
     if DQ_RESULTS_DIR.exists():
@@ -83,9 +95,13 @@ def migrate_files_to_iceberg() -> dict:
                     ack_rows += result.get("promoted", 0)
             except Exception:
                 logger.warning("Failed to migrate ack from %s", path, exc_info=True)
-    report["dq_acknowledgments"] = {"files": ack_files, "rows": ack_rows}
+    return {"dq_acknowledgments": {"files": ack_files, "rows": ack_rows}}
 
-    # 3. CAB Decisions -> governance.cab_decisions
+
+# 3. CAB Decisions -> governance.cab_decisions
+def _migrate_cab_decisions() -> dict:
+    from brightsmith.config import CAB_DECISIONS_DIR
+
     cab_files = 0
     cab_rows = 0
     if CAB_DECISIONS_DIR.exists():
@@ -115,9 +131,13 @@ def migrate_files_to_iceberg() -> dict:
                 cab_rows += result.get("promoted", 0)
             except Exception:
                 logger.warning("Failed to migrate CAB decision from %s", path, exc_info=True)
-    report["cab_decisions"] = {"files": cab_files, "rows": cab_rows}
+    return {"cab_decisions": {"files": cab_files, "rows": cab_rows}}
 
-    # 4. Golden Datasets -> governance.golden_datasets
+
+# 4. Golden Datasets -> governance.golden_datasets
+def _migrate_golden_datasets() -> dict:
+    from brightsmith.config import GOLDEN_DATASETS_DIR
+
     gd_files = 0
     gd_rows = 0
     if GOLDEN_DATASETS_DIR.exists():
@@ -133,9 +153,13 @@ def migrate_files_to_iceberg() -> dict:
                     gd_rows += result.get("promoted", 0)
             except Exception:
                 logger.warning("Failed to migrate golden dataset from %s", path, exc_info=True)
-    report["golden_datasets"] = {"files": gd_files, "rows": gd_rows}
+    return {"golden_datasets": {"files": gd_files, "rows": gd_rows}}
 
-    # 5. Run History -> governance.run_history
+
+# 5. Run History -> governance.run_history
+def _migrate_run_history() -> dict:
+    from brightsmith.config import PROJECT_ROOT
+
     rh_files = 0
     rh_rows = 0
     run_history_dir = PROJECT_ROOT / "governance" / "run-history"
@@ -145,7 +169,7 @@ def migrate_files_to_iceberg() -> dict:
                 data = json.loads(path.read_text())
                 rh_files += 1
                 started_str = data.get("started_at", "")
-                started = datetime.fromisoformat(started_str) if started_str else datetime.now(timezone.utc)
+                started = datetime.fromisoformat(started_str) if started_str else datetime.now(UTC)
                 completed_str = data.get("completed_at")
                 completed = datetime.fromisoformat(completed_str) if completed_str else None
                 result = write_run_history(
@@ -162,9 +186,13 @@ def migrate_files_to_iceberg() -> dict:
                 rh_rows += result.get("promoted", 0)
             except Exception:
                 logger.warning("Failed to migrate run history from %s", path, exc_info=True)
-    report["run_history"] = {"files": rh_files, "rows": rh_rows}
+    return {"run_history": {"files": rh_files, "rows": rh_rows}}
 
-    # 6. Chaos Manifests -> governance.chaos_manifests
+
+# 6. Chaos Manifests -> governance.chaos_manifests
+def _migrate_chaos_manifests() -> dict:
+    from brightsmith.config import PROJECT_ROOT
+
     cm_files = 0
     cm_rows = 0
     chaos_dir = PROJECT_ROOT / "governance" / "chaos-monkey"
@@ -189,9 +217,13 @@ def migrate_files_to_iceberg() -> dict:
                 cm_rows += result.get("promoted", 0)
             except Exception:
                 logger.warning("Failed to migrate chaos manifest from %s", path, exc_info=True)
-    report["chaos_manifests"] = {"files": cm_files, "rows": cm_rows}
+    return {"chaos_manifests": {"files": cm_files, "rows": cm_rows}}
 
-    # 7. Documents -> governance.documents (reviews, insights, models, etc.)
+
+# 7. Documents -> governance.documents (reviews, insights, models, domain context, lineage)
+def _migrate_documents() -> dict:
+    from brightsmith.config import AUDIT_TRAIL_DIR, PROJECT_ROOT
+
     doc_files = 0
     doc_rows = 0
     doc_dirs = {
@@ -271,13 +303,7 @@ def migrate_files_to_iceberg() -> dict:
             except Exception:
                 logger.warning("Failed to migrate lineage doc from %s", path, exc_info=True)
 
-    report["documents"] = {"files": doc_files, "rows": doc_rows}
-
-    # Also run the existing sync_from_files for the original 8 tables
-    existing_sync = sync_from_files()
-    report["existing_sync"] = existing_sync
-
-    return report
+    return {"documents": {"files": doc_files, "rows": doc_rows}}
 
 
 def cmd_migrate() -> None:

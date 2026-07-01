@@ -12,7 +12,7 @@ Brightsmith is a domain-agnostic AI agent data pipeline framework that transform
 ## Key Paths
 - Source code: `src/brightsmith/` (organized by zone: bronze, silver, gold, mcp)
 - Infrastructure: `src/brightsmith/infra/` (cross-cutting: iceberg_setup, dq_runner, dq_scorecard, lineage, staging, period_disambiguator, promote, grain, contract, golden_dataset, verification, glossary_validator, pipeline_gate, cab)
-- Governance DB package: `src/brightsmith/infra/governance/` (Iceberg governance database — split by WP-2.3 into `schemas.py`, `writers.py`, `queries.py`, `sync.py`, `cli.py`, `exporters.py` plus supporting modules; `product.py` is the re-export façade)
+- Governance DB package: `src/brightsmith/infra/governance/` (Iceberg governance database — split by WP-2.3 into `schemas.py` (table schemas), `writers.py` (write API incl. `log_agent_finding`), `queries.py` (read API + `_write_records`/`_query_table`), `sync.py` (file→Iceberg sync), `migration.py` (one-time file→Iceberg migration), `cli.py`, `exporters.py` plus supporting modules; `product.py` is the re-export façade)
 - Period disambiguator: `src/brightsmith/infra/period_disambiguator.py` (temporal period classification)
 - Chaos monkey: `src/brightsmith/infra/chaos_monkey/` (schema-agnostic adversarial DQ testing)
 - Integration test harness: `src/brightsmith/infra/integration_test_harness.py` (golden dataset validation)

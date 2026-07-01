@@ -248,7 +248,7 @@ class ConceptNormalizer:
                     match_method="prefix_match",
                     matched_rule=prefix,
                     source_mapping=source,
-                    requires_approval=0.7 < CONFIDENCE_FLOOR,
+                    requires_approval=CONFIDENCE_FLOOR > 0.7,
                 )
 
         # Tier 3: Pattern match (confidence 0.6)
@@ -267,7 +267,7 @@ class ConceptNormalizer:
                     match_method="pattern_match",
                     matched_rule=pattern,
                     source_mapping=source,
-                    requires_approval=0.6 < CONFIDENCE_FLOOR,
+                    requires_approval=CONFIDENCE_FLOOR > 0.6,
                 )
 
         # Tier 4: Heuristic category fallback (confidence 0.3)
@@ -285,7 +285,7 @@ class ConceptNormalizer:
                 match_method="heuristic",
                 matched_rule=None,
                 source_mapping=source,
-                requires_approval=0.3 < CONFIDENCE_FLOOR,
+                requires_approval=CONFIDENCE_FLOOR > 0.3,
             )
 
         # Tier 0: Truly unmapped

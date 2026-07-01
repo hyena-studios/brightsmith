@@ -11,12 +11,11 @@ from typing import Any
 
 import pytest
 from pyiceberg.schema import Schema
-from pyiceberg.types import IntegerType, NestedField, StringType, TimestamptzType, DateType
+from pyiceberg.types import DateType, IntegerType, NestedField, StringType, TimestamptzType
 
+from brightsmith.bronze.base_ingestor import BaseIngestor
 from brightsmith.domain_loader import DomainHints, DomainManifest, SourceConfig
 from brightsmith.infra.iceberg_setup import get_catalog, read_with_duckdb
-from brightsmith.bronze.base_ingestor import BaseIngestor
-
 
 # --- Test Ingestor (minimal concrete implementation) ---
 

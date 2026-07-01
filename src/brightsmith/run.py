@@ -23,7 +23,7 @@ import logging
 import sys
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ class PipelineResult:
     """Complete result of a pipeline run."""
 
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
-    started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     completed_at: str = ""
     duration_seconds: float = 0.0
     status: str = "PENDING"
@@ -102,7 +102,7 @@ class PipelineResult:
 
     def finalize(self) -> None:
         """Set final status and timing."""
-        self.completed_at = datetime.now(timezone.utc).isoformat()
+        self.completed_at = datetime.now(UTC).isoformat()
         started = datetime.fromisoformat(self.started_at)
         completed = datetime.fromisoformat(self.completed_at)
         self.duration_seconds = (completed - started).total_seconds()
@@ -652,7 +652,7 @@ def _save_run_history(result: PipelineResult) -> Path:
 
     history_dir = PROJECT_ROOT / "governance" / "run-history"
     history_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     path = history_dir / f"{timestamp}.json"
     path.write_text(json.dumps(result.to_dict(), indent=2) + "\n")
     return path

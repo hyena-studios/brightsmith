@@ -20,8 +20,9 @@ import re
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import duckdb
 
@@ -99,7 +100,7 @@ _THRESHOLD_RE = re.compile(
 )
 
 
-def evaluate_threshold(raw_result: object, threshold_expr: str) -> tuple[bool, str]:
+def evaluate_threshold(raw_result: Any, threshold_expr: str) -> tuple[bool, str]:
     """Evaluate a threshold expression against a query result.
 
     Args:
@@ -221,7 +222,7 @@ def execute_sql_rule(rule: dict, con: duckdb.DuckDBPyConnection) -> dict:
             "violations": 0 if passed else (raw_value if isinstance(raw_value, int) else None),
             "execution_time_ms": elapsed,
             "error": None,
-            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "executed_at": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
         elapsed = int((time.monotonic() - start) * 1000)
@@ -236,7 +237,7 @@ def execute_sql_rule(rule: dict, con: duckdb.DuckDBPyConnection) -> dict:
             "violations": None,
             "execution_time_ms": elapsed,
             "error": str(e),
-            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "executed_at": datetime.now(UTC).isoformat(),
         }
 
 
@@ -404,7 +405,7 @@ def run_rules(
     run_result = {
         "run_id": run_id,
         "spec": spec,
-        "executed_at": datetime.now(timezone.utc).isoformat(),
+        "executed_at": datetime.now(UTC).isoformat(),
         "rules_total": len(results),
         "rules_passed": sum(1 for r in results if r["passed"]),
         "rules_failed": sum(1 for r in results if not r["passed"]),
@@ -428,12 +429,12 @@ def _get_rule_priority(rule_id: str, rules: list[dict]) -> str:
 
 def _write_governance_results(run_result: dict, rules: list[dict]) -> None:
     """Write DQ run and rule results to Iceberg governance tables."""
-    from brightsmith.infra.governance_db import write_dq_run, write_dq_rule_results, write_spec_registry
+    from brightsmith.infra.governance_db import write_dq_rule_results, write_dq_run, write_spec_registry
 
     spec = run_result.get("spec") or "all"
     run_id = run_result["run_id"]
     executed_at_str = run_result.get("executed_at", "")
-    executed_at = datetime.fromisoformat(executed_at_str) if executed_at_str else datetime.now(timezone.utc)
+    executed_at = datetime.fromisoformat(executed_at_str) if executed_at_str else datetime.now(UTC)
 
     tables = set()
     for rule in rules:
@@ -513,7 +514,7 @@ def approve_rules(rule_ids: list[str]) -> list[dict]:
                     if old_status == "proposed":
                         rule["status"] = "approved"
                         rule["approved_by"] = "human"
-                        rule["approved_at"] = datetime.now(timezone.utc).isoformat()
+                        rule["approved_at"] = datetime.now(UTC).isoformat()
                         _save_rules_file(path, data)
                         results.append({"rule_id": rule_id, "status": "approved", "previous": old_status})
                     else:
@@ -588,7 +589,7 @@ def acknowledge_failures(spec: str, run_id: str, reason: str) -> dict:
         "spec": spec,
         "run_id": run_id,
         "acknowledged_by": "human",
-        "acknowledged_at": datetime.now(timezone.utc).isoformat(),
+        "acknowledged_at": datetime.now(UTC).isoformat(),
         "reason": reason,
     }
 

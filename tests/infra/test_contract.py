@@ -281,10 +281,10 @@ def test_verify_contract_accepts_qualified_table_name(tmp_path, monkeypatch):
     real Iceberg table, generate its contract, then check both the bare name
     and the fully-qualified table name resolve to the same contract.
     """
-    import brightsmith.config as _cfg
     from pyiceberg.schema import Schema
     from pyiceberg.types import DoubleType, NestedField, StringType
 
+    import brightsmith.config as _cfg
     from brightsmith.infra.contract import generate_contract, verify_contract
     from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
 

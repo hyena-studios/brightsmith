@@ -1,0 +1,7 @@
+{
+  "include": ["src"],
+  "exclude": ["**/__pycache__", "**/.venv", "**/_templates"],
+  "typeCheckingMode": "basic",
+  "pythonVersion": "3.11",
+  "reportMissingImports": "warning"
+}

@@ -41,7 +41,7 @@ def test_configure_takes_effect_after_import(restore_config, tmp_path):
     resolved = tmp_path.resolve()
 
     # dq_runner resolves rules dir from the *new* root, not the import-time root.
-    assert cfg.DQ_RULES_DIR == resolved / "governance" / "dq-rules"
+    assert resolved / "governance" / "dq-rules" == cfg.DQ_RULES_DIR
     assert dq_runner._cfg("DQ_RULES_DIR") == resolved / "governance" / "dq-rules"
 
     # load_rules() actually globs the new directory (empty -> []), proving the
@@ -55,12 +55,12 @@ def test_configure_takes_effect_after_import(restore_config, tmp_path):
     assert [r["rule_id"] for r in loaded] == ["r1"]
 
     # lineage + iceberg_setup resolve catalog/warehouse under the new root.
-    assert lineage.config.CATALOG_PATH == resolved / "data" / "catalog" / "catalog.db"
+    assert resolved / "data" / "catalog" / "catalog.db" == lineage.config.CATALOG_PATH
     assert (
-        lineage.config.GOVERNANCE_WAREHOUSE
-        == resolved / "data" / "governance" / "iceberg_warehouse"
+        resolved / "data" / "governance" / "iceberg_warehouse"
+        == lineage.config.GOVERNANCE_WAREHOUSE
     )
-    assert iceberg_setup.config.WAREHOUSE_PATH == resolved / "data" / "bronze" / "iceberg_warehouse"
+    assert resolved / "data" / "bronze" / "iceberg_warehouse" == iceberg_setup.config.WAREHOUSE_PATH
 
 
 def test_get_config_returns_frozen_snapshot(restore_config, tmp_path):
@@ -87,9 +87,9 @@ def test_legacy_module_names_resolve_live(restore_config, tmp_path):
     cfg.configure(project_root=tmp_path)
     resolved = tmp_path.resolve()
 
-    assert cfg.PROJECT_ROOT == resolved
-    assert cfg.DQ_RESULTS_DIR == resolved / "governance" / "dq-results"
-    assert cfg.WAREHOUSE_PATH == resolved / "data" / "bronze" / "iceberg_warehouse"
+    assert resolved == cfg.PROJECT_ROOT
+    assert resolved / "governance" / "dq-results" == cfg.DQ_RESULTS_DIR
+    assert resolved / "data" / "bronze" / "iceberg_warehouse" == cfg.WAREHOUSE_PATH
 
 
 def test_direct_attribute_assignment_updates_live_config(restore_config, tmp_path):
@@ -105,8 +105,8 @@ def test_direct_attribute_assignment_updates_live_config(restore_config, tmp_pat
     cfg.DQ_RULES_DIR = custom
 
     assert cfg.get_config().dq_rules_dir == custom
-    assert cfg.DQ_RULES_DIR == custom
-    assert dq_runner.config.DQ_RULES_DIR == custom
+    assert custom == cfg.DQ_RULES_DIR
+    assert custom == dq_runner.config.DQ_RULES_DIR
 
 
 def test_monkeypatch_does_not_leak_stale_value(restore_config, tmp_path, monkeypatch):
@@ -119,10 +119,10 @@ def test_monkeypatch_does_not_leak_stale_value(restore_config, tmp_path, monkeyp
 
     with monkeypatch.context() as m:
         m.setattr(cfg, "PROJECT_ROOT", tmp_path / "patched")
-        assert cfg.PROJECT_ROOT == tmp_path / "patched"
+        assert tmp_path / "patched" == cfg.PROJECT_ROOT
     # After undo, configure() must still take effect.
     cfg.configure(project_root=tmp_path / "fresh")
-    assert cfg.PROJECT_ROOT == (tmp_path / "fresh").resolve()
+    assert (tmp_path / "fresh").resolve() == cfg.PROJECT_ROOT
 
 
 def test_grist_env_var_emits_deprecation_warning(restore_config, monkeypatch, tmp_path):

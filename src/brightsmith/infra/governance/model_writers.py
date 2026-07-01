@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from brightsmith.infra.governance.queries import _write_records
 from brightsmith.infra.governance.serializers import normalize_table_name, normalize_zone
@@ -35,7 +35,7 @@ def write_model_entity(
         "zone": normalize_zone(zone),
         "display_name": display_name,
         "level": level,
-        "updated_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(UTC),
     }
     return _write_records("model_entities", [record])
 
@@ -50,7 +50,7 @@ def write_model_columns(
     Each column dict should have: column_name, data_type, and optionally
     is_pk, is_fk, nullable, description, source_mapping, ordinal_position.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     records = []
     for i, col in enumerate(columns):
         records.append({
@@ -79,7 +79,7 @@ def write_model_relationships(
     Each relationship dict should have: relationship_id, source_entity, target_entity,
     and optionally source_column, target_column, source_cardinality, target_cardinality, label.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     records = []
     for rel in relationships:
         records.append({
@@ -112,7 +112,7 @@ def write_policy(
     created_at: datetime | None = None,
 ) -> dict:
     """Write a policy record."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     record = {
         "policy_id": policy_id,
         "policy_name": policy_name,

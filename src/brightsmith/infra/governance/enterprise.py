@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pyiceberg.schema import Schema
 from pyiceberg.types import BooleanType, IntegerType, NestedField, StringType, TimestamptzType
@@ -124,7 +124,7 @@ def write_enterprise_standard(
         name_field: name,
         "description": description,
         "metadata": json.dumps(metadata or {}, sort_keys=True),
-        "updated_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(UTC),
     }
     if table_name == "stewards":
         record["active"] = status == "active"

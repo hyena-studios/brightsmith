@@ -2,7 +2,17 @@ name: CI
 
 on:
   push:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'agents/**'
+      - 'skills/**'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'agents/**'
+      - 'skills/**'
 
 jobs:
   lint-and-test:
@@ -29,8 +39,11 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check src tests
 
-      - name: Test (pytest)
-        run: uv run python -m pytest tests/ -q
+      - name: Type check (pyright)
+        run: uv run pyright
+
+      - name: Test (pytest + coverage)
+        run: uv run python -m pytest tests/ -q --cov=brightsmith --cov-report=term-missing
 
       - name: Warehouse paths relocatable (guards committed example warehouses)
         run: uv run python -m brightsmith.infra.relocate --check

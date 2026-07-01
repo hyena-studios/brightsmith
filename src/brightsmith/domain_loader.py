@@ -20,7 +20,7 @@ import os
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -145,7 +145,8 @@ def _load_source_config(source_entry: dict, project_root: Path) -> SourceConfig:
         fetch=data.get("fetch", {}),
         entities=entities,
         dedup_grain=data.get("dedup_grain", []),
-        cache_dir=_resolve_path(data.get("cache_dir", "data/raw/json_cache"), project_root),
+        cache_dir=_resolve_path(data.get("cache_dir", "data/raw/json_cache"), project_root)
+        or project_root / "data/raw/json_cache",
         fetcher_path=source_entry.get("fetcher"),
         flattener_path=source_entry.get("flattener"),
     )
@@ -303,7 +304,7 @@ def assign_domain(
     with open(path) as f:
         data = yaml.safe_load(f) or {}
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    now = datetime.now(UTC).strftime("%Y-%m-%d")
 
     data["domain"] = {
         "name": domain_name,

@@ -553,7 +553,7 @@ class BaseMCPServer:
         result = con.execute(sql).fetchall()
         columns_list = [desc[0] for desc in con.description]
         con.close()
-        return [dict(zip(columns_list, row)) for row in result]
+        return [dict(zip(columns_list, row, strict=False)) for row in result]
 
     # --- Governance metadata ---
 
@@ -659,7 +659,7 @@ class BaseMCPServer:
         async def handle_list_resources():
             return [
                 Resource(
-                    uri=r.uri,
+                    uri=r.uri,  # type: ignore[arg-type]  # mcp SDK wants AnyUrl; str is accepted at runtime
                     name=r.name,
                     description=r.description,
                     mimeType=r.mime_type,
@@ -667,7 +667,7 @@ class BaseMCPServer:
                 for r in all_resources
             ]
 
-        @server.read_resource()
+        @server.read_resource()  # type: ignore[arg-type]  # mcp SDK handler is typed (AnyUrl)->...; str works at runtime
         async def handle_read_resource(uri: str):
             for r in all_resources:
                 if r.uri == str(uri):

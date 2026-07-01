@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from brightsmith import config
@@ -46,7 +46,7 @@ def generate_scorecard(run_result: dict, spec: str) -> Path:
     lines = []
     passed = sum(1 for r in spec_results if r["passed"])
     total = len(spec_results)
-    executed_at = run_result.get("executed_at", datetime.now(timezone.utc).isoformat())
+    executed_at = run_result.get("executed_at", datetime.now(UTC).isoformat())
 
     lines.append(f"## DQ Scorecard: {spec}")
     lines.append(f"**Spec:** {spec}")

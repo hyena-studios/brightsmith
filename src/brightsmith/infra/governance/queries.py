@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import logging
 
-from brightsmith.infra.grain import compute_grain_id
 from brightsmith.infra.governance.schemas import _GRAIN_PREFIXES, _TABLE_CONFIGS
 from brightsmith.infra.governance.serializers import normalize_table_name
+from brightsmith.infra.grain import compute_grain_id
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ def _query_table(table_name: str, sql: str, params: list | None = None) -> list[
             rel = con.sql(sql)
         columns = [desc[0] for desc in rel.description]
         rows = rel.fetchall()
-        return [dict(zip(columns, row)) for row in rows]
+        return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception as e:
         logger.error("Query failed on governance.%s", table_name, exc_info=True)
         raise GovernanceReadError(table_name, e) from e
@@ -225,6 +225,30 @@ def get_agent_activity(
         SELECT * FROM arrow_table
         WHERE {where}
         ORDER BY event_time DESC
+        LIMIT ${idx}
+    """, params + [limit])
+
+
+def get_sessions(
+    spec_name: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """Get session-log records, most recent first, optionally filtered by spec."""
+    conditions = ["1=1"]
+    params: list = []
+    idx = 0
+
+    if spec_name:
+        idx += 1
+        conditions.append(f"spec_name = ${idx}")
+        params.append(spec_name)
+    idx += 1
+    where = " AND ".join(conditions)
+
+    return _query_table("sessions", f"""
+        SELECT * FROM arrow_table
+        WHERE {where}
+        ORDER BY started_at DESC
         LIMIT ${idx}
     """, params + [limit])
 

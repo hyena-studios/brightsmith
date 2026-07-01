@@ -15,7 +15,6 @@ from brightsmith.infra.glossary_loader import (
     load_registry,
 )
 
-
 # --- Fixtures ---
 
 

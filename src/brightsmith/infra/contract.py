@@ -18,7 +18,7 @@ import json
 import logging
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -326,7 +326,7 @@ def generate_contract(
             "status": "draft",
             "owner": owner,
             "domain": "",
-            "created": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "created": datetime.now(UTC).strftime("%Y-%m-%d"),
             "spec": spec_path,
         },
         "schema": {
@@ -466,11 +466,11 @@ def verify_contract(
     max_hours = freshness.get("max_staleness_hours")
     measured_by = freshness.get("measured_by", "ingested_at")
     if max_hours and rows:
-        timestamps = [r.get(measured_by) for r in rows if r.get(measured_by)]
+        timestamps = [t for r in rows if (t := r.get(measured_by))]
         if timestamps:
             latest = max(timestamps)
             if hasattr(latest, "timestamp"):
-                age_hours = (datetime.now(timezone.utc) - latest.replace(tzinfo=timezone.utc)).total_seconds() / 3600
+                age_hours = (datetime.now(UTC) - latest.replace(tzinfo=UTC)).total_seconds() / 3600
             else:
                 age_hours = 0
             if age_hours > max_hours:
@@ -706,7 +706,7 @@ def deprecate_contract(
     contract["metadata"]["status"] = "deprecated"
 
     compat = contract.setdefault("compatibility", {})
-    compat["deprecated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    compat["deprecated_at"] = datetime.now(UTC).strftime("%Y-%m-%d")
     compat["archive_after"] = archive_after
     compat["successor_contract"] = successor
 

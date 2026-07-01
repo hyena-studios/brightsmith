@@ -290,7 +290,7 @@ def read_with_duckdb(
     con = duckdb.connect()
     result = con.sql("SELECT * FROM arrow_table").fetchall()
     columns = [field.name for field in table.schema().fields]
-    return [dict(zip(columns, row)) for row in result]
+    return [dict(zip(columns, row, strict=False)) for row in result]
 
 
 def filter_existing_records(

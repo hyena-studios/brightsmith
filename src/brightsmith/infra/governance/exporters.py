@@ -84,9 +84,9 @@ def export_dq_results_to_files(output_dir: Path | None = None) -> list[Path]:
 def export_dq_scorecards_to_files(output_dir: Path | None = None) -> list[Path]:
     """Export DQ scorecards from Iceberg run data."""
     from brightsmith.config import DQ_SCORECARDS_DIR
+    from brightsmith.infra.dq_runner import get_latest_results
     from brightsmith.infra.dq_scorecard import generate_scorecard
     from brightsmith.infra.governance.product import get_current_specs
-    from brightsmith.infra.dq_runner import get_latest_results
 
     out_dir = output_dir or DQ_SCORECARDS_DIR
     paths: list[Path] = []

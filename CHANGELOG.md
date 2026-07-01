@@ -7,6 +7,31 @@ Brightsmith uses [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING — `log_agent_finding` now raises on a governance-DB write failure by default** (was fault-tolerant: logged a warning and returned `None`). The governance DB is authoritative for the agent-activity feed, so a dropped finding must fail the calling pipeline step rather than silently disappear — the same loud-failure doctrine the DQ and contract gates follow. Pass `strict=False` to restore best-effort logging where a logging hiccup must not fail the surrounding work. `write_agent_activity` (the underlying writer) already raised and is unchanged.
+- **Pipeline-gate completion is now gated on the governance-DB write.** `complete_step` / `skip_step` commit the authoritative JSON state file *last* — only after `_emit_governance_event` (and any `--finding` write) succeeds. Previously the file was saved *before* the Iceberg write, so a failed governance write left the step marked `COMPLETED` on disk and the next `check` cleared anyway. Now a failed governance write leaves the file un-advanced, so the next step's `check` stays `BLOCKED` and the pipeline stops deterministically — no agent cooperation required. Retrying `complete` is idempotent (governance writes dedup on their grain `record_id`).
+
+### Added
+
+- **`pipeline_gate complete --finding "<summary>"`** — records an end-of-step summary to the governance `agent_activity` feed atomically with completion. The finding write is strict: if it fails, completion is not recorded and the next `check` stays `BLOCKED`.
+- **Session logs restored as an Iceberg-authoritative `sessions` governance table** (the deleted `docs/sessions/` practice). New `sessions` schema, `write_session()` / `log_session()` writers (strict-by-default, idempotent on `session_id`), and `get_sessions()` query. The markdown file under `docs/sessions/` becomes an optional human-readable export; the table is the record of truth. `docs/workflows/session-logging.md` updated accordingly.
+
+### Internal
+
+- **Agent definitions consolidated to a single source of truth (`agents/`).** The repo previously carried two copies of all 25 agents — the plugin-shipped `agents/` and a project-local `.claude/agents/` — which had drifted 1,087 lines apart. Because pipeline skills dispatch via the `bs:` plugin namespace (which resolves from `agents/`), the shipped copy was the stale one: it lacked the governance-DB logging blocks and the `temporal-modeler` / `lineage-tracker` / `mcp-engineer` rewrites. The maintained `.claude/agents/` content was promoted into `agents/` and the project-local copy was removed. Dogfood in-repo via `claude --plugin-dir .` so agents resolve as `bs:*`, exactly as an installed user sees them.
+- **Plugin manifest version bumped `0.2.0 → 0.3.0`** to match `pyproject.toml`.
+- **Ruff ruleset expanded** to `E, F, B, I, UP, SIM` (was default `E/F` only). `E501` and a few opinionated `SIM`/`UP042` rules are ignored with documented reasons; 173 findings auto-fixed (import sorting, `datetime.UTC`, explicit `zip(strict=...)`), the rest fixed by hand. CI now enforces the expanded set.
+- **No-swallowed-exceptions guard extended** to full-scope coverage of `governance/queries.py`, `infra/lineage.py`, and `infra/cab.py`. The `cab.py` blast-radius file-parse loops were narrowed to specific exception types; observability/CLI handlers are allowlisted with written justifications.
+- **CI: coverage reporting** (`pytest --cov`), a **blocking `pyright` type-check gate** (`pyrightconfig.json`, basic mode over `src`), and a `paths-ignore` filter so docs/agent/skill-only commits don't spend Actions minutes.
+- **`pyright` driven to zero errors and gated in CI.** Cut 164 → 25 false positives by declaring the dynamically-served `config` legacy names under `TYPE_CHECKING`; then fixed the remaining 25 real issues — an `_env` overload, None-guards (`relocate` avro schema, `domain_loader` cache_dir fallback, `chaos_monkey` corruption-fn guard), a `Callable` (was builtin `callable`) misannotation, a walrus narrowing in `contract`, `evaluate_threshold(raw_result: Any)`, sentinel `cast`s in `glossary_loader`, and justified `# type: ignore`s for two upstream stub gaps (`pyiceberg` `Table.identifier`, `mcp` `AnyUrl` handler typing). No runtime behavior change — verified by the full suite.
+- **Removed committed framework self-development artifacts** (`governance/reviews/`, `audit-trail/`, `runtime-artifacts/`, a stray `pipeline-state` file, a test scorecard) and gitignored those runtime governance dirs. Only `governance/dq-rule-templates/` (shipped content) remains tracked.
+- **Decomposed the two governance god-functions.** `sync_from_files` (384 lines) and `migrate_files_to_iceberg` (258 lines) are now thin orchestrators over one `_sync_*` / `_migrate_*` helper per source artifact type (largest helper ~85 lines). Behavior, return-dict keys, and ordering are unchanged — verified by the existing sync/migration tests. Adding a new source is now a helper + one line in the orchestrator tuple.
+
+---
+
 ## [0.3.0] — 2026-06-30
 
 ### Fixed

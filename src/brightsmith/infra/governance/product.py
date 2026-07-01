@@ -32,31 +32,41 @@ CLI:
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# Schemas
+# CLI
 # ---------------------------------------------------------------------------
-from brightsmith.infra.governance.schemas import (  # noqa: F401
-    AGENT_ACTIVITY_SCHEMA,
-    CAB_DECISIONS_SCHEMA,
-    CHAOS_MANIFESTS_SCHEMA,
-    CONTRACT_COLUMNS_SCHEMA,
-    CONTRACT_METADATA_SCHEMA,
-    DATA_DICTIONARY_SCHEMA,
-    DOCUMENTS_SCHEMA,
-    DQ_ACKNOWLEDGMENTS_SCHEMA,
-    DQ_RULE_RESULTS_SCHEMA,
-    DQ_RULES_SCHEMA,
-    DQ_RUNS_SCHEMA,
-    GLOSSARY_TERMS_SCHEMA,
-    GOLDEN_DATASETS_SCHEMA,
-    MODEL_COLUMNS_SCHEMA,
-    MODEL_ENTITIES_SCHEMA,
-    MODEL_RELATIONSHIPS_SCHEMA,
-    PIPELINE_EVENTS_SCHEMA,
-    POLICIES_SCHEMA,
-    RUN_HISTORY_SCHEMA,
-    SPEC_REGISTRY_SCHEMA,
-    _GRAIN_PREFIXES,
-    _TABLE_CONFIGS,
+from brightsmith.infra.governance.cli import (  # noqa: F401
+    cmd_export,
+    cmd_query,
+    cmd_status,
+    cmd_sync,
+    main,
+)
+
+# ---------------------------------------------------------------------------
+# Export compatibility wrapper (delegates to exporters)
+# ---------------------------------------------------------------------------
+from brightsmith.infra.governance.exporters import export_to_files  # noqa: F401
+
+# ---------------------------------------------------------------------------
+# Sync / migration
+# ---------------------------------------------------------------------------
+from brightsmith.infra.governance.migration import (  # noqa: F401
+    cmd_migrate,
+    migrate_files_to_iceberg,
+)
+
+# ---------------------------------------------------------------------------
+# Write API
+# ---------------------------------------------------------------------------
+from brightsmith.infra.governance.model_writers import (  # noqa: F401
+    write_model_columns,
+    write_model_entity,
+    write_model_relationships,
+    write_policy,
+)
+from brightsmith.infra.governance.parsers import (  # noqa: F401
+    _parse_mermaid_columns,
+    _parse_mermaid_erdiagram,
 )
 
 # ---------------------------------------------------------------------------
@@ -90,61 +100,55 @@ from brightsmith.infra.governance.queries import (  # noqa: F401
     get_policies,
     get_run_history,
     get_scorecard_data,
+    get_sessions,
 )
 
 # ---------------------------------------------------------------------------
-# Write API
+# Schemas
 # ---------------------------------------------------------------------------
-from brightsmith.infra.governance.model_writers import (  # noqa: F401
-    write_model_columns,
-    write_model_entity,
-    write_model_relationships,
-    write_policy,
+from brightsmith.infra.governance.schemas import (  # noqa: F401
+    _GRAIN_PREFIXES,
+    _TABLE_CONFIGS,
+    AGENT_ACTIVITY_SCHEMA,
+    CAB_DECISIONS_SCHEMA,
+    CHAOS_MANIFESTS_SCHEMA,
+    CONTRACT_COLUMNS_SCHEMA,
+    CONTRACT_METADATA_SCHEMA,
+    DATA_DICTIONARY_SCHEMA,
+    DOCUMENTS_SCHEMA,
+    DQ_ACKNOWLEDGMENTS_SCHEMA,
+    DQ_RULE_RESULTS_SCHEMA,
+    DQ_RULES_SCHEMA,
+    DQ_RUNS_SCHEMA,
+    GLOSSARY_TERMS_SCHEMA,
+    GOLDEN_DATASETS_SCHEMA,
+    MODEL_COLUMNS_SCHEMA,
+    MODEL_ENTITIES_SCHEMA,
+    MODEL_RELATIONSHIPS_SCHEMA,
+    PIPELINE_EVENTS_SCHEMA,
+    POLICIES_SCHEMA,
+    RUN_HISTORY_SCHEMA,
+    SESSIONS_SCHEMA,
+    SPEC_REGISTRY_SCHEMA,
 )
+from brightsmith.infra.governance.sync import sync_from_files  # noqa: F401
 from brightsmith.infra.governance.writers import (  # noqa: F401
     log_agent_finding,
+    log_session,
     sync_contract,
     sync_glossary_term,
     write_agent_activity,
     write_cab_decision,
     write_chaos_manifest,
     write_data_dictionary,
+    write_document,
     write_dq_acknowledgment,
     write_dq_rule_results,
     write_dq_rules,
     write_dq_run,
-    write_document,
     write_golden_dataset_values,
     write_pipeline_event,
     write_run_history,
+    write_session,
     write_spec_registry,
 )
-
-# ---------------------------------------------------------------------------
-# Sync / migration
-# ---------------------------------------------------------------------------
-from brightsmith.infra.governance.migration import (  # noqa: F401
-    cmd_migrate,
-    migrate_files_to_iceberg,
-)
-from brightsmith.infra.governance.parsers import (  # noqa: F401
-    _parse_mermaid_columns,
-    _parse_mermaid_erdiagram,
-)
-from brightsmith.infra.governance.sync import sync_from_files  # noqa: F401
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-from brightsmith.infra.governance.cli import (  # noqa: F401
-    cmd_export,
-    cmd_query,
-    cmd_status,
-    cmd_sync,
-    main,
-)
-
-# ---------------------------------------------------------------------------
-# Export compatibility wrapper (delegates to exporters)
-# ---------------------------------------------------------------------------
-from brightsmith.infra.governance.exporters import export_to_files  # noqa: F401

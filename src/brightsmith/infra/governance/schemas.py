@@ -339,6 +339,23 @@ POLICIES_SCHEMA = Schema(
     NestedField(field_id=12, name="updated_at", field_type=TimestamptzType(), required=True),
 )
 
+# Session logs — restores the deleted docs/sessions/ practice as governance-DB
+# records (the DB is authoritative; a markdown export is an optional secondary copy).
+SESSIONS_SCHEMA = Schema(
+    NestedField(field_id=1, name="record_id", field_type=StringType(), required=True),
+    NestedField(field_id=2, name="session_id", field_type=StringType(), required=True),
+    NestedField(field_id=3, name="spec_name", field_type=StringType(), required=False),
+    NestedField(field_id=4, name="title", field_type=StringType(), required=True),
+    NestedField(field_id=5, name="summary", field_type=StringType(), required=True),
+    NestedField(field_id=6, name="author", field_type=StringType(), required=True),
+    NestedField(field_id=7, name="agents_involved", field_type=StringType(), required=False),
+    NestedField(field_id=8, name="artifacts", field_type=StringType(), required=False),
+    NestedField(field_id=9, name="content", field_type=StringType(), required=False),
+    NestedField(field_id=10, name="started_at", field_type=TimestamptzType(), required=True),
+    NestedField(field_id=11, name="ended_at", field_type=TimestamptzType(), required=False),
+    NestedField(field_id=12, name="event_time", field_type=TimestamptzType(), required=True),
+)
+
 # Table name -> (schema, grain_fields) mapping
 _TABLE_CONFIGS: dict[str, tuple[Schema, list[str]]] = {
     "spec_registry": (SPEC_REGISTRY_SCHEMA, ["spec_name", "status", "updated_at"]),
@@ -349,6 +366,7 @@ _TABLE_CONFIGS: dict[str, tuple[Schema, list[str]]] = {
     "contract_columns": (CONTRACT_COLUMNS_SCHEMA, ["contract_name", "column_name", "version"]),
     "glossary_terms": (GLOSSARY_TERMS_SCHEMA, ["term_id", "updated_at"]),
     "agent_activity": (AGENT_ACTIVITY_SCHEMA, ["spec_name", "agent_id", "activity_type", "summary", "event_time"]),
+    "sessions": (SESSIONS_SCHEMA, ["session_id"]),
     "dq_rules": (DQ_RULES_SCHEMA, ["spec_name", "rule_id", "version"]),
     "dq_acknowledgments": (DQ_ACKNOWLEDGMENTS_SCHEMA, ["run_id", "rule_id"]),
     "cab_decisions": (CAB_DECISIONS_SCHEMA, ["decision_id"]),
@@ -365,6 +383,7 @@ _TABLE_CONFIGS: dict[str, tuple[Schema, list[str]]] = {
 
 # Override grain ID prefixes for tables where the default (table_name.upper()[:4]) is wrong.
 _GRAIN_PREFIXES: dict[str, str] = {
+    "sessions": "SESS",
     "data_dictionary": "DICT",
     "model_entities": "MENT",
     "model_columns": "MCOL",

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 
-
 from brightsmith.mcp.base_system_prompt import BaseSystemPrompt, PromptSection
 
 

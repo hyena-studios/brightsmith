@@ -14,8 +14,8 @@ from pyiceberg.types import DateType, DoubleType, NestedField, StringType
 
 from brightsmith.infra.iceberg_setup import (
     append_data,
-    get_or_create_table,
     get_catalog,
+    get_or_create_table,
     get_snapshots,
     read_with_duckdb,
 )

@@ -18,7 +18,6 @@ from brightsmith.infra.chaos_monkey.manifest import ChaosManifest, CorruptionRec
 from brightsmith.infra.chaos_monkey.reconciler import AfterActionReconciler
 from brightsmith.infra.chaos_monkey.safety import SafetyGate, SafetyViolation
 
-
 # ---------------------------------------------------------------------------
 # Safety gate
 # ---------------------------------------------------------------------------

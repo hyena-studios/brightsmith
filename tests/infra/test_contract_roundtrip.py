@@ -26,20 +26,20 @@ Tests annotated ```` will go GREEN when WP-1.3 lands.
 from __future__ import annotations
 
 import os
-import sys
 import subprocess
+import sys
 
 import pytest
 from pyiceberg.schema import Schema
 from pyiceberg.types import DoubleType, NestedField, StringType
 
-from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
 from brightsmith.infra.contract import (
     generate_contract,
     list_contracts,
     load_contract,
     verify_contract,
 )
+from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
 
 # ---------------------------------------------------------------------------
 # Shared test schema and data

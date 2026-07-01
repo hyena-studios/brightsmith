@@ -29,8 +29,8 @@ from typing import Any
 from pyiceberg.exceptions import NamespaceAlreadyExistsError, TableAlreadyExistsError
 from pyiceberg.schema import Schema
 
-from brightsmith.infra.iceberg_setup import append_data, get_catalog, read_with_duckdb
 from brightsmith.domain_loader import DomainManifest, SourceConfig
+from brightsmith.infra.iceberg_setup import append_data, get_catalog, read_with_duckdb
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,8 @@ class BaseIngestor(ABC):
         Returns:
             {entity_id: {"rows": N, "snapshot_id": X, "skipped": Y}} summary.
         """
-        from brightsmith.config import WAREHOUSE_PATH as DEFAULT_WH, CATALOG_PATH as DEFAULT_CAT
+        from brightsmith.config import CATALOG_PATH as DEFAULT_CAT
+        from brightsmith.config import WAREHOUSE_PATH as DEFAULT_WH
 
         entities = entities or self.source.entities
         warehouse_path = warehouse_path or DEFAULT_WH
@@ -181,7 +182,7 @@ class BaseIngestor(ABC):
             flat_rows = self.flatten(data, entity_id)
 
             # Add framework metadata
-            ingested_at = datetime.datetime.now(tz=datetime.timezone.utc)
+            ingested_at = datetime.datetime.now(tz=datetime.UTC)
             source_url = self.get_source_url(entity_id, method)
             load_date = ingested_at.date()
             for row in flat_rows:
@@ -248,7 +249,7 @@ class BaseIngestor(ABC):
         Domain projects get lineage for free — no agent needed for raw zone.
         """
         try:
-            from brightsmith.infra.lineage import emit_start, emit_complete
+            from brightsmith.infra.lineage import emit_complete, emit_start
 
             source_url = self.get_source_url(
                 list(results.keys())[0] if results else "unknown",

@@ -17,6 +17,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import yaml
 
@@ -36,16 +37,16 @@ PROJECT_GLOSSARY_PATH = _UNSET
 
 
 def _glossaries_dir() -> Path:
-    return GLOSSARIES_DIR if GLOSSARIES_DIR is not _UNSET else config.PROJECT_ROOT / "glossaries"
+    return cast(Path, GLOSSARIES_DIR) if GLOSSARIES_DIR is not _UNSET else config.PROJECT_ROOT / "glossaries"
 
 
 def _registry_path() -> Path:
-    return REGISTRY_PATH if REGISTRY_PATH is not _UNSET else _glossaries_dir() / "registry.yaml"
+    return cast(Path, REGISTRY_PATH) if REGISTRY_PATH is not _UNSET else _glossaries_dir() / "registry.yaml"
 
 
 def _project_glossary_path() -> Path:
     return (
-        PROJECT_GLOSSARY_PATH
+        cast(Path, PROJECT_GLOSSARY_PATH)
         if PROJECT_GLOSSARY_PATH is not _UNSET
         else config.PROJECT_ROOT / "governance" / "business-glossary.json"
     )
@@ -104,9 +105,7 @@ class ComposedGlossary:
         q = query.lower()
         results = []
         for term in self.terms.values():
-            if q in term.term.lower():
-                results.append(term)
-            elif any(q in s.lower() for s in term.synonyms):
+            if q in term.term.lower() or any(q in s.lower() for s in term.synonyms):
                 results.append(term)
         return results
 

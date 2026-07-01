@@ -37,7 +37,7 @@ def _setup_table(tmp_dir: Path):
 def _make_records(entities: list[str], values: list[int]) -> list[dict]:
     """Create records with grain-based IDs."""
     records = []
-    for entity, value in zip(entities, values):
+    for entity, value in zip(entities, values, strict=False):
         row = {"entity": entity, "value": value}
         row["record_id"] = compute_grain_id(row, GRAIN_FIELDS, prefix="PT")
         records.append(row)

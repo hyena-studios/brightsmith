@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 import pytest
 
 from brightsmith.mcp.base_mcp_server import BaseMCPServer, ResourceDef, ToolDef

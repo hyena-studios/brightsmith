@@ -420,3 +420,77 @@ def test_check_prerequisites_unknown_step_raises(tmp_path):
     gate._state = {"zone": "bronze", "mode": "greenfield", "steps": {}, "skipped_steps": {}}
     with pytest.raises(ValueError, match="Unknown step"):
         gate.check_prerequisites("no-such-step")
+
+
+# ---------------------------------------------------------------------------
+# Scenario — DB-gated completion: a failed governance write must NOT advance
+# the state file, so the next check stays BLOCKED (no agent cooperation needed).
+# ---------------------------------------------------------------------------
+
+
+def test_complete_blocks_when_governance_write_fails(tmp_path):
+    """If the governance-DB write fails during `complete`, the state file must
+    be left un-advanced: `complete` exits non-zero AND a fresh `check` of the
+    dependent step still reports BLOCKED. This is the structural 'stop and
+    escalate' backstop — the next step physically cannot start."""
+    spec = "db-gated"
+    assert run_gate(tmp_path, "init", spec, "--zone", "bronze").returncode == 0
+
+    # Simulate an unavailable governance warehouse by forcing the gate's
+    # governance-event write to raise, then run `complete` in a fresh process.
+    failing_complete = f"""
+import sys
+from brightsmith.infra import pipeline_gate as pg
+
+def boom(self, *a, **k):
+    raise RuntimeError("governance warehouse unavailable")
+
+pg.PipelineGate._emit_governance_event = boom
+gate = pg.PipelineGate({spec!r})
+gate.complete_step("governance-reviewer-pre")
+"""
+    result = run_py(tmp_path, failing_complete)
+    assert result.returncode != 0, "complete must fail loudly when the governance write fails"
+    assert "governance warehouse unavailable" in result.stderr
+
+    # The state file must NOT record the step as COMPLETED.
+    state = json.loads(state_file(tmp_path, spec).read_text())
+    step = state.get("steps", {}).get("governance-reviewer-pre", {})
+    assert step.get("status") != "COMPLETED", (
+        "state file advanced despite a failed governance write — the DB write "
+        "must gate the file commit"
+    )
+
+    # And the dependent step stays BLOCKED in a fresh process.
+    check = run_gate(tmp_path, "check", spec, "primary-agent")
+    assert check.returncode == 1
+    assert "BLOCKED" in check.stderr
+    assert "governance-reviewer-pre" in check.stderr
+
+
+def test_complete_finding_is_recorded(tmp_path):
+    """`complete --finding` records the summary to the agent-activity feed and
+    still advances normally (the finding write is part of the gated path)."""
+    spec = "with-finding"
+    assert run_gate(tmp_path, "init", spec, "--zone", "bronze").returncode == 0
+
+    done = run_gate(
+        tmp_path, "complete", spec, "governance-reviewer-pre",
+        "--finding", "pre-review clean; no blocking governance gaps",
+    )
+    assert done.returncode == 0, done.stderr
+
+    # The dependent step now clears (file advanced) ...
+    assert run_gate(tmp_path, "check", spec, "primary-agent").returncode == 0
+
+    # ... and the finding landed in the governance agent-activity table.
+    query = f"""
+from brightsmith.infra.governance_db import get_agent_activity
+rows = get_agent_activity(spec_name={spec!r})
+summaries = [r["summary"] for r in rows]
+assert any("pre-review clean" in s for s in summaries), summaries
+print("FINDING_OK")
+"""
+    q = run_py(tmp_path, query)
+    assert q.returncode == 0, q.stderr
+    assert "FINDING_OK" in q.stdout

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from brightsmith.infra.governance.queries import _query_table, _write_records
 from brightsmith.infra.governance.serializers import normalize_table_name, normalize_zone
@@ -40,7 +40,7 @@ def write_spec_registry(
     spec_file_path: str | None = None,
 ) -> dict:
     """Write a spec registry row. Append-only; latest row wins."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     canonical_tables = [normalize_table_name(table) for table in output_tables]
     record = {
         "spec_name": spec_name,
@@ -88,7 +88,7 @@ def write_dq_run(
     result_file_path: str | None = None,
 ) -> dict:
     """Write a DQ run summary row."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     record = {
         "run_id": run_id,
         "spec_name": spec_name,
@@ -126,7 +126,7 @@ def write_dq_rule_results(run_id: str, spec_name: str, results: list[dict]) -> d
         if isinstance(executed_at, str):
             executed_at = datetime.fromisoformat(executed_at)
         elif executed_at is None:
-            executed_at = datetime.now(timezone.utc)
+            executed_at = datetime.now(UTC)
 
         records.append({
             "run_id": run_id,
@@ -172,7 +172,7 @@ def write_pipeline_event(
         "approval_by": approval_by,
         "notes": notes,
         "content": content,
-        "event_time": event_time or datetime.now(timezone.utc),
+        "event_time": event_time or datetime.now(UTC),
     }
     return _write_records("pipeline_events", [record])
 
@@ -200,7 +200,7 @@ def sync_contract(contract: dict, contract_file_path: str) -> dict:
         "has_golden_dataset": bool(quality.get("accuracy", {}).get("golden_dataset")),
         "freshness_sla_hours": quality.get("freshness", {}).get("max_staleness_hours"),
         "contract_file_path": contract_file_path,
-        "updated_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(UTC),
     }
     result = _write_records("contract_metadata", [record])
 
@@ -208,7 +208,7 @@ def sync_contract(contract: dict, contract_file_path: str) -> dict:
     columns = schema.get("columns", [])
     contract_name = meta.get("name", "")
     version = meta.get("version", "1.0.0")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     col_records = []
     for i, col in enumerate(columns):
@@ -266,7 +266,7 @@ def sync_glossary_term(term: dict) -> dict:
         "source": term.get("source", ""),
         "approval_status": term.get("approval_status", term.get("status", "")),
         "used_in_specs": json.dumps(term.get("used_in_specs", [])),
-        "updated_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(UTC),
     }
     return _write_records("glossary_terms", [record])
 
@@ -303,7 +303,7 @@ def write_agent_activity(
         "resolution_status": resolution_status,
         "resolved_by": resolved_by,
         "resolved_at": resolved_at,
-        "event_time": event_time or datetime.now(timezone.utc),
+        "event_time": event_time or datetime.now(UTC),
     }
     return _write_records("agent_activity", [record])
 
@@ -314,11 +314,21 @@ def log_agent_finding(
     summary: str,
     detail: str | None = None,
     severity: str = "info",
+    *,
+    strict: bool = True,
     **kwargs,
 ) -> dict | None:
-    """Convenience wrapper for write_agent_activity.
+    """Convenience wrapper for :func:`write_agent_activity`.
 
-    Fault-tolerant: logs a warning on failure, never raises.
+    The governance DB is authoritative for the agent-activity feed, so a write
+    failure is loud by default. When ``strict`` is True (the default) any
+    failure PROPAGATES, so the calling pipeline step fails instead of silently
+    dropping the finding — the same loud-failure doctrine the DQ and contract
+    gates now follow.
+
+    Pass ``strict=False`` for best-effort logging (logs a warning and returns
+    ``None`` on failure) where a logging hiccup must not fail the surrounding
+    work.
     """
     try:
         return write_agent_activity(
@@ -331,9 +341,82 @@ def log_agent_finding(
             **kwargs,
         )
     except Exception:
+        if strict:
+            raise
         logger.warning(
             "Failed to log agent finding for %s/%s: %s",
             spec_name, agent_id, summary,
+            exc_info=True,
+        )
+        return None
+
+
+def write_session(
+    session_id: str,
+    title: str,
+    summary: str,
+    author: str,
+    *,
+    spec_name: str | None = None,
+    agents_involved: list[str] | None = None,
+    artifacts: list[str] | None = None,
+    content: str | None = None,
+    started_at: datetime | None = None,
+    ended_at: datetime | None = None,
+    event_time: datetime | None = None,
+) -> dict:
+    """Write a session log record to the governance ``sessions`` table.
+
+    Restores the deleted ``docs/sessions/`` practice as an Iceberg-authoritative
+    record. Idempotent on ``session_id`` (grain) — re-writing the same session is
+    a no-op via ``promote`` dedup.
+    """
+    now = datetime.now(UTC)
+    record = {
+        "session_id": session_id,
+        "spec_name": spec_name,
+        "title": title,
+        "summary": summary,
+        "author": author,
+        "agents_involved": json.dumps(agents_involved) if agents_involved else None,
+        "artifacts": json.dumps(artifacts) if artifacts else None,
+        "content": content,
+        "started_at": started_at or now,
+        "ended_at": ended_at,
+        "event_time": event_time or now,
+    }
+    return _write_records("sessions", [record])
+
+
+def log_session(
+    session_id: str,
+    title: str,
+    summary: str,
+    author: str,
+    *,
+    strict: bool = True,
+    **kwargs,
+) -> dict | None:
+    """Convenience wrapper for :func:`write_session` (mirrors :func:`log_agent_finding`).
+
+    Strict by default: a write failure PROPAGATES so a session that cannot be
+    recorded fails loudly rather than vanishing. Pass ``strict=False`` for
+    best-effort logging (warns and returns ``None`` on failure).
+    """
+    try:
+        return write_session(
+            session_id=session_id,
+            title=title,
+            summary=summary,
+            author=author,
+            **kwargs,
+        )
+    except Exception:
+        if strict:
+            raise
+        logger.warning(
+            "Failed to log session %s (%s): %s",
+            session_id, title, summary,
             exc_info=True,
         )
         return None
@@ -362,7 +445,7 @@ def write_dq_rules(
     """, [spec_name])
     version_map = {r["rule_id"]: r["max_version"] for r in existing}
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     records = []
     for r in rules:
         rule_id = r.get("rule_id", "")
@@ -403,7 +486,7 @@ def write_dq_acknowledgment(
         "spec_name": spec_name,
         "acknowledged_by": acknowledged_by,
         "reason": reason,
-        "acknowledged_at": acknowledged_at or datetime.now(timezone.utc),
+        "acknowledged_at": acknowledged_at or datetime.now(UTC),
     }
     return _write_records("dq_acknowledgments", [record])
 
@@ -445,7 +528,7 @@ def write_cab_decision(
         "rationale": rationale,
         "fork_config": json.dumps(fork_config) if fork_config else None,
         "human_override": json.dumps(human_override) if human_override else None,
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(UTC),
     }
     return _write_records("cab_decisions", [record])
 
@@ -461,7 +544,7 @@ def write_golden_dataset_values(
     Filters are normalized via json.dumps(sort_keys=True, separators=(',', ':'))
     before grain computation to ensure deterministic hashes.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     records = []
     for v in values:
         # Normalize filters for deterministic grain
@@ -510,7 +593,7 @@ def write_run_history(
         "golden_datasets_summary": json.dumps(golden_datasets_summary) if golden_datasets_summary else None,
         "options": json.dumps(options) if options else None,
         "error_message": error_message,
-        "updated_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(UTC),
     }
     return _write_records("run_history", [record])
 
@@ -542,7 +625,7 @@ def write_chaos_manifest(
         "total_corruptions": total_corruptions,
         "dimensions_covered": json.dumps(dimensions_covered) if dimensions_covered else None,
         "corruptions_sample": json.dumps(corruptions_sample) if corruptions_sample else None,
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(UTC),
     }
     return _write_records("chaos_manifests", [record])
 
@@ -581,7 +664,7 @@ def write_document(
         "content": content,
         "version": version,
         "metadata": json.dumps(metadata) if metadata else None,
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(UTC),
     }
     return _write_records("documents", [record])
 
@@ -596,7 +679,7 @@ def write_data_dictionary(
     Each column dict should have: column_name, and optionally data_type,
     definition, nullable, is_grain, ordinal_position.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     records = []
     for i, col in enumerate(columns):
         records.append({

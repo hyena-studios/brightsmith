@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import UTC
 from pathlib import Path
 
 from brightsmith import config
@@ -69,8 +70,8 @@ def _cmd_inject(args) -> None:
     _, manifest = injector.inject(ns, tbl, records)
 
     manifest_dir = config.PROJECT_ROOT / "governance" / "chaos-manifests"
-    from datetime import datetime, timezone
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    from datetime import datetime
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     manifest_path = manifest_dir / f"{ns}-{tbl}-{ts}.json"
     manifest.save(manifest_path)
 
@@ -91,8 +92,8 @@ def _cmd_reconcile(args) -> None:
         output_path = Path(args.output)
     else:
         manifest_dir = config.PROJECT_ROOT / "governance" / "chaos-manifests"
-        from datetime import datetime, timezone
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        from datetime import datetime
+        ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         source_name = manifest.source_table.replace(".", "-")
         output_path = manifest_dir / f"{source_name}-after-action-{ts}.md"
 

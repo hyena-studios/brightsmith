@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -30,7 +30,7 @@ class ChaosManifest:
     corruption_rate: float
     seed: int | None
     corruptions: list[CorruptionRecord] = field(default_factory=list)
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def add_corruption(self, record: CorruptionRecord) -> None:
         self.corruptions.append(record)

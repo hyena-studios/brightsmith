@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from brightsmith.infra.governance.model_writers import (
     write_model_columns,
@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Sync: backfill from existing file artifacts
+#
+# ``sync_from_files`` is an orchestrator over one ``_sync_*`` helper per source
+# artifact type. Each helper reads its own directory, writes its own governance
+# table(s) via idempotent promote, and returns its slice of the counts dict.
+# Adding a new source = add a helper + one line in the orchestrator tuple.
 # ---------------------------------------------------------------------------
 
 
@@ -39,16 +44,26 @@ def sync_from_files() -> dict:
 
     Returns counts of records synced per table.
     """
-    from brightsmith.config import (
-        DQ_RESULTS_DIR,
-        DQ_RULES_DIR,
-        PIPELINE_STATE_DIR,
-        PROJECT_ROOT,
-    )
-
     counts: dict[str, int] = {}
+    for step in (
+        _sync_dq_results,
+        _sync_pipeline_state,
+        _sync_contracts,
+        _sync_glossary,
+        _enrich_spec_registry,
+        _sync_data_dictionary,
+        _sync_data_models,
+        _sync_policies,
+        _sync_domain_context,
+    ):
+        counts.update(step())
+    return counts
 
-    # 1. DQ results -> dq_runs + dq_rule_results
+
+# 1. DQ results -> dq_runs + dq_rule_results
+def _sync_dq_results() -> dict:
+    from brightsmith.config import DQ_RESULTS_DIR, DQ_RULES_DIR, PROJECT_ROOT
+
     dq_synced = 0
     dq_rules_synced = 0
     if DQ_RESULTS_DIR.exists():
@@ -60,7 +75,7 @@ def sync_from_files() -> dict:
                 run_id = data.get("run_id", "")
                 spec = data.get("spec", "")
                 executed_at_str = data.get("executed_at", "")
-                executed_at = datetime.fromisoformat(executed_at_str) if executed_at_str else datetime.now(timezone.utc)
+                executed_at = datetime.fromisoformat(executed_at_str) if executed_at_str else datetime.now(UTC)
 
                 # Extract table names from rules
                 rules = data.get("results", [])
@@ -104,10 +119,13 @@ def sync_from_files() -> dict:
             except Exception:
                 logger.warning("Failed to sync DQ results from %s", path, exc_info=True)
 
-    counts["dq_runs"] = dq_synced
-    counts["dq_rule_results"] = dq_rules_synced
+    return {"dq_runs": dq_synced, "dq_rule_results": dq_rules_synced}
 
-    # 2. Pipeline state -> pipeline_events + spec_registry
+
+# 2. Pipeline state -> pipeline_events + spec_registry
+def _sync_pipeline_state() -> dict:
+    from brightsmith.config import PIPELINE_STATE_DIR
+
     pipeline_synced = 0
     registry_synced = 0
     if PIPELINE_STATE_DIR.exists():
@@ -124,7 +142,7 @@ def sync_from_files() -> dict:
                     if status in ("COMPLETED", "SKIPPED"):
                         event_type = status
                         event_time_str = step_data.get("completed_at") or step_data.get("started_at")
-                        event_time = datetime.fromisoformat(event_time_str) if event_time_str else datetime.now(timezone.utc)
+                        event_time = datetime.fromisoformat(event_time_str) if event_time_str else datetime.now(UTC)
                         result = write_pipeline_event(
                             spec_name=spec, step_name=step_name,
                             event_type=event_type,
@@ -137,7 +155,7 @@ def sync_from_files() -> dict:
                 # Skipped steps
                 for step_name, skip_data in data.get("skipped_steps", {}).items():
                     event_time_str = skip_data.get("skipped_at")
-                    event_time = datetime.fromisoformat(event_time_str) if event_time_str else datetime.now(timezone.utc)
+                    event_time = datetime.fromisoformat(event_time_str) if event_time_str else datetime.now(UTC)
                     result = write_pipeline_event(
                         spec_name=spec, step_name=step_name,
                         event_type="SKIPPED",
@@ -149,7 +167,7 @@ def sync_from_files() -> dict:
                 # Approvals
                 for artifact, approval in data.get("approvals", {}).items():
                     event_time_str = approval.get("decided_at")
-                    event_time = datetime.fromisoformat(event_time_str) if event_time_str else datetime.now(timezone.utc)
+                    event_time = datetime.fromisoformat(event_time_str) if event_time_str else datetime.now(UTC)
                     result = write_pipeline_event(
                         spec_name=spec, step_name=artifact,
                         event_type="APPROVED" if approval.get("status") == "APPROVED" else "FAILED",
@@ -177,16 +195,20 @@ def sync_from_files() -> dict:
             except Exception:
                 logger.warning("Failed to sync pipeline state from %s", path, exc_info=True)
 
-    counts["pipeline_events"] = pipeline_synced
-    counts["spec_registry"] = registry_synced
+    return {"pipeline_events": pipeline_synced, "spec_registry": registry_synced}
 
-    # 3. Contracts -> contract_metadata
+
+# 3. Contracts -> contract_metadata
+def _sync_contracts() -> dict:
+    import yaml
+
+    from brightsmith.config import PROJECT_ROOT
+
     contract_synced = 0
     contracts_dir = PROJECT_ROOT / "governance" / "data-contracts"
     if contracts_dir.exists():
         for path in sorted(contracts_dir.glob("*.yaml")):
             try:
-                import yaml
                 text = path.read_text()
                 # Handle multi-document YAML (some contracts have --- separators)
                 docs = [d for d in yaml.safe_load_all(text) if d is not None]
@@ -214,9 +236,13 @@ def sync_from_files() -> dict:
                     contract_synced += result.get("promoted", 0)
             except Exception:
                 logger.warning("Failed to sync contract from %s", path, exc_info=True)
-    counts["contract_metadata"] = contract_synced
+    return {"contract_metadata": contract_synced}
 
-    # 4. Glossary -> glossary_terms
+
+# 4. Glossary -> glossary_terms
+def _sync_glossary() -> dict:
+    from brightsmith.config import PROJECT_ROOT
+
     glossary_synced = 0
     glossary_path = PROJECT_ROOT / "governance" / "business-glossary.json"
     if glossary_path.exists():
@@ -227,10 +253,14 @@ def sync_from_files() -> dict:
                 glossary_synced += result.get("promoted", 0)
         except Exception:
             logger.warning("Failed to sync glossary", exc_info=True)
-    counts["glossary_terms"] = glossary_synced
+    return {"glossary_terms": glossary_synced}
 
-    # 5. Enrich spec_registry with DQ scores and governance completeness flags
-    #    by cross-referencing the data we just synced
+
+# 5. Enrich spec_registry with DQ scores and governance completeness flags
+#    by cross-referencing the data we just synced
+def _enrich_spec_registry() -> dict:
+    from brightsmith.config import DQ_RESULTS_DIR, PIPELINE_STATE_DIR, PROJECT_ROOT
+
     enriched = 0
     if PIPELINE_STATE_DIR.exists():
         for path in sorted(PIPELINE_STATE_DIR.glob("*-pipeline.json")):
@@ -305,9 +335,13 @@ def sync_from_files() -> dict:
                 enriched += result.get("promoted", 0)
             except Exception:
                 logger.warning("Failed to enrich spec registry for %s", path, exc_info=True)
-    counts["spec_registry_enriched"] = enriched
+    return {"spec_registry_enriched": enriched}
 
-    # 6. Data Dictionary backfill -> data_dictionary
+
+# 6. Data Dictionary backfill -> data_dictionary
+def _sync_data_dictionary() -> dict:
+    from brightsmith.config import PROJECT_ROOT
+
     dict_synced = 0
     data_dict_path = PROJECT_ROOT / "governance" / "data-dictionary.json"
     if data_dict_path.exists():
@@ -322,9 +356,13 @@ def sync_from_files() -> dict:
                     dict_synced += result.get("promoted", 0)
         except Exception:
             logger.warning("Failed to sync data dictionary", exc_info=True)
-    counts["data_dictionary"] = dict_synced
+    return {"data_dictionary": dict_synced}
 
-    # 7. Data Models backfill -> model_entities, model_columns, model_relationships
+
+# 7. Data Models backfill -> model_entities, model_columns, model_relationships
+def _sync_data_models() -> dict:
+    from brightsmith.config import PROJECT_ROOT
+
     entities_synced = 0
     columns_synced = 0
     rels_synced = 0
@@ -369,11 +407,17 @@ def sync_from_files() -> dict:
 
             except Exception:
                 logger.warning("Failed to sync model from %s", path, exc_info=True)
-    counts["model_entities"] = entities_synced
-    counts["model_columns"] = columns_synced
-    counts["model_relationships"] = rels_synced
+    return {
+        "model_entities": entities_synced,
+        "model_columns": columns_synced,
+        "model_relationships": rels_synced,
+    }
 
-    # 8. Policies backfill -> policies
+
+# 8. Policies backfill -> policies
+def _sync_policies() -> dict:
+    from brightsmith.config import PROJECT_ROOT
+
     policies_synced = 0
     policies_dir = PROJECT_ROOT / "governance" / "policies"
     if policies_dir.exists():
@@ -397,9 +441,13 @@ def sync_from_files() -> dict:
                     policies_synced += result.get("promoted", 0)
             except Exception:
                 logger.warning("Failed to sync policy from %s", path, exc_info=True)
-    counts["policies"] = policies_synced
+    return {"policies": policies_synced}
 
-    # 9. Domain Context backfill -> documents (doc_type="domain_context")
+
+# 9. Domain Context backfill -> documents (doc_type="domain_context")
+def _sync_domain_context() -> dict:
+    from brightsmith.config import PROJECT_ROOT
+
     domain_context_synced = 0
     domain_context_path = PROJECT_ROOT / "governance" / "domain-context.md"
     if domain_context_path.exists():
@@ -414,6 +462,4 @@ def sync_from_files() -> dict:
             domain_context_synced += result.get("promoted", 0)
         except Exception:
             logger.warning("Failed to sync domain context", exc_info=True)
-    counts["domain_context"] = domain_context_synced
-
-    return counts
+    return {"domain_context": domain_context_synced}

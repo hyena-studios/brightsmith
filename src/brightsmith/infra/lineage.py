@@ -21,7 +21,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pyarrow as pa
 from pyiceberg.schema import Schema
@@ -158,7 +158,7 @@ def emit_start(
             "dq_p0_passed": None,
             "duration_ms": None,
             "error_message": None,
-            "event_time": datetime.now(timezone.utc),
+            "event_time": datetime.now(UTC),
             "spec_reference": spec_reference,
             "agent_id": agent_id,
             "transformation_steps": None,
@@ -202,7 +202,7 @@ def emit_complete(
             "dq_p0_passed": dq_p0_passed,
             "duration_ms": duration_ms,
             "error_message": None,
-            "event_time": datetime.now(timezone.utc),
+            "event_time": datetime.now(UTC),
             "spec_reference": None,
             "agent_id": None,
             "transformation_steps": json.dumps(transformation_steps) if transformation_steps else None,
@@ -239,7 +239,7 @@ def emit_fail(
             "dq_p0_passed": None,
             "duration_ms": duration_ms,
             "error_message": error_message[:4000] if error_message else None,
-            "event_time": datetime.now(timezone.utc),
+            "event_time": datetime.now(UTC),
             "spec_reference": None,
             "agent_id": None,
             "transformation_steps": None,
@@ -266,7 +266,7 @@ def _read_all_events() -> list[dict]:
         con = duckdb.connect()
         rows = con.sql("SELECT * FROM arrow_table ORDER BY event_time DESC").fetchall()
         columns = [f.name for f in table.schema().fields]
-        return [dict(zip(columns, row)) for row in rows]
+        return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception:
         logger.warning("Could not read lineage events", exc_info=True)
         return []
@@ -298,7 +298,7 @@ def query_lineage_events(
             LIMIT $3
         """, params=[table_name, event_type, limit]).fetchall()
         columns = [f.name for f in table.schema().fields]
-        return [dict(zip(columns, row)) for row in rows]
+        return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception:
         logger.warning("Could not query lineage events for %s", table_name, exc_info=True)
         return []
@@ -334,7 +334,7 @@ def query_downstream_consumers(
             LIMIT $2
         """, params=[pattern, limit]).fetchall()
         columns = [f.name for f in table.schema().fields]
-        return [dict(zip(columns, row)) for row in rows]
+        return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception:
         logger.warning("Could not query downstream consumers for %s", table_name, exc_info=True)
         return []
@@ -550,7 +550,7 @@ def cmd_generate_docs() -> None:
     # Build start event lookup by job_name
     start_lookup: dict[str, dict] = {}
     for row in start_rows:
-        event = dict(zip(start_columns, row))
+        event = dict(zip(start_columns, row, strict=False))
         start_lookup[event["job_name"]] = event
 
     lineage_dir = config.PROJECT_ROOT / "governance" / "lineage"
@@ -558,7 +558,7 @@ def cmd_generate_docs() -> None:
     generated = 0
 
     for row in complete_rows:
-        event = dict(zip(complete_columns, row))
+        event = dict(zip(complete_columns, row, strict=False))
         job_name = event["job_name"]
         start_event = start_lookup.get(job_name, {})
         input_tables_json = start_event.get("input_tables", "[]")
@@ -714,7 +714,7 @@ def cmd_verify(spec_name: str) -> int:
         ORDER BY event_time DESC
     """).fetchall()
     event_columns = [desc[0] for desc in con.description]
-    events_dicts = [dict(zip(event_columns, row)) for row in events]
+    events_dicts = [dict(zip(event_columns, row, strict=False)) for row in events]
 
     # Check 1: Events exist
     if not events_dicts:

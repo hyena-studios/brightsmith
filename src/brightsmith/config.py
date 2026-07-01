@@ -24,13 +24,42 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import TYPE_CHECKING, overload
+
+if TYPE_CHECKING:
+    # The UPPER_CASE module-level names below are served dynamically at runtime by
+    # ``_ConfigModule.__getattr__`` (see the back-compat shim at the bottom of this
+    # file). Declaring them here — annotation-only, so no runtime binding is created
+    # and the shim still handles access — lets type checkers resolve
+    # ``from brightsmith.config import PROJECT_ROOT`` and friends.
+    PROJECT_ROOT: Path
+    PROJECT_NAME: str
+    REQUIRE_HUMAN_APPROVAL: bool
+    CONFIDENCE_FLOOR: float
+    DQ_RULES_DIR: Path
+    DQ_RESULTS_DIR: Path
+    DQ_SCORECARDS_DIR: Path
+    DQ_TEMPLATES_DIR: Path
+    GOLDEN_DATASETS_DIR: Path
+    PIPELINE_STATE_DIR: Path
+    APPROVALS_DIR: Path
+    AUDIT_TRAIL_DIR: Path
+    CAB_DECISIONS_DIR: Path
+    WAREHOUSE_PATH: Path
+    CATALOG_PATH: Path
+    GOVERNANCE_WAREHOUSE: Path
 
 
+@overload
+def _env(name: str, *, grist: str | None = ..., default: str) -> str: ...
+@overload
+def _env(name: str, *, grist: str | None = ..., default: None = ...) -> str | None: ...
 def _env(name: str, *, grist: str | None = None, default: str | None = None) -> str | None:
     """Read an environment variable, honouring the deprecated ``GRIST_*`` fallback.
 
     Reading a ``GRIST_*`` variable (when the ``BRIGHTSMITH_*`` equivalent is unset)
     emits a :class:`DeprecationWarning` but still returns the value (decision D6).
+    A non-``None`` ``default`` guarantees a ``str`` return (see overloads).
     """
     val = os.environ.get(name)
     if val is not None:

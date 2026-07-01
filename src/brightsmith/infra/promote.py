@@ -68,7 +68,8 @@ def promote(
         try:
             from brightsmith.infra.lineage import emit_complete, emit_start
 
-            table_name = f"{table.identifier[0]}.{table.identifier[1]}" if len(table.identifier) >= 2 else str(table.identifier)
+            identifier = table.identifier  # type: ignore[attr-defined]  # exists at runtime; missing from pyiceberg stubs
+            table_name = f"{identifier[0]}.{identifier[1]}" if len(identifier) >= 2 else str(identifier)
             run_id = emit_start(
                 job_name=f"promote:{spec_name}",
                 input_tables=[],

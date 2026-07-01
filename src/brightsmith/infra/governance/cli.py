@@ -5,12 +5,12 @@ from __future__ import annotations
 import argparse
 import sys
 
+from brightsmith.infra.governance.migration import cmd_migrate
 from brightsmith.infra.governance.queries import (
     _TABLE_CONFIGS,
     _get_governance_table,
     get_governance_summary,
 )
-from brightsmith.infra.governance.migration import cmd_migrate
 from brightsmith.infra.governance.sync import sync_from_files
 
 __all__ = ["main"]

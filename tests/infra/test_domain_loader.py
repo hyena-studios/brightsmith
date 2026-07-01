@@ -16,7 +16,6 @@ from brightsmith.domain_loader import (
     show_domain,
 )
 
-
 # --- Fixtures ---
 
 

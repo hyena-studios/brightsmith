@@ -22,10 +22,9 @@ import hashlib
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
-
 
 # ---------------------------------------------------------------------------
 # Types
@@ -313,7 +312,7 @@ class PipelineGate:
         from brightsmith.infra.governance.serializers import normalize_zone
 
         zone = normalize_zone(zone)  # type: ignore[assignment]
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         steps = {}
         for step in _get_steps(zone, mode):
             steps[step.name] = {
@@ -430,21 +429,35 @@ class PipelineGate:
             }
         else:
             steps[step_name]["status"] = "IN_PROGRESS"
-        steps[step_name]["started_at"] = datetime.now(timezone.utc).isoformat()
+        steps[step_name]["started_at"] = datetime.now(UTC).isoformat()
         self._save()
         self._emit_governance_event(step_name, "STARTED")
 
-    def complete_step(self, step_name: str, output: str = "") -> None:
+    def complete_step(self, step_name: str, output: str = "", finding: str | None = None) -> None:
         """Record that a step completed successfully.
+
+        Governance-DB-gated completion
+        ------------------------------
+        The authoritative state file is committed *last* — only after the
+        governance-DB writes succeed. If the Iceberg write (or the optional
+        ``finding`` write) fails, this method RAISES and the state file is left
+        un-advanced: the step stays incomplete and the next ``check`` returns
+        BLOCKED. A lost completion record therefore cannot let the pipeline
+        proceed — it stops deterministically at the next step's gate, with no
+        agent cooperation required. Retrying ``complete`` is idempotent: every
+        governance write dedups on its grain-based ``record_id``.
 
         Args:
             step_name: The step that completed.
             output: Path to the output artifact (relative to project root).
+            finding: Optional end-of-step summary recorded to the agent-activity
+                feed atomically with completion. Strict — a failed write blocks
+                completion just like the pipeline-event write.
         """
         from brightsmith.config import PROJECT_ROOT
 
         steps = self._state.setdefault("steps", {})
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         if step_name not in steps:
             step_def = _get_step_def(self.zone, self.mode, step_name)
@@ -465,8 +478,22 @@ class PipelineGate:
             if file_hash:
                 steps[step_name]["output_hash"] = file_hash
 
-        self._save()
+        # Governance DB is authoritative — write it BEFORE committing the state
+        # file. A failure here propagates and leaves the file un-advanced, so
+        # the next `check` stays BLOCKED rather than advancing on a lost record.
         self._emit_governance_event(step_name, "COMPLETED", output_path=output)
+        if finding:
+            from brightsmith.infra.governance_db import log_agent_finding
+
+            log_agent_finding(
+                spec_name=self.spec,
+                agent_id=steps[step_name].get("agent"),
+                summary=finding,
+                activity_type="completion",
+            )
+
+        # Reached only if the required governance writes succeeded.
+        self._save()
 
     def skip_step(self, step_name: str, reason: str, evidence: str) -> None:
         """Record that a step was intentionally skipped.
@@ -496,7 +523,7 @@ class PipelineGate:
         self._state.setdefault("skipped_steps", {})[step_name] = {
             "reason": reason,
             "evidence": evidence,
-            "skipped_at": datetime.now(timezone.utc).isoformat(),
+            "skipped_at": datetime.now(UTC).isoformat(),
         }
 
         # Also update the step status in the steps dict
@@ -504,8 +531,10 @@ class PipelineGate:
         if step_name in steps:
             steps[step_name]["status"] = "SKIPPED"
 
-        self._save()
+        # Governance DB first; commit the state file only if it succeeds, so a
+        # failed skip-event write leaves the file un-advanced (next check BLOCKED).
         self._emit_governance_event(step_name, "SKIPPED", skip_reason=reason)
+        self._save()
 
     # --- Approval tracking ---
 
@@ -529,7 +558,7 @@ class PipelineGate:
         self._state.setdefault("approvals", {})[artifact] = {
             "status": decision,
             "decided_by": decided_by,
-            "decided_at": datetime.now(timezone.utc).isoformat(),
+            "decided_at": datetime.now(UTC).isoformat(),
             "document": document,
             "notes": notes,
         }
@@ -910,12 +939,12 @@ class PipelineGate:
             })
 
         if fmt == "json":
-            return json.dumps({"audit_date": datetime.now(timezone.utc).isoformat(), "specs": specs}, indent=2)
+            return json.dumps({"audit_date": datetime.now(UTC).isoformat(), "specs": specs}, indent=2)
 
         # Markdown format
         lines = [
             "# Pipeline Audit Report",
-            f"**Date:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+            f"**Date:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
             f"**Specs:** {len(specs)}",
             "",
         ]
@@ -973,7 +1002,7 @@ class PipelineGate:
             ]
             if steps_with_hash:
                 lines.append("### Output Integrity")
-                for name, info in steps_with_hash:
+                for _name, info in steps_with_hash:
                     output_path = PROJECT_ROOT / info["output"]
                     current = _hash_file(output_path)
                     recorded = info["output_hash"]
@@ -1012,6 +1041,7 @@ def main() -> None:
     comp_p.add_argument("spec", help="Spec name")
     comp_p.add_argument("step", help="Step name")
     comp_p.add_argument("--output", default="", help="Path to output artifact")
+    comp_p.add_argument("--finding", default=None, help="End-of-step summary recorded with completion")
 
     # skip
     skip_p = subparsers.add_parser("skip", help="Record step skip with justification")
@@ -1089,7 +1119,7 @@ def _cmd_check(args: argparse.Namespace) -> None:
 
 def _cmd_complete(args: argparse.Namespace) -> None:
     gate = PipelineGate(args.spec)
-    gate.complete_step(args.step, output=args.output)
+    gate.complete_step(args.step, output=args.output, finding=args.finding)
     print(f"Recorded completion: '{args.step}' → COMPLETED")
 
 
@@ -1108,11 +1138,11 @@ def _cmd_approve(args: argparse.Namespace) -> None:
     gate.record_approval(
         artifact=args.artifact,
         decision=args.decision,
-        decided_by=getattr(args, "by"),
+        decided_by=args.by,
         notes=args.notes,
         document=args.document,
     )
-    print(f"Recorded approval: '{args.artifact}' → {args.decision} by {getattr(args, 'by')}")
+    print(f"Recorded approval: '{args.artifact}' → {args.decision} by {args.by}")
 
 
 def _cmd_validate(args: argparse.Namespace) -> None:
