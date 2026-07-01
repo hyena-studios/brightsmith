@@ -20,5 +20,8 @@ build/
 # DQ results (timestamped, can regenerate)
 governance/dq-results/*.json
 
+# DQ run history (timestamped runtime artifacts written when DQ executes)
+governance/run-history/
+
 # Staging archives
 governance/tag-normalization/archive/
