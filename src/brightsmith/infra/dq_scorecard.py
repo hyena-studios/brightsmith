@@ -10,7 +10,19 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from brightsmith.config import DQ_RULES_DIR, DQ_SCORECARDS_DIR
+from brightsmith import config
+
+# Legacy module-level names — assignable for test patching; the _UNSET sentinel
+# resolves from the live brightsmith.config at call time so configure() works.
+_UNSET = object()
+DQ_RULES_DIR = _UNSET
+DQ_SCORECARDS_DIR = _UNSET
+
+
+def _cfg(name):
+    """Resolve a config path: a patched module-level value wins, else live config."""
+    val = globals()[name]
+    return getattr(config, name) if val is _UNSET else val
 
 
 def generate_scorecard(run_result: dict, spec: str) -> Path:
@@ -126,8 +138,9 @@ def generate_scorecard(run_result: dict, spec: str) -> Path:
     )
 
     # Explicit scorecard export.
-    DQ_SCORECARDS_DIR.mkdir(parents=True, exist_ok=True)
-    path = DQ_SCORECARDS_DIR / f"{spec}-scorecard.md"
+    scorecards_dir = _cfg("DQ_SCORECARDS_DIR")
+    scorecards_dir.mkdir(parents=True, exist_ok=True)
+    path = scorecards_dir / f"{spec}-scorecard.md"
     path.write_text(scorecard_content)
     return path
 
@@ -135,7 +148,7 @@ def generate_scorecard(run_result: dict, spec: str) -> Path:
 def _load_rule_metadata(spec: str) -> dict[str, dict]:
     """Load rule metadata (category, priority, description) from JSON files."""
     meta = {}
-    for path in DQ_RULES_DIR.glob("*.json"):
+    for path in _cfg("DQ_RULES_DIR").glob("*.json"):
         data = json.loads(path.read_text())
         if data.get("spec") != spec:
             continue

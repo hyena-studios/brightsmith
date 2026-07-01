@@ -22,7 +22,6 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pyarrow as pa
 from pyiceberg.schema import Schema
@@ -35,7 +34,7 @@ from pyiceberg.types import (
     TimestamptzType,
 )
 
-from brightsmith.config import CATALOG_PATH, GOVERNANCE_WAREHOUSE, PROJECT_NAME, PROJECT_ROOT
+from brightsmith import config
 from brightsmith.infra.iceberg_setup import get_catalog, get_or_create_table
 
 logger = logging.getLogger(__name__)
@@ -106,7 +105,7 @@ def build_column_lineage(mappings: list[ColumnMapping]) -> dict:
 
 def _get_lineage_table():
     """Lazily create and return the governance.lineage_events table."""
-    catalog = get_catalog(GOVERNANCE_WAREHOUSE, CATALOG_PATH)
+    catalog = get_catalog(config.GOVERNANCE_WAREHOUSE, config.CATALOG_PATH)
     return get_or_create_table(catalog, "governance", "lineage_events", LINEAGE_EVENTS_SCHEMA)
 
 
@@ -147,7 +146,7 @@ def emit_start(
             "run_id": run_id,
             "event_type": "START",
             "job_name": job_name,
-            "job_namespace": PROJECT_NAME,
+            "job_namespace": config.PROJECT_NAME,
             "producer": producer,
             "input_tables": json.dumps(input_tables),
             "output_table": output_table,
@@ -191,7 +190,7 @@ def emit_complete(
             "run_id": run_id,
             "event_type": "COMPLETE",
             "job_name": job_name,
-            "job_namespace": PROJECT_NAME,
+            "job_namespace": config.PROJECT_NAME,
             "producer": producer,
             "input_tables": "[]",
             "output_table": output_table,
@@ -228,7 +227,7 @@ def emit_fail(
             "run_id": run_id,
             "event_type": "FAIL",
             "job_name": job_name,
-            "job_namespace": PROJECT_NAME,
+            "job_namespace": config.PROJECT_NAME,
             "producer": producer,
             "input_tables": "[]",
             "output_table": output_table,
@@ -554,7 +553,7 @@ def cmd_generate_docs() -> None:
         event = dict(zip(start_columns, row))
         start_lookup[event["job_name"]] = event
 
-    lineage_dir = PROJECT_ROOT / "governance" / "lineage"
+    lineage_dir = config.PROJECT_ROOT / "governance" / "lineage"
     lineage_dir.mkdir(parents=True, exist_ok=True)
     generated = 0
 
@@ -588,7 +587,7 @@ def cmd_generate_docs() -> None:
             }
             # Try to find the DQ rules file
             spec_slug = _job_name_to_slug(job_name)
-            dq_rules_path = PROJECT_ROOT / "governance" / "dq-rules" / f"{spec_slug}.json"
+            dq_rules_path = config.PROJECT_ROOT / "governance" / "dq-rules" / f"{spec_slug}.json"
             if dq_rules_path.exists():
                 dq_facet["rulesFile"] = f"governance/dq-rules/{spec_slug}.json"
             run_facets["brightsmith_dataQuality"] = dq_facet
@@ -624,7 +623,7 @@ def cmd_generate_docs() -> None:
             input_table_names = json.loads(input_tables_json)
             for inp_name in input_table_names:
                 inputs.append({
-                    "namespace": PROJECT_NAME,
+                    "namespace": config.PROJECT_NAME,
                     "name": inp_name,
                 })
         except (json.JSONDecodeError, TypeError):
@@ -633,8 +632,7 @@ def cmd_generate_docs() -> None:
         # Build output with schema if available
         output_facets: dict = {}
         try:
-            from brightsmith.config import WAREHOUSE_PATH
-            catalog = get_catalog(WAREHOUSE_PATH, CATALOG_PATH)
+            catalog = get_catalog(config.WAREHOUSE_PATH, config.CATALOG_PATH)
             iceberg_table = catalog.load_table(event["output_table"])
             schema_fields = [
                 {"name": f.name, "type": str(f.field_type)}
@@ -661,14 +659,14 @@ def cmd_generate_docs() -> None:
                 "facets": run_facets,
             },
             "job": {
-                "namespace": PROJECT_NAME,
+                "namespace": config.PROJECT_NAME,
                 "name": job_name,
                 "facets": job_facets,
             },
             "inputs": inputs,
             "outputs": [
                 {
-                    "namespace": PROJECT_NAME,
+                    "namespace": config.PROJECT_NAME,
                     "name": event["output_table"],
                     "facets": output_facets,
                 }
@@ -771,7 +769,7 @@ def cmd_verify(spec_name: str) -> int:
 
     # Check 7: Governance doc exists
     slug = _job_name_to_slug(spec_name)
-    lineage_dir = PROJECT_ROOT / "governance" / "lineage"
+    lineage_dir = config.PROJECT_ROOT / "governance" / "lineage"
     doc_path = lineage_dir / f"{slug}.json"
     if doc_path.exists():
         checks.append(("Governance doc", True, str(doc_path.name)))

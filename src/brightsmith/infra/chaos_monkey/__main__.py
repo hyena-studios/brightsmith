@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
-from brightsmith.config import PROJECT_ROOT
+from brightsmith import config
 
 
 def main() -> None:
@@ -65,11 +64,11 @@ def _cmd_inject(args) -> None:
     source = catalog.load_table(args.table)
     records = read_with_duckdb(source)
 
-    config = InjectionConfig(rate=args.rate, seed=args.seed)
-    injector = ChaosInjector(catalog, config)
+    injection_config = InjectionConfig(rate=args.rate, seed=args.seed)
+    injector = ChaosInjector(catalog, injection_config)
     _, manifest = injector.inject(ns, tbl, records)
 
-    manifest_dir = PROJECT_ROOT / "governance" / "chaos-manifests"
+    manifest_dir = config.PROJECT_ROOT / "governance" / "chaos-manifests"
     from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     manifest_path = manifest_dir / f"{ns}-{tbl}-{ts}.json"
@@ -91,7 +90,7 @@ def _cmd_reconcile(args) -> None:
     if args.output:
         output_path = Path(args.output)
     else:
-        manifest_dir = PROJECT_ROOT / "governance" / "chaos-manifests"
+        manifest_dir = config.PROJECT_ROOT / "governance" / "chaos-manifests"
         from datetime import datetime, timezone
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         source_name = manifest.source_table.replace(".", "-")
@@ -118,7 +117,7 @@ def _cmd_cleanup(args) -> None:
 
 
 def _cmd_manifest(args) -> None:
-    manifest_dir = PROJECT_ROOT / "governance" / "chaos-manifests"
+    manifest_dir = config.PROJECT_ROOT / "governance" / "chaos-manifests"
     files = sorted(manifest_dir.glob("*.json"), reverse=True)
     if not files:
         print("No manifests found.")

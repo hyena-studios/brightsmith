@@ -7,8 +7,8 @@ or any scheduler.
 
 Usage:
     python -m brightsmith.run                          # Full pipeline
-    python -m brightsmith.run --zone raw               # Raw zone only
-    python -m brightsmith.run --zone base              # Base zone only
+    python -m brightsmith.run --zone bronze            # Bronze zone only
+    python -m brightsmith.run --zone silver            # Silver zone only
     python -m brightsmith.run --validate-only          # DQ + contracts, no data writes
     python -m brightsmith.run --dry-run                # Check readiness, no execution
     python -m brightsmith.run --output json            # JSON to stdout
@@ -170,29 +170,43 @@ def register_zone(zone: str, module_path: str) -> None:
     """Register a zone's transformation module.
 
     Args:
-        zone: Zone name (raw, base, consumable, ai_ready).
-        module_path: Dotted module path with function (e.g., "raw.run_ingest:main").
+        zone: Zone name (bronze, silver, gold, or mcp).  Alias names
+              (raw/base/consumable/ai_ready) are also accepted and normalized
+              to the canonical name before storage.
+        module_path: Dotted module path with function (e.g., "bronze.run_ingest:main").
     """
-    _ZONE_REGISTRY[zone] = module_path
+    from brightsmith.infra.governance.serializers import normalize_zone
+    canonical = normalize_zone(zone) or zone
+    _ZONE_REGISTRY[canonical] = module_path
 
 
 def _load_zone_registry() -> None:
-    """Load zone registrations from domain manifest if not already registered."""
+    """Load zone registrations from domain manifest if not already registered.
+
+    Zone names are normalized to canonical medallion names (bronze/silver/gold/mcp)
+    at this boundary so that manifests using legacy aliases (raw/base/consumable/
+    ai_ready) continue to work transparently.
+    """
     if _ZONE_REGISTRY:
         return
 
+    from brightsmith.domain_loader import load_manifest
+    from brightsmith.infra.governance.serializers import normalize_zone
     try:
-        from brightsmith.domain_loader import load_manifest
         manifest = load_manifest()
-        pipeline = getattr(manifest, "pipeline", None)
-        if pipeline:
-            for zone_name, zone_config in pipeline.items():
-                module = zone_config.get("module", "")
-                function = zone_config.get("function", "main")
-                if module:
-                    _ZONE_REGISTRY[zone_name] = f"{module}:{function}"
-    except Exception:
-        pass
+    except FileNotFoundError:
+        # No domain manifest yet (fresh project) — legitimately leaves the
+        # registry empty. A malformed manifest (yaml/parse error) is NOT caught
+        # here: it must propagate so a broken config fails loudly.
+        return
+    pipeline = getattr(manifest, "pipeline", None)
+    if pipeline:
+        for zone_name, zone_config in pipeline.items():
+            module = zone_config.get("module", "")
+            function = zone_config.get("function", "main")
+            if module:
+                canonical = normalize_zone(zone_name) or zone_name
+                _ZONE_REGISTRY[canonical] = f"{module}:{function}"
 
 
 def _execute_zone_module(zone: str) -> dict:
@@ -221,6 +235,41 @@ def _execute_zone_module(zone: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _preflight_relocation(zones: list[str]) -> None:
+    """Loud-fail if any table in the requested zones is unreadable because the
+    warehouse was moved/cloned (baked-in foreign absolute paths).
+
+    Re-raises only :class:`WarehouseRelocationError`; any other table-load error
+    is left for the per-zone execution to handle.
+    """
+    if not zones:
+        return
+    from brightsmith.config import CATALOG_PATH, WAREHOUSE_PATH
+    from brightsmith.infra.iceberg_setup import WarehouseRelocationError, get_catalog
+
+    if not Path(CATALOG_PATH).exists():
+        return  # fresh project — nothing baked in yet
+
+    from brightsmith.infra.governance.serializers import ZONE_ALIASES
+
+    catalog = get_catalog(WAREHOUSE_PATH, CATALOG_PATH)
+    namespaces = {ns[0] for ns in catalog.list_namespaces()}
+    for zone in zones:
+        # zone plus any alias namespace that canonicalizes to it (raw→bronze, …)
+        aliases = {ns for ns, canon in ZONE_ALIASES.items() if canon == zone}
+        for candidate in {zone, *aliases}:
+            if candidate not in namespaces:
+                continue
+            for ident in catalog.list_tables(candidate):
+                try:
+                    catalog.load_table(ident)
+                except WarehouseRelocationError:
+                    raise
+                except Exception:
+                    # Not a relocation problem — leave it for zone execution.
+                    pass
+
+
 def run_pipeline(
     zones: list[str] | None = None,
     validate_only: bool = False,
@@ -247,6 +296,22 @@ def run_pipeline(
         result.exit_code = EXIT_CONFIG_ERROR
         result.finalize()
         return result
+
+    # Preflight: a moved/cloned warehouse would read silently empty. Fail loudly
+    # with the exact repair command instead of producing a bogus all-green run.
+    # Scoped to the tables in the zones we are about to touch — a stale legacy
+    # table in some other namespace must not block an unrelated run.
+    if not dry_run:
+        from brightsmith.infra.iceberg_setup import WarehouseRelocationError
+
+        try:
+            _preflight_relocation(zones)
+        except WarehouseRelocationError as exc:
+            print(str(exc), file=sys.stderr)
+            result.status = "CONFIG_ERROR"
+            result.exit_code = EXIT_CONFIG_ERROR
+            result.finalize()
+            return result
 
     if dry_run:
         result.status = "DRY_RUN"
@@ -289,8 +354,19 @@ def run_pipeline(
                 result.finalize()
                 return result
 
-        # 3. Post-write: run DQ rules
-        dq_ok, dq_passed, dq_failed, p0_failures = _run_dq_for_zone(zone)
+        # 3. Post-write: run DQ rules against the real warehouse.
+        #    Rule-level failures (including errored P0 rules) come back as
+        #    p0_failures and become a DQ_FAILURE. A failure to EXECUTE DQ at
+        #    all (catalog/engine/governance-write error) is infrastructure —
+        #    it must surface as TRANSFORM_ERROR, never be swallowed into a pass.
+        try:
+            dq_ok, dq_passed, dq_failed, p0_failures = _run_dq_for_zone(zone)
+        except Exception as e:
+            zr.status = "FAILED"
+            zr.error = f"DQ execution failed for zone '{zone}': {e}"
+            result.add_zone_result(zone, zr)
+            result.finalize()
+            return result
         zr.dq_rules_passed = dq_passed
         zr.dq_rules_failed = dq_failed
         zr.dq_p0_passed = dq_ok
@@ -326,99 +402,163 @@ def run_pipeline(
 
 
 def _run_dq_for_zone(zone: str) -> tuple[bool, int, int, list[str]]:
-    """Run DQ rules for a zone. Returns (p0_ok, passed, failed, p0_failures)."""
-    try:
-        from brightsmith.infra.dq_runner import load_rules, run_rules
-        from brightsmith.config import CATALOG_PATH, WAREHOUSE_PATH
+    """Run DQ rules for a zone against the real Iceberg warehouse.
 
-        rules = load_rules()
-        zone_rules = [r for r in rules if _rule_matches_zone(r, zone)]
-        if not zone_rules:
-            return (True, 0, 0, [])
+    Returns (p0_ok, passed, failed, p0_failures).
 
-        # Run via DQ runner
-        passed = 0
-        failed = 0
-        p0_failures = []
-        for rule in zone_rules:
-            status = rule.get("status", "active")
-            if status not in ("active", "approved"):
-                continue
-            # Simplified: count rules as passed (actual execution needs Iceberg)
-            passed += 1
+    Execution goes through ``dq_runner.run_rules()``, which runs every
+    approved/active SQL rule against real Iceberg data and records the run in
+    the governance warehouse. We then filter its per-rule results down to the
+    rules that touch this zone and derive the gate outcome.
 
-        return (len(p0_failures) == 0, passed, failed, p0_failures)
-    except Exception:
+    An errored P0 rule counts as a FAILURE (decision D3 — a gate that cannot
+    fail is worse than no gate). ``run_rules`` already sets ``passed=False`` on
+    errored rules, so no special-casing of ``error`` is needed here.
+
+    Raises:
+        Whatever ``run_rules`` raises on an infrastructure failure (missing
+        catalog, engine error, governance-write error). The caller maps that
+        to TRANSFORM_ERROR — it is never swallowed into a passing gate.
+    """
+    from brightsmith.infra.dq_runner import load_rules, run_rules
+
+    zone_rules = [r for r in load_rules() if _rule_matches_zone(r, zone)]
+    if not zone_rules:
         return (True, 0, 0, [])
+
+    zone_rule_ids = {r["rule_id"] for r in zone_rules}
+    priorities = {r["rule_id"]: str(r.get("priority", "P3")).upper() for r in zone_rules}
+
+    result = run_rules()
+
+    passed = 0
+    failed = 0
+    p0_failures: list[str] = []
+    for r in result["results"]:
+        rule_id = r["rule_id"]
+        if rule_id not in zone_rule_ids:
+            continue
+        if r["passed"]:
+            passed += 1
+        else:
+            failed += 1
+            if priorities.get(rule_id) == "P0":
+                p0_failures.append(rule_id)
+
+    return (len(p0_failures) == 0, passed, failed, p0_failures)
 
 
 def _rule_matches_zone(rule: dict, zone: str) -> bool:
-    """Check if a DQ rule applies to a zone."""
-    tables = rule.get("tables", [])
-    for t in tables:
-        if t.startswith(f"{zone}."):
-            return True
-    return False
+    """Check if a DQ rule applies to a canonical zone.
+
+    Matches on namespace, normalizing aliases via ``ZONE_ALIASES`` so a rule
+    declared against ``raw.foo`` matches the canonical ``bronze`` zone and vice
+    versa. Considers both the rule's declared ``tables`` and the table
+    references parsed from its SQL.
+    """
+    from brightsmith.infra.dq_runner import _extract_table_refs
+    from brightsmith.infra.governance.serializers import ZONE_ALIASES
+
+    namespaces: set[str] = set()
+    for table in rule.get("tables", []):
+        if isinstance(table, str) and "." in table:
+            namespaces.add(table.split(".", 1)[0])
+    sql = rule.get("sql")
+    if isinstance(sql, str):
+        for ns, _tbl in _extract_table_refs(sql):
+            namespaces.add(ns)
+    return any(ZONE_ALIASES.get(ns, ns) == zone for ns in namespaces)
 
 
 def _check_contracts_for_zone(zone: str) -> bool:
-    """Check if all contracts for a zone pass verification."""
-    try:
-        from brightsmith.infra.contract import list_contracts, verify_contract
-        contracts = list_contracts()
-        zone_contracts = [c for c in contracts if c.get("table", "").startswith(f"{zone}.")]
-        for c in zone_contracts:
-            results = verify_contract(c["name"])
-            if any(r.status == "FAIL" for r in results):
-                return False
+    """Verify a source zone's contracts before consuming it.
+
+    Returns True if every contract passes OR there are no contracts to check
+    (a warning is logged in the latter case — absence of a contract is not a
+    failure). Returns False if any contract fails verification.
+
+    Verification/infrastructure errors are NOT swallowed into a pass: if
+    ``list_contracts``/``verify_contract`` raise, the exception propagates and
+    fails the pipeline rather than masquerading as a clean gate.
+    """
+    from brightsmith.infra.contract import list_contracts, verify_contract
+
+    contracts = list_contracts()
+    zone_contracts = [c for c in contracts if _contract_matches_zone(c, zone)]
+    if not zone_contracts:
+        logger.warning("No contracts found for zone '%s'; skipping contract pre-check", zone)
         return True
-    except Exception:
-        return True  # No contracts = no failure
+
+    for c in zone_contracts:
+        results = verify_contract(c["name"])
+        if any(r.status == "FAIL" for r in results):
+            return False
+    return True
+
+
+def _contract_matches_zone(contract: dict, zone: str) -> bool:
+    """Check if a contract's table belongs to a canonical zone (alias-aware)."""
+    from brightsmith.infra.governance.serializers import ZONE_ALIASES
+
+    table = contract.get("table", "")
+    if not isinstance(table, str) or "." not in table:
+        return False
+    ns = table.split(".", 1)[0]
+    return ZONE_ALIASES.get(ns, ns) == zone
 
 
 def _verify_contracts_for_zone(zone: str) -> tuple[int, int]:
-    """Verify contracts for a zone. Returns (valid_count, violated_count)."""
-    try:
-        from brightsmith.infra.contract import list_contracts, verify_contract
-        contracts = list_contracts()
-        zone_contracts = [c for c in contracts if c.get("table", "").startswith(f"{zone}.")]
-        valid = 0
-        violated = 0
-        for c in zone_contracts:
-            results = verify_contract(c["name"])
-            if any(r.status == "FAIL" for r in results):
-                violated += 1
-            else:
-                valid += 1
-        return (valid, violated)
-    except Exception:
-        return (0, 0)
+    """Verify contracts for a zone. Returns (valid_count, violated_count).
+
+    Verification/infrastructure errors are NOT swallowed into ``(0, 0)`` — that
+    would make a broken verifier indistinguishable from "no contracts to check".
+    If ``list_contracts``/``verify_contract`` raise, the exception propagates
+    (consistent with the ``_check_contracts_for_zone`` pre-check).
+
+    Uses alias-aware matching via ``_contract_matches_zone`` so contracts
+    declared under legacy namespaces (e.g. ``raw.``, ``consumable.``) are
+    correctly associated with their canonical zones.
+    """
+    from brightsmith.infra.contract import list_contracts, verify_contract
+    contracts = list_contracts()
+    zone_contracts = [c for c in contracts if _contract_matches_zone(c, zone)]
+    valid = 0
+    violated = 0
+    for c in zone_contracts:
+        results = verify_contract(c["name"])
+        if any(r.status == "FAIL" for r in results):
+            violated += 1
+        else:
+            valid += 1
+    return (valid, violated)
 
 
 def _verify_golden_datasets() -> GoldenResult:
-    """Run golden dataset verification across all specs."""
-    try:
-        from brightsmith.infra.golden_dataset import list_golden_datasets, verify_golden_dataset
-        datasets = list_golden_datasets()
-        if not datasets:
-            return GoldenResult()
+    """Run golden dataset verification across all specs.
 
-        total_checked = 0
-        total_passed = 0
-        for ds in datasets:
-            results = verify_golden_dataset(ds["spec"])
-            total_checked += len(results)
-            total_passed += sum(1 for r in results if r.status in ("MATCH", "CLOSE"))
-
-        rate = (total_passed / total_checked * 100.0) if total_checked > 0 else 0.0
-        return GoldenResult(
-            checked=total_checked,
-            passed=total_passed,
-            failed=total_checked - total_passed,
-            pass_rate=rate,
-        )
-    except Exception:
+    A verification/infrastructure error is NOT swallowed into an empty
+    ``GoldenResult()`` (which would look like "all clear / nothing to check").
+    If golden-dataset loading or verification raises, the exception propagates.
+    """
+    from brightsmith.infra.golden_dataset import list_golden_datasets, verify_golden_dataset
+    datasets = list_golden_datasets()
+    if not datasets:
         return GoldenResult()
+
+    total_checked = 0
+    total_passed = 0
+    for ds in datasets:
+        results = verify_golden_dataset(ds["spec"])
+        total_checked += len(results)
+        total_passed += sum(1 for r in results if r.status in ("MATCH", "CLOSE"))
+
+    rate = (total_passed / total_checked * 100.0) if total_checked > 0 else 0.0
+    return GoldenResult(
+        checked=total_checked,
+        passed=total_passed,
+        failed=total_checked - total_passed,
+        pass_rate=rate,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -463,8 +603,13 @@ def check_headless_ready() -> tuple[bool, list[str]]:
                 content = py_file.read_text()
                 if "import anthropic" in content or "from anthropic" in content:
                     issues.append(f"LLM import found in {py_file.relative_to(PROJECT_ROOT)}")
-            except Exception:
-                pass
+            except (OSError, UnicodeDecodeError) as e:
+                # Can't read a source file to verify it has no LLM imports —
+                # report it as an issue rather than silently assuming it's clean.
+                issues.append(
+                    f"Could not read {py_file.relative_to(PROJECT_ROOT)} to check "
+                    f"for LLM imports: {e}"
+                )
 
     # Contracts exist and pass
     try:
@@ -477,8 +622,12 @@ def check_headless_ready() -> tuple[bool, list[str]]:
                 results = verify_contract(c["name"])
                 if any(r.status == "FAIL" for r in results):
                     issues.append(f"Contract '{c['name']}' verification FAILED")
-    except Exception:
-        pass
+    except Exception as e:
+        # Readiness diagnostic: a broken contract layer must surface as a
+        # blocking readiness issue, never a silent "ready". Broad by intent —
+        # any failure to load/verify contracts means we cannot certify ready.
+        # (Allowlisted in tests/infra/test_no_swallowed_exceptions.py.)
+        issues.append(f"Contract verification could not be completed: {e}")
 
     # DQ rules exist
     from brightsmith.config import DQ_RULES_DIR

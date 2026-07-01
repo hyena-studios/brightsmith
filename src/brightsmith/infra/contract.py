@@ -53,6 +53,14 @@ _TYPE_MAP = {
 }
 
 
+def _to_contract_name(name: str) -> str:
+    """Normalize a contract identifier: accept a bare contract name, a bare
+    table name, or a namespace-qualified table name (e.g. 'gold.widget' or
+    'gold.company_financials') and return the canonical contract name."""
+    tbl = name.split(".", 1)[1] if "." in name else name
+    return tbl.replace("_", "-")
+
+
 def _iceberg_type_to_str(field_type) -> str:
     """Convert a PyIceberg field type to a simple string name."""
     type_str = str(field_type).lower()
@@ -128,14 +136,22 @@ def load_contract(name: str, contracts_dir: Path | None = None) -> dict | None:
 
 
 def save_contract(contract: dict, contracts_dir: Path | None = None) -> Path:
-    """Save a contract to Iceberg governance tables.
+    """Save a contract via dual-write: YAML file + Iceberg governance tables.
+
+    The YAML file is authoritative for reads (``load_contract``,
+    ``list_contracts``, ``verify_contract`` all read it). The Iceberg governance
+    tables keep a queryable mirror. The file is written unconditionally so the
+    default ``generate_contract`` → ``save_contract(contract, None)`` flow
+    persists a file that the read path can find (audit finding A2, decision D1 —
+    mirrors WP-1.1's dual-write).
 
     Args:
         contract: Contract dict to save.
-        contracts_dir: Override for contracts directory.
+        contracts_dir: Override for contracts directory (default
+            ``governance/data-contracts/`` under PROJECT_ROOT).
 
     Returns:
-        The export path that an explicit exporter would write.
+        The path of the YAML file written.
     """
     from brightsmith.config import PROJECT_ROOT
 
@@ -143,13 +159,15 @@ def save_contract(contract: dict, contracts_dir: Path | None = None) -> Path:
     name = contract.get("metadata", {}).get("name", "unnamed")
     path = cdir / f"{name}.yaml"
 
+    # Dual-write 1: always persist the YAML file that load/list/verify read.
+    cdir.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.dump(contract, default_flow_style=False, sort_keys=False))
+
+    # Dual-write 2: mirror to the Iceberg governance tables.
     from brightsmith.infra.governance_db import sync_contract as _sync_contract
 
     rel_path = str(path.relative_to(PROJECT_ROOT)) if path.is_relative_to(PROJECT_ROOT) else str(path)
     _sync_contract(contract, rel_path)
-    if contracts_dir is not None and not path.is_relative_to(PROJECT_ROOT):
-        cdir.mkdir(parents=True, exist_ok=True)
-        path.write_text(yaml.dump(contract, default_flow_style=False, sort_keys=False))
     return path
 
 
@@ -376,6 +394,7 @@ def verify_contract(
     Returns:
         List of verification results.
     """
+    name = _to_contract_name(name)
     contract = load_contract(name, contracts_dir)
     if contract is None:
         return [ContractVerificationResult("load", "FAIL", f"Contract '{name}' not found")]

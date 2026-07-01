@@ -1,8 +1,8 @@
 """Chaos monkey — schema-agnostic adversarial DQ testing.
 
 Injects realistic data corruption into shadow copies of Iceberg tables
-to stress-test DQ rule coverage. Works against any zone (raw, base,
-consumable) by introspecting PyIceberg schemas and mapping column types
+to stress-test DQ rule coverage. Works against any zone (bronze, silver,
+gold) by introspecting PyIceberg schemas and mapping column types
 to appropriate corruption strategies.
 
 Safety: Three-layer kill switch — CHAOS_MONKEY_ENABLED + GRIST_ENV=dev

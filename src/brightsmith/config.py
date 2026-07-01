@@ -3,119 +3,221 @@
 Global settings that apply across all zones and pipelines.
 
 Domain projects override these by setting environment variables or calling
-brightsmith.config.configure() before any other brightsmith imports.
+``brightsmith.config.configure()``. Unlike the previous design, ``configure()``
+now takes effect *after* other modules have been imported — consumers read the
+live configuration through :func:`get_config` (or the legacy module-level names,
+which resolve to the same live snapshot) at call time, not at import time.
+
+Resolution priority (highest first):
+    1. ``configure(...)`` arguments / direct attribute assignment
+    2. ``BRIGHTSMITH_*`` environment variables
+    3. ``GRIST_*`` environment variables (deprecated — emits a DeprecationWarning)
+    4. Built-in defaults (project root = current working directory)
 """
 
+from __future__ import annotations
+
+import dataclasses
 import os
+import sys
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 
-def _resolve_project_root() -> Path:
-    """Determine the project root.
+def _env(name: str, *, grist: str | None = None, default: str | None = None) -> str | None:
+    """Read an environment variable, honouring the deprecated ``GRIST_*`` fallback.
 
-    Priority:
-    1. BRIGHTSMITH_PROJECT_ROOT env var (explicit override)
-    2. GRIST_PROJECT_ROOT env var (backward compatibility)
-    3. Current working directory (domain project runs from its own root)
+    Reading a ``GRIST_*`` variable (when the ``BRIGHTSMITH_*`` equivalent is unset)
+    emits a :class:`DeprecationWarning` but still returns the value (decision D6).
     """
-    env_root = os.environ.get("BRIGHTSMITH_PROJECT_ROOT") or os.environ.get("GRIST_PROJECT_ROOT")
-    if env_root:
-        return Path(env_root).resolve()
-    return Path.cwd().resolve()
+    val = os.environ.get(name)
+    if val is not None:
+        return val
+    if grist is not None:
+        gval = os.environ.get(grist)
+        if gval is not None:
+            warnings.warn(
+                f"Environment variable {grist} is deprecated; use {name} instead. "
+                "GRIST_* variables will be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return gval
+    return default
 
 
-# Project root — domain projects set BRIGHTSMITH_PROJECT_ROOT or run from their root
-PROJECT_ROOT = _resolve_project_root()
+@dataclass(frozen=True)
+class BrightsmithConfig:
+    """Immutable snapshot of the resolved Brightsmith configuration.
 
-# Project name (used in catalog naming, lineage namespaces, etc.)
-PROJECT_NAME = os.environ.get("BRIGHTSMITH_PROJECT_NAME", os.environ.get("GRIST_PROJECT_NAME", "brightsmith"))
+    Obtain the current snapshot via :func:`get_config`. The snapshot is replaced
+    wholesale whenever :func:`configure` is called or a legacy module-level name is
+    assigned, so a reference held by a caller is always internally consistent.
+    """
 
-# Human approval gate toggle (global)
-# When True: proposals pause for human review before proceeding
-# When False: auto-promote if confidence >= module-level CONFIDENCE_FLOOR
-#
-# This controls ALL human-in-the-loop gates:
-#   - Entity resolution: proposed ID mappings
-#   - Concept normalization: proposed concept → business term mappings
-#   - Data modeling: conceptual → logical → physical model progression
-#   - DQ rule lifecycle: proposed → approved progression
-REQUIRE_HUMAN_APPROVAL = (
-    os.environ.get("BRIGHTSMITH_REQUIRE_HUMAN_APPROVAL", os.environ.get("GRIST_REQUIRE_HUMAN_APPROVAL", "true"))
-    .lower() == "true"
-)
+    project_root: Path
+    project_name: str
+    require_human_approval: bool
+    confidence_floor: float
+    # Data quality paths
+    dq_rules_dir: Path
+    dq_results_dir: Path
+    dq_scorecards_dir: Path
+    dq_templates_dir: Path
+    # Golden datasets
+    golden_datasets_dir: Path
+    # Governance workflow dirs
+    pipeline_state_dir: Path
+    approvals_dir: Path
+    audit_trail_dir: Path
+    cab_decisions_dir: Path
+    # Iceberg catalog / warehouses
+    warehouse_path: Path
+    catalog_path: Path
+    governance_warehouse: Path
 
-# Concept normalization confidence floor
-# Mappings below this threshold require human approval before promotion
-CONFIDENCE_FLOOR = float(
-    os.environ.get("BRIGHTSMITH_CONFIDENCE_FLOOR", os.environ.get("GRIST_CONFIDENCE_FLOOR", "0.7"))
-)
 
-# Data quality paths
-DQ_RULES_DIR = PROJECT_ROOT / "governance" / "dq-rules"
-DQ_RESULTS_DIR = PROJECT_ROOT / "governance" / "dq-results"
-DQ_SCORECARDS_DIR = PROJECT_ROOT / "governance" / "dq-scorecards"
-DQ_TEMPLATES_DIR = PROJECT_ROOT / "governance" / "dq-rule-templates"
+# Maps the legacy module-level (UPPER_CASE) names to dataclass fields. Used by the
+# back-compat shim (module __getattr__/__setattr__) so existing imports such as
+# ``from brightsmith.config import PROJECT_ROOT`` keep working for one release.
+_FIELD_MAP = {
+    "PROJECT_ROOT": "project_root",
+    "PROJECT_NAME": "project_name",
+    "REQUIRE_HUMAN_APPROVAL": "require_human_approval",
+    "CONFIDENCE_FLOOR": "confidence_floor",
+    "DQ_RULES_DIR": "dq_rules_dir",
+    "DQ_RESULTS_DIR": "dq_results_dir",
+    "DQ_SCORECARDS_DIR": "dq_scorecards_dir",
+    "DQ_TEMPLATES_DIR": "dq_templates_dir",
+    "GOLDEN_DATASETS_DIR": "golden_datasets_dir",
+    "PIPELINE_STATE_DIR": "pipeline_state_dir",
+    "APPROVALS_DIR": "approvals_dir",
+    "AUDIT_TRAIL_DIR": "audit_trail_dir",
+    "CAB_DECISIONS_DIR": "cab_decisions_dir",
+    "WAREHOUSE_PATH": "warehouse_path",
+    "CATALOG_PATH": "catalog_path",
+    "GOVERNANCE_WAREHOUSE": "governance_warehouse",
+}
 
-# Golden datasets — known-correct reference values for pipeline output validation
-GOLDEN_DATASETS_DIR = PROJECT_ROOT / "governance" / "golden-datasets"
 
-# Pipeline gate — programmatic enforcement of agent execution order
-PIPELINE_STATE_DIR = PROJECT_ROOT / "governance" / "pipeline-state"
+def _derive(
+    project_root: Path,
+    project_name: str,
+    require_human_approval: bool,
+    confidence_floor: float,
+) -> BrightsmithConfig:
+    """Build a full config snapshot from the four primary inputs."""
+    pr = Path(project_root)
+    return BrightsmithConfig(
+        project_root=pr,
+        project_name=project_name,
+        require_human_approval=require_human_approval,
+        confidence_floor=confidence_floor,
+        dq_rules_dir=pr / "governance" / "dq-rules",
+        dq_results_dir=pr / "governance" / "dq-results",
+        dq_scorecards_dir=pr / "governance" / "dq-scorecards",
+        dq_templates_dir=pr / "governance" / "dq-rule-templates",
+        golden_datasets_dir=pr / "governance" / "golden-datasets",
+        pipeline_state_dir=pr / "governance" / "pipeline-state",
+        approvals_dir=pr / "governance" / "approvals",
+        audit_trail_dir=pr / "governance" / "audit-trail",
+        cab_decisions_dir=pr / "governance" / "cab-decisions",
+        warehouse_path=pr / "data" / "bronze" / "iceberg_warehouse",
+        catalog_path=pr / "data" / "catalog" / "catalog.db",
+        governance_warehouse=pr / "data" / "governance" / "iceberg_warehouse",
+    )
 
-# Human approval documents
-APPROVALS_DIR = PROJECT_ROOT / "governance" / "approvals"
 
-# Audit trail
-AUDIT_TRAIL_DIR = PROJECT_ROOT / "governance" / "audit-trail"
+def _build_from_env() -> BrightsmithConfig:
+    """Resolve the default configuration from environment variables."""
+    env_root = _env("BRIGHTSMITH_PROJECT_ROOT", grist="GRIST_PROJECT_ROOT")
+    project_root = Path(env_root).resolve() if env_root else Path.cwd().resolve()
+    project_name = _env("BRIGHTSMITH_PROJECT_NAME", grist="GRIST_PROJECT_NAME", default="brightsmith")
+    require_human_approval = (
+        _env(
+            "BRIGHTSMITH_REQUIRE_HUMAN_APPROVAL",
+            grist="GRIST_REQUIRE_HUMAN_APPROVAL",
+            default="true",
+        ).lower()
+        == "true"
+    )
+    confidence_floor = float(
+        _env("BRIGHTSMITH_CONFIDENCE_FLOOR", grist="GRIST_CONFIDENCE_FLOOR", default="0.7")
+    )
+    return _derive(project_root, project_name, require_human_approval, confidence_floor)
 
-# CAB (Change Approval Board) decisions
-CAB_DECISIONS_DIR = PROJECT_ROOT / "governance" / "cab-decisions"
 
-# Iceberg catalog paths (shared catalog, per-zone warehouses)
-WAREHOUSE_PATH = PROJECT_ROOT / "data" / "bronze" / "iceberg_warehouse"
-CATALOG_PATH = PROJECT_ROOT / "data" / "catalog" / "catalog.db"
+# The single source of truth — replaced wholesale by configure()/assignment.
+_CONFIG: BrightsmithConfig = _build_from_env()
 
-# Governance warehouse (separate from zone warehouses, shared by lineage + governance DB)
-GOVERNANCE_WAREHOUSE = PROJECT_ROOT / "data" / "governance" / "iceberg_warehouse"
+
+def get_config() -> BrightsmithConfig:
+    """Return the current frozen configuration snapshot.
+
+    Always reflects the latest :func:`configure` call (or legacy attribute
+    assignment), even from modules imported before ``configure`` was called.
+    """
+    return _CONFIG
 
 
 def configure(
     project_root: Path | str | None = None,
     project_name: str | None = None,
     require_human_approval: bool | None = None,
-):
+) -> BrightsmithConfig:
     """Reconfigure brightsmith for a domain project.
 
-    Call this before any other brightsmith imports if you need to override defaults.
+    Unlike the previous implementation, this takes effect even for modules that
+    were already imported, because consumers read paths at call time via
+    :func:`get_config` (or the live legacy names).
 
     Args:
         project_root: Path to the domain project root directory.
         project_name: Name for this project (used in lineage, catalog naming).
         require_human_approval: Toggle for human-in-the-loop gates.
+
+    Returns:
+        The newly-resolved configuration snapshot.
     """
-    global PROJECT_ROOT, PROJECT_NAME, REQUIRE_HUMAN_APPROVAL
-    global DQ_RULES_DIR, DQ_RESULTS_DIR, DQ_SCORECARDS_DIR, DQ_TEMPLATES_DIR
-    global GOLDEN_DATASETS_DIR
-    global PIPELINE_STATE_DIR, APPROVALS_DIR, AUDIT_TRAIL_DIR, CAB_DECISIONS_DIR
-    global WAREHOUSE_PATH, CATALOG_PATH, GOVERNANCE_WAREHOUSE
+    global _CONFIG
+    pr = Path(project_root).resolve() if project_root is not None else _CONFIG.project_root
+    pn = project_name if project_name is not None else _CONFIG.project_name
+    rha = require_human_approval if require_human_approval is not None else _CONFIG.require_human_approval
+    _CONFIG = _derive(pr, pn, rha, _CONFIG.confidence_floor)
+    return _CONFIG
 
-    if project_root is not None:
-        PROJECT_ROOT = Path(project_root).resolve()
-    if project_name is not None:
-        PROJECT_NAME = project_name
-    if require_human_approval is not None:
-        REQUIRE_HUMAN_APPROVAL = require_human_approval
 
-    # Rebuild derived paths
-    DQ_RULES_DIR = PROJECT_ROOT / "governance" / "dq-rules"
-    DQ_RESULTS_DIR = PROJECT_ROOT / "governance" / "dq-results"
-    DQ_SCORECARDS_DIR = PROJECT_ROOT / "governance" / "dq-scorecards"
-    DQ_TEMPLATES_DIR = PROJECT_ROOT / "governance" / "dq-rule-templates"
-    GOLDEN_DATASETS_DIR = PROJECT_ROOT / "governance" / "golden-datasets"
-    PIPELINE_STATE_DIR = PROJECT_ROOT / "governance" / "pipeline-state"
-    APPROVALS_DIR = PROJECT_ROOT / "governance" / "approvals"
-    AUDIT_TRAIL_DIR = PROJECT_ROOT / "governance" / "audit-trail"
-    CAB_DECISIONS_DIR = PROJECT_ROOT / "governance" / "cab-decisions"
-    WAREHOUSE_PATH = PROJECT_ROOT / "data" / "bronze" / "iceberg_warehouse"
-    CATALOG_PATH = PROJECT_ROOT / "data" / "catalog" / "catalog.db"
-    GOVERNANCE_WAREHOUSE = PROJECT_ROOT / "data" / "governance" / "iceberg_warehouse"
+# ---------------------------------------------------------------------------
+# Back-compat shim
+#
+# Domain packs and tests still import/patch the module-level UPPER_CASE names
+# (e.g. ``from brightsmith.config import PROJECT_ROOT`` or
+# ``config.DQ_RULES_DIR = tmp``). We expose them as live views onto _CONFIG by
+# swapping this module's class for one that intercepts attribute access:
+#   * reads resolve from the current snapshot
+#   * writes replace the relevant field in the snapshot (no recompute of derived
+#     paths — matching the historical direct-assignment behaviour)
+# Because managed names never become real module __dict__ entries, monkeypatch +
+# undo never leaves a stale value shadowing the live config.
+# ---------------------------------------------------------------------------
+
+
+class _ConfigModule(ModuleType):
+    def __getattr__(self, name: str):  # only called when normal lookup fails
+        field = _FIELD_MAP.get(name)
+        if field is not None:
+            return getattr(_CONFIG, field)
+        raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
+
+    def __setattr__(self, name: str, value) -> None:
+        field = _FIELD_MAP.get(name)
+        if field is not None:
+            global _CONFIG
+            _CONFIG = dataclasses.replace(_CONFIG, **{field: value})
+        else:
+            super().__setattr__(name, value)
+
+
+sys.modules[__name__].__class__ = _ConfigModule

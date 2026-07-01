@@ -25,11 +25,24 @@ from pathlib import Path
 
 import yaml
 
-from brightsmith.config import PROJECT_ROOT
+from brightsmith import config
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MANIFEST_PATH = PROJECT_ROOT / "domain" / "manifest.yaml"
+
+def _default_manifest_path() -> Path:
+    """Resolve the default manifest path from the live config (call-time)."""
+    return config.PROJECT_ROOT / "domain" / "manifest.yaml"
+
+
+def __getattr__(name):
+    # Back-compat: ``DEFAULT_MANIFEST_PATH`` and ``PROJECT_ROOT`` were module
+    # constants; expose them as live views so configure() takes effect.
+    if name == "DEFAULT_MANIFEST_PATH":
+        return _default_manifest_path()
+    if name == "PROJECT_ROOT":
+        return config.PROJECT_ROOT
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 @dataclass
@@ -170,7 +183,7 @@ def load_manifest(manifest_path: Path | None = None) -> DomainManifest:
     Raises:
         FileNotFoundError: If the manifest file doesn't exist.
     """
-    path = manifest_path or DEFAULT_MANIFEST_PATH
+    path = manifest_path or _default_manifest_path()
     if not path.exists():
         raise FileNotFoundError(
             f"Domain manifest not found at {path}. "
@@ -283,7 +296,7 @@ def assign_domain(
     if confidence not in VALID_CONFIDENCE:
         raise ValueError(f"confidence must be one of {VALID_CONFIDENCE}, got '{confidence}'")
 
-    path = manifest_path or DEFAULT_MANIFEST_PATH
+    path = manifest_path or _default_manifest_path()
     if not path.exists():
         raise FileNotFoundError(f"Domain manifest not found at {path}")
 
@@ -335,7 +348,7 @@ def show_domain(manifest_path: Path | None = None) -> DomainAssignment | None:
     Returns:
         DomainAssignment or None if not assigned.
     """
-    path = manifest_path or DEFAULT_MANIFEST_PATH
+    path = manifest_path or _default_manifest_path()
     if not path.exists():
         return None
 

@@ -1,8 +1,13 @@
 """Tests for headless pipeline runner."""
 
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 from brightsmith.run import (
+    EXIT_DQ_FAILURE,
     EXIT_SUCCESS,
     GoldenResult,
     PipelineResult,
@@ -10,6 +15,8 @@ from brightsmith.run import (
     previous_zone,
     run_pipeline,
 )
+
+ROOT_ENV_VAR = "BRIGHTSMITH_PROJECT_ROOT"
 
 
 def test_pipeline_result_to_dict():
@@ -110,3 +117,190 @@ def test_golden_result_defaults():
     gr = GoldenResult()
     assert gr.checked == 0
     assert gr.pass_rate == 0.0
+
+
+# ---------------------------------------------------------------------------
+# WP-1.2 — Real headless DQ gate (audit Q1, decision D3).
+#
+# The DQ gate must EXECUTE rules against the real warehouse, not count every
+# rule as passed. These behavioral tests exercise the actual CLI in a FRESH
+# process rooted at a tmp dir via BRIGHTSMITH_PROJECT_ROOT, so every config-
+# derived path (warehouse, catalog, dq-rules, AND the governance warehouse
+# that run_rules writes to as a side effect) resolves under tmp. Without this
+# isolation, concurrent governance writes to the shared data/ warehouse hit
+# `CommitFailedException: branch main has changed`.
+# ---------------------------------------------------------------------------
+
+
+def _seed_bronze_warehouse(tmp_path: Path) -> None:
+    """Seed a populated bronze.seed_facts Iceberg table at config-derived paths."""
+    from pyiceberg.schema import Schema
+    from pyiceberg.types import NestedField, StringType
+
+    from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
+
+    warehouse = tmp_path / "data" / "bronze" / "iceberg_warehouse"
+    catalog_db = tmp_path / "data" / "catalog" / "catalog.db"
+    catalog = get_catalog(warehouse, catalog_db)
+    schema = Schema(
+        NestedField(1, "record_id", StringType(), required=False),
+        NestedField(2, "val", StringType(), required=False),
+    )
+    table = get_or_create_table(catalog, "bronze", "seed_facts", schema)
+    append_data(table, [{"record_id": "r1", "val": "a"}, {"record_id": "r2", "val": "b"}])
+
+
+def _write_rules(tmp_path: Path, rules: list[dict], tables: list[str]) -> None:
+    """Write a DQ rules JSON file into the tmp project's governance dir."""
+    rules_dir = tmp_path / "governance" / "dq-rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    (rules_dir / "test-bronze.json").write_text(
+        json.dumps({"spec": "test-bronze", "tables": tables, "rules": rules}, indent=2)
+    )
+
+
+def _write_noop_manifest(tmp_path: Path) -> None:
+    """Register a side-effect-free bronze transform so `--zone bronze` executes the DQ gate."""
+    (tmp_path / "noop_transform.py").write_text(
+        "def main():\n    return {'rows_promoted': 0, 'rows_skipped': 0}\n"
+    )
+    (tmp_path / "domain").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "domain" / "manifest.yaml").write_text(
+        "name: test\n"
+        "version: '0.1'\n"
+        "pipeline:\n"
+        "  bronze:\n"
+        "    module: noop_transform\n"
+        "    function: main\n"
+    )
+
+
+def _run_runner(tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
+    """Invoke `python -m brightsmith.run` in a fresh process rooted at tmp_path."""
+    env = {
+        **os.environ,
+        ROOT_ENV_VAR: str(tmp_path),
+        "PYTHONPATH": str(tmp_path) + os.pathsep + os.environ.get("PYTHONPATH", ""),
+    }
+    return subprocess.run(
+        [sys.executable, "-m", "brightsmith.run", *args],
+        env=env,
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_failing_p0_rule_exits_dq_failure_and_names_rule(tmp_path):
+    """A failing P0 rule must fail the gate (exit EXIT_DQ_FAILURE) and name the rule."""
+    _seed_bronze_warehouse(tmp_path)
+    _write_noop_manifest(tmp_path)
+    _write_rules(
+        tmp_path,
+        [{
+            "rule_id": "BRZ-FAIL",
+            "priority": "P0",
+            "status": "active",
+            "category": "completeness",
+            "description": "no rows with val=a",
+            # seed has one row with val='a' -> COUNT=1, threshold wants 0 -> FAIL
+            "sql": "SELECT COUNT(*) FROM bronze.seed_facts WHERE val = 'a'",
+            "threshold": "result = 0",
+        }],
+        tables=["bronze.seed_facts"],
+    )
+
+    proc = _run_runner(tmp_path, "--zone", "bronze")
+    assert proc.returncode == EXIT_DQ_FAILURE, proc.stdout + proc.stderr
+    assert "BRZ-FAIL" in proc.stdout, proc.stdout
+
+
+def test_erroring_p0_rule_exits_nonzero(tmp_path):
+    """A P0 rule that cannot execute (missing table) is a failure, not a pass (decision D3)."""
+    _seed_bronze_warehouse(tmp_path)
+    _write_noop_manifest(tmp_path)
+    _write_rules(
+        tmp_path,
+        [{
+            "rule_id": "BRZ-ERR",
+            "priority": "P0",
+            "status": "active",
+            "category": "completeness",
+            "description": "references a table that does not exist",
+            "sql": "SELECT COUNT(*) FROM bronze.does_not_exist",
+            "threshold": "result = 0",
+        }],
+        tables=["bronze.does_not_exist"],
+    )
+
+    proc = _run_runner(tmp_path, "--zone", "bronze")
+    assert proc.returncode != EXIT_SUCCESS, proc.stdout + proc.stderr
+    assert "BRZ-ERR" in proc.stdout, proc.stdout
+
+
+def test_all_passing_rules_exit_success(tmp_path):
+    """When every rule passes against real data, the pipeline exits 0."""
+    _seed_bronze_warehouse(tmp_path)
+    _write_noop_manifest(tmp_path)
+    _write_rules(
+        tmp_path,
+        [{
+            "rule_id": "BRZ-PASS",
+            "priority": "P0",
+            "status": "active",
+            "category": "completeness",
+            "description": "no rows with the impossible value",
+            "sql": "SELECT COUNT(*) FROM bronze.seed_facts WHERE val = 'zzz'",
+            "threshold": "result = 0",
+        }],
+        tables=["bronze.seed_facts"],
+    )
+
+    proc = _run_runner(tmp_path, "--zone", "bronze")
+    assert proc.returncode == EXIT_SUCCESS, proc.stdout + proc.stderr
+    assert "DQ:   1 passed" in proc.stdout, proc.stdout
+
+
+def test_alias_namespace_rule_hits_canonical_zone(tmp_path):
+    """A rule declared against `raw.` must execute against the canonical bronze table."""
+    _seed_bronze_warehouse(tmp_path)
+    _write_noop_manifest(tmp_path)
+    _write_rules(
+        tmp_path,
+        [{
+            "rule_id": "RAW-FAIL",
+            "priority": "P0",
+            "status": "active",
+            "category": "completeness",
+            # raw.seed_facts resolves to bronze.seed_facts via ZONE_ALIASES
+            "sql": "SELECT COUNT(*) FROM raw.seed_facts WHERE val = 'a'",
+            "threshold": "result = 0",
+        }],
+        tables=["raw.seed_facts"],
+    )
+
+    proc = _run_runner(tmp_path, "--zone", "bronze")
+    assert proc.returncode == EXIT_DQ_FAILURE, proc.stdout + proc.stderr
+    assert "RAW-FAIL" in proc.stdout, proc.stdout
+
+
+def test_validate_only_runs_real_dq(tmp_path):
+    """--validate-only skips the transform but must still execute the real DQ gate."""
+    _seed_bronze_warehouse(tmp_path)
+    # No manifest/transform needed: validate-only never executes the zone module.
+    _write_rules(
+        tmp_path,
+        [{
+            "rule_id": "VO-FAIL",
+            "priority": "P0",
+            "status": "active",
+            "category": "completeness",
+            "sql": "SELECT COUNT(*) FROM bronze.seed_facts WHERE val = 'a'",
+            "threshold": "result = 0",
+        }],
+        tables=["bronze.seed_facts"],
+    )
+
+    proc = _run_runner(tmp_path, "--zone", "bronze", "--validate-only")
+    assert proc.returncode == EXIT_DQ_FAILURE, proc.stdout + proc.stderr
+    assert "VO-FAIL" in proc.stdout, proc.stdout

@@ -142,3 +142,58 @@ def test_grain_ids_are_deterministic():
     r1 = _make_records(["AAPL"], [100])
     r2 = _make_records(["AAPL"], [100])
     assert r1[0]["record_id"] == r2[0]["record_id"]
+
+
+def test_in_batch_duplicate_promotes_once():
+    """The same record_id twice in ONE promote call must append exactly once.
+
+    (WP-2.4 / Q4: the anti-join only compares against the table, so in-batch
+    duplicates were both surviving. filter_existing_records now dedups the
+    incoming batch first.)
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        table = _setup_table(Path(tmp))
+        # Two records with the same grain (entity) → same record_id.
+        dup = _make_records(["AAPL", "AAPL"], [100, 100])
+        assert dup[0]["record_id"] == dup[1]["record_id"]
+
+        result = promote(table, dup, id_field="record_id")
+        assert result["promoted"] == 1
+        assert result["skipped"] == 1
+
+        rows = read_with_duckdb(table)
+        assert len(rows) == 1
+
+
+def test_filter_existing_records_dedups_within_batch():
+    """filter_existing_records collapses in-batch duplicate ids before append."""
+    with tempfile.TemporaryDirectory() as tmp:
+        table = _setup_table(Path(tmp))
+        records = _make_records(["AAPL", "AAPL", "MSFT"], [100, 100, 200])
+        new_records, skipped = filter_existing_records(table, records, "record_id")
+        ids = {r["record_id"] for r in new_records}
+        assert len(new_records) == 2  # one AAPL collapsed, plus MSFT
+        assert len(ids) == 2
+        assert skipped == 1
+
+
+def test_append_data_strict_raises_on_unknown_column():
+    """strict append_data rejects a record key that matches no schema field.
+
+    (WP-2.4 / Q5: a misspelled column would otherwise be silently dropped and
+    the intended schema field silently filled with None.)
+    """
+    import pytest
+
+    with tempfile.TemporaryDirectory() as tmp:
+        table = _setup_table(Path(tmp))
+        bad = [{"record_id": "X", "entity": "AAPL", "valeu": 100}]  # typo: valeu
+        with pytest.raises(ValueError, match="valeu"):
+            append_data(table, bad)
+
+        # strict=False keeps the legacy lax behaviour (unknown key dropped).
+        snap = append_data(table, bad, strict=False)
+        assert isinstance(snap, int)
+        rows = read_with_duckdb(table)
+        assert len(rows) == 1
+        assert rows[0]["value"] is None  # the real column was never populated

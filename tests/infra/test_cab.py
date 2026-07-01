@@ -264,9 +264,11 @@ def test_fork_proposal_migration_spec():
 
 def test_deprecation_registry_add(tmp_path):
     """New deprecation appears in registry."""
+    # Sunset date kept far in the future so status stays DEPRECATED (not ARCHIVED)
+    # regardless of the wall-clock date the suite runs on.
     register_deprecation(
         "consumable.test", "consumable.test_v2",
-        "2026-03-25", "2026-06-25", "cab-001", tmp_path,
+        "2026-03-25", "2099-06-25", "cab-001", tmp_path,
     )
 
     deps = load_deprecations(tmp_path)

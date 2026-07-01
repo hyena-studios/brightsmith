@@ -64,7 +64,8 @@ def gov_env(tmp_path):
 
 def test_governance_tables_created(gov_env):
     """All 8 governance tables should be created lazily."""
-    from brightsmith.infra.governance_db import _get_governance_table, _TABLE_CONFIGS
+    from brightsmith.infra.governance.queries import _get_governance_table
+    from brightsmith.infra.governance.schemas import _TABLE_CONFIGS
 
     for table_name in _TABLE_CONFIGS:
         table = _get_governance_table(table_name)
@@ -378,7 +379,8 @@ def test_sync_contract_columns_idempotent(gov_env):
 
 def test_sync_glossary_term(gov_env):
     """Sync a glossary term to the governance DB."""
-    from brightsmith.infra.governance_db import _query_table, sync_glossary_term
+    from brightsmith.infra.governance.queries import _query_table
+    from brightsmith.infra.governance_db import sync_glossary_term
 
     term = {
         "term_id": "BT-001",
@@ -942,7 +944,8 @@ def test_pipeline_event_with_content(gov_env):
 
 def test_all_15_tables_created(gov_env):
     """All 20 governance tables should be created lazily."""
-    from brightsmith.infra.governance_db import _get_governance_table, _TABLE_CONFIGS
+    from brightsmith.infra.governance.queries import _get_governance_table
+    from brightsmith.infra.governance.schemas import _TABLE_CONFIGS
 
     assert len(_TABLE_CONFIGS) == 20
     for table_name in _TABLE_CONFIGS:
@@ -1072,8 +1075,15 @@ def test_dq_runner_iceberg_only(gov_env, monkeypatch):
     assert len(result_files) == 0
 
 
-def test_save_contract_writes_iceberg_only(gov_env):
-    """save_contract() should sync to Iceberg without writing runtime YAML."""
+def test_save_contract_dual_writes_file_and_iceberg(gov_env):
+    """save_contract() dual-writes: a readable YAML file AND the Iceberg mirror.
+
+    WP-1.3 (decision D1) reverses the iceberg-only design from commit
+    c1f41f5: the YAML file is authoritative for reads, so save_contract must
+    always write it (audit finding A2). The Iceberg sync is kept as a mirror.
+    """
+    import yaml
+
     from brightsmith.infra.contract import save_contract
     from brightsmith.infra.governance_db import get_contracts
 
@@ -1099,9 +1109,11 @@ def test_save_contract_writes_iceberg_only(gov_env):
     contracts_dir = gov_env / "governance" / "data-contracts"
     path = save_contract(contract, contracts_dir)
 
-    assert not path.exists()
+    # Dual-write 1: the YAML file is written and round-trips to the same dict.
+    assert path.exists()
+    assert yaml.safe_load(path.read_text()) == contract
 
-    # Iceberg should have the contract
+    # Dual-write 2: Iceberg has the contract too.
     contracts = get_contracts()
     assert any(c["contract_name"] == "auto-sync-test" for c in contracts)
 
@@ -1287,3 +1299,31 @@ def test_product_write_fails_on_missing_enterprise_reference(gov_env):
             },
             "governance/data-contracts/missing-ref.yaml",
         )
+
+
+# ---------------------------------------------------------------------------
+# Import-smoke test: module split (Changes 1 & 2)
+# ---------------------------------------------------------------------------
+
+
+def test_governance_db_split_symbols_still_importable():
+    """Public symbols remain importable from governance_db after module split.
+
+    Change 1 moved _parse_mermaid_* to parsers.py and migrate_files_to_iceberg /
+    cmd_migrate to migration.py. Change 2 moved write_model_entity, write_model_columns,
+    write_model_relationships, write_policy to model_writers.py. All four must still
+    be accessible via governance_db (the public facade).
+    """
+    from brightsmith.infra.governance_db import (  # noqa: F401
+        migrate_files_to_iceberg,
+        sync_from_files,
+        write_model_entity,
+        write_model_relationships,
+        write_policy,
+    )
+
+    assert callable(sync_from_files)
+    assert callable(migrate_files_to_iceberg)
+    assert callable(write_model_entity)
+    assert callable(write_model_relationships)
+    assert callable(write_policy)

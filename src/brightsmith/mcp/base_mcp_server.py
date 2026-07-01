@@ -32,7 +32,8 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,76 @@ import duckdb
 from brightsmith.infra.iceberg_setup import get_catalog
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Read-only SQL validation (WP-1.5 / S1)
+# ---------------------------------------------------------------------------
+
+# Keywords whose statements are permitted on the untrusted MCP surface.
+_ALLOWED_FIRST_KEYWORDS: frozenset[str] = frozenset({"SELECT", "WITH", "DESCRIBE", "SHOW"})
+
+_RE_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_RE_LINE_COMMENT = re.compile(r"--[^\n]*")
+_RE_FIRST_IDENT = re.compile(r"[A-Za-z_][A-Za-z_0-9]*")
+
+
+def _strip_sql_comments(sql: str) -> str:
+    """Remove /* … */ block comments and -- line comments from SQL."""
+    sql = _RE_BLOCK_COMMENT.sub(" ", sql)
+    sql = _RE_LINE_COMMENT.sub(" ", sql)
+    return sql.strip()
+
+
+def _validate_read_only_sql(sql: str) -> str | None:
+    """Validate that *sql* is a single, read-only statement.
+
+    Returns ``None`` when the statement is allowed.  Returns a human-readable
+    rejection reason string when it should be blocked.
+
+    Allowed first keywords: SELECT, WITH, DESCRIBE, SHOW.
+    Everything else (COPY, INSTALL, LOAD, ATTACH, CREATE, DROP, ALTER,
+    INSERT, UPDATE, DELETE, PRAGMA that sets state, …) is rejected.
+
+    The check is robust to:
+    * Leading/trailing whitespace
+    * ``/* … */`` block comments and ``--`` line comments
+    * Leading parentheses (e.g. ``(WITH cte AS …)``)
+
+    Multiple statements (detected via embedded semicolons) are also rejected.
+    Note: semicolons inside string literals are a known edge case; the
+    conservative approach here is to reject such SQL — better to false-positive
+    than to allow an injected second statement on an untrusted surface.
+    """
+    cleaned = _strip_sql_comments(sql)
+    if not cleaned:
+        return "SQL rejected: empty statement."
+
+    # Multiple-statement check: strip trailing semicolon(s), then flag any
+    # remaining semicolons as an embedded statement separator.
+    without_trailing = cleaned.rstrip(";").rstrip()
+    if ";" in without_trailing:
+        return (
+            "SQL rejected: multiple statements are not allowed "
+            "(semicolon detected inside the statement)."
+        )
+
+    # Strip leading parentheses/whitespace to reach the first keyword.
+    # Handles forms like (WITH cte AS …) or (SELECT …).
+    stripped = cleaned.lstrip("(").strip()
+
+    m = _RE_FIRST_IDENT.match(stripped)
+    if not m:
+        return "SQL rejected: could not parse first keyword."
+
+    first_keyword = m.group(0).upper()
+    if first_keyword not in _ALLOWED_FIRST_KEYWORDS:
+        allowed = ", ".join(sorted(_ALLOWED_FIRST_KEYWORDS))
+        return (
+            f"SQL rejected: statement type '{first_keyword}' is not permitted "
+            f"on this read-only surface. Allowed statement types: {allowed}."
+        )
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +156,31 @@ class BaseMCPServer:
 
     Parallel to BaseIngestor for the Raw zone — domain projects extend
     this class with domain-specific tools and resources.
+
+    Trust boundary
+    --------------
+    Two SQL execution paths exist with different trust levels:
+
+    * **Trusted (operator-supplied):** DQ-rule SQL loaded from governance JSON
+      files in ``governance/dq-rules/``.  These are written by the
+      ``@dq-rule-writer`` agent, reviewed, and committed to the repo.  They
+      execute through ``dq_runner.run_rules()`` without going through
+      ``query_iceberg``.
+
+    * **Untrusted (MCP-client-supplied):** SQL arriving via ``query_iceberg``
+      from an LLM client.  This surface is prompt-injection territory.
+      ``query_iceberg`` enforces two layers of read-only protection:
+
+      1. **Statement allowlist** — only SELECT, WITH, DESCRIBE, and SHOW are
+         permitted as the leading statement keyword; anything else (COPY, DDL,
+         DML, INSTALL, LOAD, ATTACH, …) is rejected before DuckDB sees it.
+      2. **DuckDB external-access lock** — ``SET enable_external_access=false``
+         is applied on every connection, blocking file reads/writes
+         (``read_csv``, ``read_parquet``, ``COPY … TO``, etc.) even if a
+         statement somehow passed the allowlist.
+
+    RLS / entitlements are explicitly deferred until non-localhost deployment
+    (decision D5 in the audit-remediation spec).
 
     Args:
         warehouse_path: Path to Iceberg warehouse.
@@ -146,11 +242,11 @@ class BaseMCPServer:
         framework_tools = [
             ToolDef(
                 name="query_table",
-                description="Query a consumable Iceberg table with optional filters",
+                description="Query a gold-zone Iceberg table with optional filters",
                 input_schema={
                     "type": "object",
                     "properties": {
-                        "table": {"type": "string", "description": "Full table name (e.g., consumable.company_financials)"},
+                        "table": {"type": "string", "description": "Full table name (e.g., gold.company_financials)"},
                         "filters": {"type": "object", "description": "Column-value filter pairs", "default": {}},
                         "columns": {"type": "array", "items": {"type": "string"}, "description": "Columns to return (empty = all)"},
                         "limit": {"type": "integer", "description": "Max rows to return", "default": 100},
@@ -403,14 +499,37 @@ class BaseMCPServer:
         return rows[:limit]
 
     def query_iceberg(self, sql: str) -> list[dict]:
-        """Execute arbitrary SQL against Iceberg tables via DuckDB.
+        """Execute read-only SQL against Iceberg tables via DuckDB.
 
-        This is the single choke point for all data access. Future RLS
-        filters, entitlement checks, and audit logging inject here.
+        This is the single choke point for MCP-client data access.  Two
+        layers of read-only enforcement protect the host:
+
+        1. ``_validate_read_only_sql`` rejects any statement whose first
+           keyword is not in {SELECT, WITH, DESCRIBE, SHOW}, returning a
+           structured ``[{"error": "…"}]`` without opening DuckDB execution.
+        2. ``SET enable_external_access=false`` (DuckDB 1.x pragma) is set on
+           every connection, blocking file-system reads and writes even if a
+           statement somehow passed the allowlist.
+
+        On allowlist rejection the connection is closed before SQL reaches
+        DuckDB and a ``[{"error": "<reason>"}]`` list is returned — matching
+        the success-path return shape so callers do not need special handling.
+
+        Future RLS filters, entitlement checks, and audit logging inject here.
         """
+        # --- Layer 1: allowlist validation (before any DuckDB connection) ---
+        rejection = _validate_read_only_sql(sql)
+        if rejection is not None:
+            logger.warning("query_iceberg rejected SQL: %s", rejection)
+            return [{"error": rejection}]
+
+        # --- Layer 2: read-only DuckDB connection ---
         con = duckdb.connect()
         con.install_extension("iceberg")
         con.load_extension("iceberg")
+        # Disable all file-system access (read_csv, COPY TO, read_parquet, …).
+        # Pragma name verified against DuckDB 1.5.0 (uv.lock).
+        con.execute("SET enable_external_access=false")
 
         for ns_tuple in self.catalog.list_namespaces():
             ns = ns_tuple[0] if isinstance(ns_tuple, tuple) else ns_tuple

@@ -12,6 +12,7 @@ Brightsmith is a domain-agnostic AI agent data pipeline framework that transform
 ## Key Paths
 - Source code: `src/brightsmith/` (organized by zone: bronze, silver, gold, mcp)
 - Infrastructure: `src/brightsmith/infra/` (cross-cutting: iceberg_setup, dq_runner, dq_scorecard, lineage, staging, period_disambiguator, promote, grain, contract, golden_dataset, verification, glossary_validator, pipeline_gate, cab)
+- Governance DB package: `src/brightsmith/infra/governance/` (Iceberg governance database — split by WP-2.3 into `schemas.py`, `writers.py`, `queries.py`, `sync.py`, `cli.py`, `exporters.py` plus supporting modules; `product.py` is the re-export façade)
 - Period disambiguator: `src/brightsmith/infra/period_disambiguator.py` (temporal period classification)
 - Chaos monkey: `src/brightsmith/infra/chaos_monkey/` (schema-agnostic adversarial DQ testing)
 - Integration test harness: `src/brightsmith/infra/integration_test_harness.py` (golden dataset validation)
@@ -48,7 +49,6 @@ Before starting spec work, read the workflow document for the relevant zone:
 - Zone transitions: `docs/workflows/zone-transitions.md`
 - MCP zone specs: `docs/workflows/mcp-pipeline.md`
 - Human approval gates: `docs/workflows/human-approval-gates.md`
-- At session start and end, follow: `docs/workflows/session-logging.md`
 
 ## Rules
 
@@ -57,7 +57,7 @@ Before starting spec work, read the workflow document for the relevant zone:
 - DQ rules validate real data, never placeholders
 - Every agent logs its reasoning, not just outputs
 - No changes to data schemas without a spec
-- `REQUIRE_HUMAN_APPROVAL` in `src/config.py` is the single global toggle for all human-in-the-loop gates (exception: MAJOR schema changes always require human approval via @cab-agent regardless of this toggle)
+- `REQUIRE_HUMAN_APPROVAL` in `src/brightsmith/config.py` is the single global toggle for all human-in-the-loop gates (exception: MAJOR schema changes always require human approval via @cab-agent regardless of this toggle)
 - @staff-engineer reviews last — no spec is marked complete until he approves
 - @staff-engineer can send work back to any agent for fixes
 - Test theater (tests that don't validate real behavior) is a rejection

@@ -188,3 +188,147 @@ class TestBaseClass:
         )
         domain_resources = base.get_resources()
         assert domain_resources == []
+
+
+# ---------------------------------------------------------------------------
+# WP-1.5 — Read-only MCP SQL (S1 / D5)
+# ---------------------------------------------------------------------------
+
+
+class TestQueryIcebergSecurity:
+    """query_iceberg must enforce read-only access on the untrusted MCP surface."""
+
+    def test_copy_to_rejected_file_not_created(self, server, tmp_path):
+        """COPY TO is rejected by the allowlist; the output file must not appear.
+
+        This is the primary acceptance test from WP-1.5: the allowlist rejects
+        'COPY' before DuckDB executes, so /tmp/x.csv (or any path) is never
+        written.
+        """
+        output_file = tmp_path / "exfiltration.csv"
+        sql = f"COPY (SELECT 1 AS x) TO '{output_file}'"
+
+        result = server.query_iceberg(sql)
+
+        # Must return a structured error list, not rows
+        assert isinstance(result, list), "return type must be list[dict]"
+        assert len(result) == 1
+        assert "error" in result[0], f"expected an error dict, got: {result[0]}"
+        assert "COPY" in result[0]["error"] or "rejected" in result[0]["error"].lower(), (
+            f"error should mention COPY or rejection, got: {result[0]['error']}"
+        )
+        # The file must not have been created
+        assert not output_file.exists(), (
+            f"COPY TO must not create {output_file} when rejected by the allowlist"
+        )
+
+    def test_external_file_read_blocked(self, server):
+        """read_csv against a local file is blocked by the external-access lock.
+
+        SELECT * FROM read_csv('…') passes the allowlist (starts with SELECT)
+        but is then blocked at the DuckDB level by
+        ``SET enable_external_access=false``.  The call must raise rather than
+        return file contents.
+        """
+        sql = "SELECT * FROM read_csv('/etc/hosts')"
+        with pytest.raises(Exception) as exc_info:
+            server.query_iceberg(sql)
+        # DuckDB raises duckdb.PermissionException; confirm it's access-related
+        assert "Permission" in type(exc_info.value).__name__ or "permission" in str(exc_info.value).lower() or "file system" in str(exc_info.value).lower(), (
+            f"expected a permission/filesystem error, got: {exc_info.value}"
+        )
+
+    def test_plain_select_still_works(self, server):
+        """A plain SELECT that references no external files must succeed.
+
+        Verifies that the security additions do not break the legitimate
+        read-only query path.
+        """
+        result = server.query_iceberg("SELECT 1 AS value, 'ok' AS status")
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["value"] == 1
+        assert result[0]["status"] == "ok"
+
+
+class TestValidateReadOnlySql:
+    """Unit tests for the _validate_read_only_sql helper."""
+
+    def test_select_allowed(self):
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        assert _validate_read_only_sql("SELECT 1") is None
+
+    def test_with_cte_allowed(self):
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        assert _validate_read_only_sql("WITH cte AS (SELECT 1) SELECT * FROM cte") is None
+
+    def test_describe_allowed(self):
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        assert _validate_read_only_sql("DESCRIBE my_table") is None
+
+    def test_show_allowed(self):
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        assert _validate_read_only_sql("SHOW TABLES") is None
+
+    def test_copy_rejected(self):
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        result = _validate_read_only_sql("COPY (SELECT 1) TO '/tmp/x.csv'")
+        assert result is not None
+        assert "COPY" in result
+
+    def test_insert_rejected(self):
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        assert _validate_read_only_sql("INSERT INTO t VALUES (1)") is not None
+
+    def test_create_rejected(self):
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        assert _validate_read_only_sql("CREATE TABLE t (x INT)") is not None
+
+    def test_drop_rejected(self):
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        assert _validate_read_only_sql("DROP TABLE t") is not None
+
+    def test_install_rejected(self):
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        assert _validate_read_only_sql("INSTALL httpfs") is not None
+
+    def test_load_rejected(self):
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        assert _validate_read_only_sql("LOAD httpfs") is not None
+
+    def test_attach_rejected(self):
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        assert _validate_read_only_sql("ATTACH 'db.duckdb'") is not None
+
+    def test_comment_stripping_select(self):
+        """-- and /* */ comments before SELECT must still be allowed."""
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        sql = "-- find revenue\n/* audit: Q4 */ SELECT revenue FROM t"
+        assert _validate_read_only_sql(sql) is None
+
+    def test_comment_stripping_copy_rejected(self):
+        """/* */ comment before COPY must still be rejected."""
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        sql = "/* sneaky */ COPY (SELECT 1) TO '/tmp/x'"
+        assert _validate_read_only_sql(sql) is not None
+
+    def test_leading_paren_with_allowed(self):
+        """Leading paren before WITH must still be allowed."""
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        assert _validate_read_only_sql("(WITH cte AS (SELECT 1) SELECT * FROM cte)") is None
+
+    def test_multiple_statements_rejected(self):
+        """Embedded semicolon must be rejected regardless of first keyword."""
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        sql = "SELECT 1; DROP TABLE t"
+        assert _validate_read_only_sql(sql) is not None
+
+    def test_empty_sql_rejected(self):
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        assert _validate_read_only_sql("   ") is not None
+
+    def test_trailing_semicolon_select_allowed(self):
+        """A single trailing semicolon is fine — SQL convention."""
+        from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
+        assert _validate_read_only_sql("SELECT 1;") is None

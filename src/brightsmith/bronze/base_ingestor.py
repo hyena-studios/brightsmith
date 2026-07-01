@@ -122,7 +122,16 @@ class BaseIngestor(ABC):
                 for r in existing
             }
         except Exception:
-            return set()
+            # A read failure here must NOT silently disable dedup. Returning an
+            # empty set would make every existing row look new and ingest
+            # duplicates. Surface the failure loudly so the ingest aborts.
+            logger.error(
+                "Failed to read existing dedup grains for %s; aborting to avoid "
+                "ingesting duplicates",
+                self.source.full_table_name,
+                exc_info=True,
+            )
+            raise
 
     def _make_grain(self, row: dict) -> tuple:
         """Extract the dedup grain tuple from a row."""
@@ -181,13 +190,22 @@ class BaseIngestor(ABC):
                 row["source_method"] = method
                 row["load_date"] = load_date
 
-            # Dedup against existing grains
+            # Dedup against existing grains AND against earlier rows in this same
+            # batch. Checking only `existing_grains` lets the same grain appear
+            # twice within one ingest and both get written — that violates grain
+            # uniqueness at write time. One pass handles both: a row is dropped if
+            # its grain already exists in the table OR was already seen this batch.
             original_count = len(flat_rows)
-            if existing_grains and self.source.dedup_grain:
-                flat_rows = [
-                    r for r in flat_rows
-                    if self._make_grain(r) not in existing_grains
-                ]
+            if self.source.dedup_grain:
+                seen_in_batch: set = set()
+                deduped = []
+                for r in flat_rows:
+                    grain = self._make_grain(r)
+                    if grain in existing_grains or grain in seen_in_batch:
+                        continue
+                    seen_in_batch.add(grain)
+                    deduped.append(r)
+                flat_rows = deduped
             skipped = original_count - len(flat_rows)
 
             if not flat_rows:

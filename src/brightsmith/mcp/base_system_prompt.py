@@ -23,9 +23,8 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from brightsmith.mcp.base_anomaly_checker import BaseAnomalyChecker
@@ -192,7 +191,7 @@ class BaseSystemPrompt:
             if not terms:
                 return ""
 
-            lines = [f"| Term | Definition |", f"|------|------------|"]
+            lines = ["| Term | Definition |", "|------|------------|"]
             for term in terms[:25]:  # Cap at 25 terms to keep prompt manageable
                 name = term.get("term", term.get("name", ""))
                 defn = term.get("definition", term.get("description", ""))

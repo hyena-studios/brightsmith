@@ -7,14 +7,12 @@ to a shadow namespace and applies corruptions at a configurable rate.
 
 from __future__ import annotations
 
-import math
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
 from pyiceberg.schema import Schema
-from pyiceberg.table import Table
 from pyiceberg.types import (
     BooleanType,
     DateType,

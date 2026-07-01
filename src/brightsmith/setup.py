@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import shutil
-import sys
 from pathlib import Path
 
 # Template directory lives alongside this module
@@ -135,11 +134,11 @@ def init(
     _copy_dq_templates(root)
 
     print(f"Scaffolded Brightsmith domain project at: {root}")
-    print(f"\nNext steps:")
+    print("\nNext steps:")
     print(f"  cd {root}")
-    print(f"  uv sync")
-    print(f"  # Configure domain/manifest.yaml and domain/sources/")
-    print(f"  # Write your first spec in docs/specs/")
+    print("  uv sync")
+    print("  # Configure domain/manifest.yaml and domain/sources/")
+    print("  # Write your first spec in docs/specs/")
 
     return root
 

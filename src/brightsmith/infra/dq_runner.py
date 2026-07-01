@@ -25,11 +25,25 @@ from pathlib import Path
 
 import duckdb
 
-from brightsmith.config import CATALOG_PATH, DQ_RESULTS_DIR, DQ_RULES_DIR, WAREHOUSE_PATH
+from brightsmith import config
 from brightsmith.infra.governance.serializers import ZONE_ALIASES, normalize_table_name
 from brightsmith.infra.iceberg_setup import get_catalog
 
-_COMPAT_DQ_RESULTS_DIR = DQ_RESULTS_DIR
+# Legacy module-level names. These stay assignable module attributes so existing
+# tests (and domain packs) can patch them directly. Left at the _UNSET sentinel,
+# they resolve from the live brightsmith.config at call time — so config.configure()
+# takes effect even though this module was imported earlier (audit finding A3).
+_UNSET = object()
+DQ_RULES_DIR = _UNSET
+DQ_RESULTS_DIR = _UNSET
+WAREHOUSE_PATH = _UNSET
+CATALOG_PATH = _UNSET
+
+
+def _cfg(name):
+    """Resolve a config path: a patched module-level value wins, else live config."""
+    val = globals()[name]
+    return getattr(config, name) if val is _UNSET else val
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +61,7 @@ def load_rules(spec: str | None = None) -> list[dict]:
         List of rule dicts, each augmented with 'spec' and 'tables' from the file.
     """
     rules = []
-    for path in sorted(DQ_RULES_DIR.glob("*.json")):
+    for path in sorted(_cfg("DQ_RULES_DIR").glob("*.json")):
         data = json.loads(path.read_text())
         file_spec = data.get("spec", path.stem)
         if spec and file_spec != spec:
@@ -132,19 +146,21 @@ def evaluate_threshold(raw_result: object, threshold_expr: str) -> tuple[bool, s
 # SQL execution
 # ---------------------------------------------------------------------------
 
-# Known Iceberg namespaces in the project (zones)
+# Known Iceberg namespaces in the project (zones).
+# Canonical names: bronze, silver, gold, mcp.
+# Aliases accepted at boundaries: raw→bronze, base→silver, consumable→gold, ai_ready→mcp.
 _KNOWN_NAMESPACES = {"bronze", "silver", "gold", "mcp", "raw", "base", "consumable", "ai_ready"}
 
-# Matches namespace.table references in SQL (e.g., base.financial_facts)
+# Matches namespace.table references in SQL (e.g., bronze.financial_facts)
 _TABLE_REF_RE = re.compile(r"\b([a-z_]+)\.([a-z_]+)\b")
 
 
 def _extract_table_refs(sql: str) -> list[tuple[str, str]]:
     """Extract (namespace, table) pairs from SQL text.
 
-    Only matches references where the namespace is a known Iceberg namespace
-    (raw, base, consumable, ai_ready). This avoids false positives from
-    alias.column references like r.cik or m.status.
+    Only matches references where the namespace is a known Iceberg zone
+    (canonical: bronze/silver/gold/mcp; aliases: raw/base/consumable/ai_ready).
+    This avoids false positives from alias.column references like r.cik or m.status.
     """
     refs = []
     seen = set()
@@ -300,8 +316,11 @@ def validate_after_write(
         rules = load_rules(spec=spec)
         rule_priorities = {r["rule_id"]: r.get("priority", "P3") for r in rules}
         for r in result["results"]:
-            if not r["passed"] and not r.get("error") and rule_priorities.get(r["rule_id"]) == "P0":
-                # Only real failures, not errors from missing tables
+            if not r["passed"] and rule_priorities.get(r["rule_id"]) == "P0":
+                # Both real failures AND errors block: a P0 rule that cannot execute
+                # (e.g. missing table, broken SQL) is not a pass.  The operator must
+                # either fix the root cause or use the `acknowledge` CLI to explicitly
+                # clear the error with documented justification.
                 p0_failures.append(r)
         if p0_failures:
             raise DQValidationError(p0_failures, result)
@@ -332,7 +351,7 @@ def run_rules(
         Run result dict with run_id, summary stats, and per-rule results.
     """
     if catalog is None:
-        catalog = get_catalog(WAREHOUSE_PATH, CATALOG_PATH)
+        catalog = get_catalog(_cfg("WAREHOUSE_PATH"), _cfg("CATALOG_PATH"))
 
     rules = load_rules(spec=spec)
 
@@ -485,7 +504,7 @@ def approve_rules(rule_ids: list[str]) -> list[dict]:
     results = []
     for rule_id in rule_ids:
         found = False
-        for path in DQ_RULES_DIR.glob("*.json"):
+        for path in _cfg("DQ_RULES_DIR").glob("*.json"):
             data = _load_rules_file(path)
             for rule in data.get("rules", []):
                 if rule["rule_id"] == rule_id:
@@ -513,7 +532,12 @@ def approve_rules(rule_ids: list[str]) -> list[dict]:
 
 
 def get_latest_results(spec: str | None = None) -> dict | None:
-    """Get the most recent DQ results for a spec from Iceberg."""
+    """Get the most recent DQ results for a spec from Iceberg.
+
+    ``spec`` must be a non-empty string.  Pass ``None`` (or omit it) only when
+    you mean "no specific spec" — for an all-specs aggregate use
+    :func:`get_all_latest_results` instead.
+    """
     if not spec:
         return None
 
@@ -533,6 +557,21 @@ def get_latest_results(spec: str | None = None) -> dict | None:
         "p0_passed": latest["p0_passed"],
         "results": get_dq_rule_results(latest["run_id"]),
     }
+
+
+def get_all_latest_results() -> list[dict]:
+    """Get the most recent DQ results for every known spec.
+
+    Iterates specs discovered from DQ rules files and returns one result dict
+    per spec that has at least one recorded run.  Specs with no runs are
+    silently skipped.  Results are returned in alphabetical spec order.
+    """
+    out = []
+    for spec in _get_all_specs():
+        r = get_latest_results(spec)
+        if r is not None:
+            out.append(r)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -592,23 +631,37 @@ def _print_status(spec: str | None = None) -> None:
 
 
 def _print_results(spec: str | None = None) -> None:
-    """Print latest run results."""
-    results = get_latest_results(spec)
-    if not results:
+    """Print latest run results.
+
+    When *spec* is given, prints results for that single spec only.
+    When *spec* is ``None``, prints results for every spec that has a recorded
+    run (via :func:`get_all_latest_results`).
+    """
+    if spec:
+        single = get_latest_results(spec)
+        all_results = [single] if single is not None else []
+    else:
+        all_results = get_all_latest_results()
+
+    if not all_results:
         print("No results found.")
         return
 
-    print(f"Run: {results['run_id']} at {results['executed_at']}")
-    print(f"Total: {results['rules_total']} | Passed: {results['rules_passed']} | Failed: {results['rules_failed']}")
-    print(f"P0 gate: {'PASS' if results['p0_passed'] else 'FAIL'}")
-    print()
-    print(f"{'Rule ID':<15} {'Result':<8} {'Value':<10} {'Time (ms)':<10} {'Detail'}")
-    print("-" * 80)
-    for r in results.get("results", []):
-        status = "PASS" if r["passed"] else ("ERROR" if r.get("error") else "FAIL")
-        value = str(r.get("raw_value", ""))[:10]
-        detail = r.get("error") or r.get("detail", "")
-        print(f"{r['rule_id']:<15} {status:<8} {value:<10} {r.get('execution_time_ms', 0):<10} {detail[:40]}")
+    for results in all_results:
+        spec_label = results.get("spec") or "unknown"
+        print(f"=== Spec: {spec_label} ===")
+        print(f"Run: {results['run_id']} at {results['executed_at']}")
+        print(f"Total: {results['rules_total']} | Passed: {results['rules_passed']} | Failed: {results['rules_failed']}")
+        print(f"P0 gate: {'PASS' if results['p0_passed'] else 'FAIL'}")
+        print()
+        print(f"{'Rule ID':<15} {'Result':<8} {'Value':<10} {'Time (ms)':<10} {'Detail'}")
+        print("-" * 80)
+        for r in results.get("results", []):
+            status = "PASS" if r["passed"] else ("ERROR" if r.get("error") else "FAIL")
+            value = str(r.get("raw_value", ""))[:10]
+            detail = r.get("error") or r.get("detail", "")
+            print(f"{r['rule_id']:<15} {status:<8} {value:<10} {r.get('execution_time_ms', 0):<10} {detail[:40]}")
+        print()
 
 
 def main() -> None:
@@ -671,16 +724,23 @@ def main() -> None:
         _print_results(args.spec)
     elif args.command == "scorecard":
         from brightsmith.infra.dq_scorecard import generate_scorecard
-        results = get_latest_results(args.spec)
-        if not results:
-            print("No results found. Run `dq_runner run` first.")
-            sys.exit(1)
         specs = [args.spec] if args.spec else _get_all_specs()
+        if args.spec:
+            # Single-spec path: fail fast with a clear message when no run exists
+            check = get_latest_results(args.spec)
+            if not check:
+                print("No results found. Run `dq_runner run` first.")
+                sys.exit(1)
+        found_any = False
         for s in specs:
             spec_results = get_latest_results(s)
             if spec_results:
                 path = generate_scorecard(spec_results, s)
                 print(f"Scorecard written: {path}")
+                found_any = True
+        if not found_any:
+            print("No results found. Run `dq_runner run` first.")
+            sys.exit(1)
     elif args.command == "acknowledge":
         acknowledge_failures(args.spec, args.run_id, args.reason)
         print(f"Acknowledged failures for run {args.run_id}: {args.reason}")
@@ -693,7 +753,7 @@ def main() -> None:
 def _get_all_specs() -> list[str]:
     """Get all spec names from DQ rules files."""
     specs = set()
-    for path in DQ_RULES_DIR.glob("*.json"):
+    for path in _cfg("DQ_RULES_DIR").glob("*.json"):
         data = json.loads(path.read_text())
         specs.add(data.get("spec", path.stem))
     return sorted(specs)
@@ -708,14 +768,15 @@ def _update_readme_badges() -> None:
         print("README.md not found.")
         return
 
-    results = get_latest_results()
-    if not results:
+    all_results = get_all_latest_results()
+    if not all_results:
         print("No DQ results found. Run `dq_runner run` first.")
         return
 
-    passed = results["rules_passed"]
-    total = results["rules_total"]
-    p0_passed = results["p0_passed"]
+    # Aggregate across all specs
+    passed = sum(r["rules_passed"] for r in all_results)
+    total = sum(r["rules_total"] for r in all_results)
+    p0_passed = all(r["p0_passed"] for r in all_results)
 
     # Badge colors
     if passed == total:

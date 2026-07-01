@@ -242,3 +242,82 @@ def test_contract_cde_pii_roundtrip(tmp_path):
     assert col["cde_rationale"] == "Entity identifier required for regulatory filings"
     assert col["is_pii"] is False
     assert col["pii_rationale"] == ""
+
+
+# ---------------------------------------------------------------------------
+# _to_contract_name normalization (Change 3)
+# ---------------------------------------------------------------------------
+
+
+def test_to_contract_name_qualified():
+    """_to_contract_name strips namespace and replaces underscores with hyphens."""
+    from brightsmith.infra.contract import _to_contract_name
+
+    assert _to_contract_name("gold.my_widget") == "my-widget"
+    assert _to_contract_name("gold.company_financials") == "company-financials"
+    assert _to_contract_name("silver.fact_filings") == "fact-filings"
+
+
+def test_to_contract_name_bare_table():
+    """_to_contract_name handles a bare table name (no namespace)."""
+    from brightsmith.infra.contract import _to_contract_name
+
+    assert _to_contract_name("my_widget") == "my-widget"
+    assert _to_contract_name("company_financials") == "company-financials"
+
+
+def test_to_contract_name_already_kebab():
+    """_to_contract_name is idempotent for already-correct kebab names."""
+    from brightsmith.infra.contract import _to_contract_name
+
+    assert _to_contract_name("my-widget") == "my-widget"
+    assert _to_contract_name("company-financials") == "company-financials"
+
+
+def test_verify_contract_accepts_qualified_table_name(tmp_path, monkeypatch):
+    """verify_contract should accept 'gold.my_widget' in addition to bare 'my-widget'.
+
+    Uses the same seeding pattern as test_contract_roundtrip.py to stand up a
+    real Iceberg table, generate its contract, then check both the bare name
+    and the fully-qualified table name resolve to the same contract.
+    """
+    import brightsmith.config as _cfg
+    from pyiceberg.schema import Schema
+    from pyiceberg.types import DoubleType, NestedField, StringType
+
+    from brightsmith.infra.contract import generate_contract, verify_contract
+    from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
+
+    warehouse = tmp_path / "data" / "bronze" / "iceberg_warehouse"
+    catalog_db = tmp_path / "data" / "catalog" / "catalog.db"
+    gov_warehouse = tmp_path / "data" / "governance" / "iceberg_warehouse"
+
+    monkeypatch.setattr(_cfg, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(_cfg, "WAREHOUSE_PATH", warehouse)
+    monkeypatch.setattr(_cfg, "CATALOG_PATH", catalog_db)
+    monkeypatch.setattr(_cfg, "GOVERNANCE_WAREHOUSE", gov_warehouse)
+
+    # Seed the Iceberg table: gold.my_widget → contract name "my-widget"
+    schema = Schema(
+        NestedField(1, "widget_id", StringType(), required=True),
+        NestedField(2, "score", DoubleType(), required=False),
+    )
+    catalog = get_catalog(warehouse, catalog_db)
+    tbl = get_or_create_table(catalog, "gold", "my_widget", schema)
+    append_data(tbl, [{"widget_id": "W1", "score": 9.5}])
+
+    generate_contract("gold.my_widget")
+
+    # Bare contract name — baseline must pass
+    results_bare = verify_contract("my-widget")
+    load_fail = next((r for r in results_bare if r.check == "load" and r.status == "FAIL"), None)
+    assert load_fail is None, f"Bare name 'my-widget' failed to load: {results_bare}"
+
+    # Qualified table name must also resolve without a load FAIL
+    results_qualified = verify_contract("gold.my_widget")
+    load_fail_q = next((r for r in results_qualified if r.check == "load" and r.status == "FAIL"), None)
+    assert load_fail_q is None, (
+        "verify_contract('gold.my_widget') returned a load FAIL — "
+        "_to_contract_name normalization not applied at entry of verify_contract. "
+        f"Results: {[(r.check, r.status, r.detail) for r in results_qualified]}"
+    )

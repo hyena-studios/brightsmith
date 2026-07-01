@@ -1,5 +1,7 @@
 # Brightsmith
 
+[![CI](https://github.com/hyena-studios/brightsmith/actions/workflows/ci.yml/badge.svg)](https://github.com/hyena-studios/brightsmith/actions/workflows/ci.yml)
+
 AI agent data pipeline framework. Takes raw data from any source and forges it into governed, AI-ready datasets — without knowing the domain upfront.
 
 **Bronze → Silver → Gold → MCP** with full governance metadata at every step.
@@ -79,7 +81,7 @@ Each zone skill prints a celebration summary on completion with real stats — t
 
 ## Agent Pipeline
 
-Brightsmith uses **24 specialized AI agents** orchestrated through a spec-driven workflow. Every piece of code, every governance artifact, every data transformation traces back to a spec.
+Brightsmith uses **25 specialized AI agents** orchestrated through a spec-driven workflow. Every piece of code, every governance artifact, every data transformation traces back to a spec.
 
 Each agent runs in its own context window with a dedicated persona. A PreToolUse hook enforces that every agent call includes `subagent_type` — it's physically impossible to launch a nameless agent.
 
@@ -317,6 +319,32 @@ python -m brightsmith.run --validate-only
 python -m brightsmith.run --headless-ready
 ```
 
+## Moving or Cloning a Project
+
+Iceberg writes spec-compliant **absolute** filesystem paths into its metadata, and PyIceberg bakes the project-root prefix into four layers: the SQLite catalog rows, every `*.metadata.json`, every manifest-list `.avro`, and every manifest `.avro`. If you **move**, **clone to a new path**, or **containerize** a project that already has a populated warehouse under `data/`, those baked paths point at the old location.
+
+Brightsmith does **not** let this fail silently. Any read against a relocated warehouse raises `WarehouseRelocationError` naming the exact repair command (never an empty result set). The pipeline runner and pipeline gate surface the same loud failure.
+
+Repair is one command, run from the new project root:
+
+```bash
+# See what's stale (read-only; exits non-zero if any foreign paths are baked in)
+python -m brightsmith.infra.relocate --check
+
+# Rewrite all four metadata layers to this project's absolute root
+python -m brightsmith.infra.relocate --apply
+```
+
+`--apply` is idempotent (re-running is a no-op) and atomic per file. After it runs, reads return the original rows again.
+
+If you want to **commit a warehouse to git** and have it work for anyone who clones the repo, rewrite to repo-root-relative paths instead. These resolve against the current working directory, so run the pipeline from the project root:
+
+```bash
+python -m brightsmith.infra.relocate --relative
+```
+
+`relocate --check` is wired into CI to guard committed example warehouses; it no-ops when `data/` is absent.
+
 ### Framework vs Domain Work
 
 If you improve the framework (fix a bug in `dq_runner.py`, add a feature to `BaseIngestor`), push it to brightsmith. If you build domain-specific artifacts (ingestors, governance, specs), those stay in your domain project. Clean separation — brightsmith never gets polluted with domain data.
@@ -336,12 +364,7 @@ If you improve the framework (fix a bug in `dq_runner.py`, add a feature to `Bas
 - Python 3.11+
 - DuckDB + Iceberg extension
 - Apache Iceberg tables (local SQLite catalog, no server)
-- Anthropic SDK (for MCP zone chat agents)
 - uv for dependency management
-
-## Session Logging
-
-Every Claude Code session is logged to `docs/sessions/` for transparency and continuity. Logs capture: exact prompt, all human input (verbatim), specs referenced, files changed, decisions made, problems encountered. The Human Input Log is the authoritative record of human involvement — if it's not logged, it didn't happen.
 
 ## Project Structure
 
@@ -389,12 +412,11 @@ brightsmith/
 │       ├── glossary_loader.py       Three-tier glossary composition
 │       └── staging.py               Proposal staging
 ├── .claude/
-│   └── agents/                   24 agent definitions (copied to consumer projects at init)
+│   └── agents/                   25 agent definitions (copied to consumer projects at init)
 ├── domain/                       Domain pack (your data source config)
 ├── governance/                   All governance artifacts (20+ directories)
 ├── docs/
-│   ├── specs/                    Spec-driven development
-│   └── sessions/                 Claude Code session logs
+│   └── specs/                    Spec-driven development
 ├── tests/                        Tests by zone + integration
 ├── CLAUDE.md                     Master pipeline instructions
 └── pyproject.toml                uv-managed dependencies

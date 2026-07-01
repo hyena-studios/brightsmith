@@ -279,8 +279,17 @@ class PipelineGate:
         return {}
 
     def _save(self) -> None:
-        """Retain state in memory; file generation is handled by exporters."""
-        return None
+        """Persist the full legacy state shape to the JSON state file.
+
+        File is authoritative for gate reads (decision D1, dual-write). This
+        writes the complete `{spec, zone, mode, started, steps, skipped_steps,
+        approvals}` shape. Iceberg event emission happens separately via
+        `_emit_governance_event` — both sides are written, the file is the read
+        side this release. State is never cached across processes: every
+        PipelineGate instance re-reads from disk in __init__ via _load().
+        """
+        self._state_dir.mkdir(parents=True, exist_ok=True)
+        self._state_path.write_text(json.dumps(self._state, indent=2) + "\n")
 
     @property
     def zone(self) -> Zone:
@@ -620,15 +629,16 @@ class PipelineGate:
                             f"DQ rules file exists but contains 0 rules: {dq_file}. "
                             f"Consumable/AI-Ready specs require at least 1 DQ rule."
                         )
-                except Exception:
-                    issues.append(f"DQ rules file is not valid JSON: {dq_file}")
+                except (json.JSONDecodeError, OSError) as e:
+                    # Malformed/unreadable rules file — report as a blocking issue.
+                    issues.append(f"DQ rules file could not be read as JSON: {dq_file} ({e})")
 
         # Consumable zone: golden dataset must exist with >= 3 values
         if zone == "gold":
             golden_file = GOLDEN_DATASETS_DIR / f"{self.spec}-golden.json"
             if not golden_file.exists():
                 issues.append(
-                    f"Golden dataset missing for consumable spec: {golden_file}. "
+                    f"Golden dataset missing for gold-zone spec: {golden_file}. "
                     f"Must contain at least 3 independently verifiable values."
                 )
             else:
@@ -640,8 +650,9 @@ class PipelineGate:
                         issues.append(
                             f"Golden dataset has {len(values)} values (minimum 3): {golden_file}"
                         )
-                except Exception:
-                    issues.append(f"Golden dataset is not valid JSON: {golden_file}")
+                except (json.JSONDecodeError, OSError) as e:
+                    # Malformed/unreadable golden dataset — report as a blocking issue.
+                    issues.append(f"Golden dataset could not be read as JSON: {golden_file} ({e})")
 
         # Gold greenfield: physical model file must exist
         if zone == "gold" and self.mode == "greenfield":
@@ -671,8 +682,13 @@ class PipelineGate:
                                     f"CAB decision '{entry['decision_id']}' is PENDING — "
                                     f"human approval required before spec completion"
                                 )
-                    except Exception:
-                        pass
+                    except (json.JSONDecodeError, OSError) as e:
+                        # A corrupt/unreadable CAB index must NOT silently pass —
+                        # that would skip the PENDING-decision gate entirely.
+                        issues.append(
+                            f"CAB index could not be read ({index_path}): {e}. "
+                            f"Cannot verify there are no PENDING CAB decisions."
+                        )
 
         # Warehouse population: verify tables exist in the persistent Iceberg catalog
         issues.extend(self._validate_warehouse_population(zone))
@@ -697,9 +713,18 @@ class PipelineGate:
             return issues
 
         try:
-            from brightsmith.infra.iceberg_setup import get_catalog
+            from brightsmith.infra.iceberg_setup import (
+                WarehouseRelocationError,
+                get_catalog,
+            )
 
-            catalog = get_catalog(WAREHOUSE_PATH, CATALOG_PATH)
+            try:
+                catalog = get_catalog(WAREHOUSE_PATH, CATALOG_PATH)
+            except WarehouseRelocationError as exc:
+                # Moved/cloned warehouse — surface the loud failure as a blocking
+                # issue with the repair command rather than reporting empty tables.
+                issues.append(str(exc))
+                return issues
             namespaces = [ns[0] for ns in catalog.list_namespaces()]
 
             if zone not in namespaces:

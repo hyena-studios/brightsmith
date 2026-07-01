@@ -7,6 +7,9 @@ parsing, and the rule lifecycle (proposed -> approved -> active).
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from unittest.mock import patch
 
 import duckdb
@@ -656,3 +659,236 @@ class TestValidateAfterWrite:
 
         assert exc_info.value.run_result["rules_total"] == 1
         assert exc_info.value.run_result["p0_passed"] is False
+
+    # ------------------------------------------------------------------
+    # WP-1.4: errored P0 rules must BLOCK (Q2 / D3 hard-block decision)
+    # ------------------------------------------------------------------
+
+    @pytest.fixture
+    def erroring_p0_env(self, tmp_path):
+        """Iceberg env where a P0 rule references a nonexistent table (SQL error)."""
+        from brightsmith.infra.iceberg_setup import get_catalog
+
+        # Catalog exists but contains no tables — the rule's table is absent.
+        catalog = get_catalog(tmp_path / "wh", tmp_path / "cat.db")
+
+        rules_dir = tmp_path / "dq-rules"
+        rules_dir.mkdir()
+        results_dir = tmp_path / "dq-results"
+        results_dir.mkdir()
+
+        rules = {
+            "spec": "test-error",
+            "tables": ["silver.ghost_table"],
+            "rules": [
+                {
+                    "rule_id": "ERR-P0-001",
+                    "category": "Validity",
+                    "priority": "P0",
+                    "description": "P0 rule against a nonexistent table",
+                    "sql": "SELECT COUNT(*) FROM silver.ghost_table",
+                    "threshold": "result = 0",
+                    "status": "active",
+                },
+                {
+                    "rule_id": "ERR-P1-001",
+                    "category": "Completeness",
+                    "priority": "P1",
+                    "description": "Non-P0 rule against a nonexistent table",
+                    "sql": "SELECT COUNT(*) FROM silver.ghost_table WHERE 1=0",
+                    "threshold": "result = 0",
+                    "status": "active",
+                },
+            ],
+        }
+        import json
+        (rules_dir / "test-error.json").write_text(json.dumps(rules, indent=2))
+
+        return {"catalog": catalog, "rules_dir": rules_dir, "results_dir": results_dir}
+
+    def test_validate_raises_on_p0_error(self, erroring_p0_env):
+        """An errored P0 rule (nonexistent table) must raise DQValidationError.
+
+        This is the WP-1.4 regression test: before the fix, `not r.get("error")`
+        silently excused the errored rule and let the gate pass.
+        """
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", erroring_p0_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", erroring_p0_env["results_dir"]):
+            with pytest.raises(DQValidationError) as exc_info:
+                validate_after_write("test-error", catalog=erroring_p0_env["catalog"])
+
+        assert "ERR-P0-001" in str(exc_info.value)
+        assert len(exc_info.value.failures) >= 1
+        p0_failure = next(f for f in exc_info.value.failures if f["rule_id"] == "ERR-P0-001")
+        assert p0_failure["passed"] is False
+        # The error text must be carried into the failure so the operator can diagnose
+        assert p0_failure["error"] is not None
+        assert p0_failure["error"] != ""
+
+    def test_non_p0_error_does_not_raise(self, erroring_p0_env, tmp_path):
+        """An errored non-P0 rule must NOT raise; only P0 errors block.
+
+        Uses a separate env with only the P1 rule so p0_passed stays True.
+        """
+        from brightsmith.infra.iceberg_setup import get_catalog
+        import json
+
+        catalog = get_catalog(tmp_path / "wh2", tmp_path / "cat2.db")
+        rules_dir = tmp_path / "dq-rules2"
+        rules_dir.mkdir()
+        results_dir = tmp_path / "dq-results2"
+        results_dir.mkdir()
+
+        rules = {
+            "spec": "test-p1-error",
+            "tables": ["silver.ghost_table"],
+            "rules": [{
+                "rule_id": "P1-ERR-001",
+                "category": "Completeness",
+                "priority": "P1",
+                "description": "Non-P0 error: nonexistent table, should not block",
+                "sql": "SELECT COUNT(*) FROM silver.ghost_table",
+                "threshold": "result = 0",
+                "status": "active",
+            }],
+        }
+        (rules_dir / "test-p1-error.json").write_text(json.dumps(rules, indent=2))
+
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", rules_dir), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", results_dir):
+            # Must not raise — no P0 rules at all, so p0_passed is vacuously True
+            result = validate_after_write("test-p1-error", catalog=catalog)
+
+        assert result["p0_passed"] is True
+
+
+# ---------------------------------------------------------------------------
+# WP-2.5: CLI no-spec forms — subprocess tests (Q6)
+# ---------------------------------------------------------------------------
+
+
+def _make_seeded_root(tmp_path):
+    """Seed a minimal project root in *tmp_path* and run `dq_runner run`.
+
+    Creates governance/dq-rules/cli-test-spec.json with one trivially-passing
+    rule (``SELECT 0`` / ``result = 0``) that requires no Iceberg tables, so no
+    data warehouse setup is needed.  Also drops a stub README.md for the badge
+    command.  All writes are isolated to *tmp_path* via BRIGHTSMITH_PROJECT_ROOT.
+    """
+    rules_dir = tmp_path / "governance" / "dq-rules"
+    rules_dir.mkdir(parents=True)
+    rules = {
+        "spec": "cli-test-spec",
+        "tables": [],
+        "rules": [
+            {
+                "rule_id": "CLI-001",
+                "category": "Validity",
+                "priority": "P0",
+                "description": "Always-passing constant check — no Iceberg tables needed",
+                "sql": "SELECT 0",
+                "threshold": "result = 0",
+                "status": "active",
+            }
+        ],
+    }
+    (rules_dir / "cli-test-spec.json").write_text(json.dumps(rules, indent=2))
+
+    # Stub README required by the badge subcommand
+    (tmp_path / "README.md").write_text(
+        "# Test Project\n"
+        "![DQ Rules](https://img.shields.io/badge/DQ%20rules-0%2F0%20passing-lightgrey)\n"
+        "![P0 Gate](https://img.shields.io/badge/P0%20gate-UNKNOWN-lightgrey)\n"
+    )
+
+    env = {**os.environ, "BRIGHTSMITH_PROJECT_ROOT": str(tmp_path)}
+
+    # Seed governance DB by running the DQ engine once
+    result = subprocess.run(
+        [sys.executable, "-m", "brightsmith.infra.dq_runner", "run", "--spec", "cli-test-spec"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"dq_runner run failed (seed step):\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    return tmp_path
+
+
+class TestCLINoSpec:
+    """Subprocess tests — all three no-``--spec`` CLI forms produce real output.
+
+    Each test:
+    * Uses a dedicated tmp_path so Iceberg writes never touch the shared
+      project warehouse (avoids CommitFailedException flakiness).
+    * Seeds results via ``dq_runner run --spec cli-test-spec`` before
+      exercising the no-spec form.
+    * Asserts exit 0, non-empty stdout, and that the "No results found"
+      failure path was NOT taken.
+    """
+
+    def test_results_no_spec_exits_0_with_output(self, tmp_path):
+        """``results`` without ``--spec`` exits 0 and prints spec results."""
+        seeded = _make_seeded_root(tmp_path)
+        env = {**os.environ, "BRIGHTSMITH_PROJECT_ROOT": str(seeded)}
+
+        proc = subprocess.run(
+            [sys.executable, "-m", "brightsmith.infra.dq_runner", "results"],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, (
+            f"Expected exit 0 for 'results':\nstdout={proc.stdout}\nstderr={proc.stderr}"
+        )
+        assert proc.stdout.strip(), "Expected non-empty stdout for 'results'"
+        assert "No results found" not in proc.stdout, (
+            f"'No results found' should not appear; got:\n{proc.stdout}"
+        )
+        # Verify a meaningful spec line was printed
+        assert "cli-test-spec" in proc.stdout or "Spec:" in proc.stdout
+
+    def test_scorecard_no_spec_exits_0_and_writes_file(self, tmp_path):
+        """``scorecard`` without ``--spec`` exits 0 and reports a written file."""
+        seeded = _make_seeded_root(tmp_path)
+        env = {**os.environ, "BRIGHTSMITH_PROJECT_ROOT": str(seeded)}
+
+        proc = subprocess.run(
+            [sys.executable, "-m", "brightsmith.infra.dq_runner", "scorecard"],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, (
+            f"Expected exit 0 for 'scorecard':\nstdout={proc.stdout}\nstderr={proc.stderr}"
+        )
+        assert proc.stdout.strip(), "Expected non-empty stdout for 'scorecard'"
+        assert "No results found" not in proc.stdout, (
+            f"'No results found' should not appear; got:\n{proc.stdout}"
+        )
+        assert "Scorecard written" in proc.stdout, (
+            f"Expected 'Scorecard written' in output; got:\n{proc.stdout}"
+        )
+
+    def test_badge_no_spec_exits_0_and_updates_readme(self, tmp_path):
+        """``badge`` without ``--spec`` exits 0 and reports badge update."""
+        seeded = _make_seeded_root(tmp_path)
+        env = {**os.environ, "BRIGHTSMITH_PROJECT_ROOT": str(seeded)}
+
+        proc = subprocess.run(
+            [sys.executable, "-m", "brightsmith.infra.dq_runner", "badge"],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, (
+            f"Expected exit 0 for 'badge':\nstdout={proc.stdout}\nstderr={proc.stderr}"
+        )
+        assert proc.stdout.strip(), "Expected non-empty stdout for 'badge'"
+        assert "No DQ results found" not in proc.stdout, (
+            f"'No DQ results found' should not appear; got:\n{proc.stdout}"
+        )
+        assert "Updated README badges" in proc.stdout, (
+            f"Expected 'Updated README badges' in output; got:\n{proc.stdout}"
+        )

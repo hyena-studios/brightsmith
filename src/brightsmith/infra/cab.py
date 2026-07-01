@@ -19,7 +19,7 @@ import json
 import logging
 import re
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
@@ -256,7 +256,7 @@ def compute_blast_radius(
     the full impact surface.
 
     Args:
-        table_name: The modified table (e.g., "consumable.company_financials").
+        table_name: The modified table (e.g., "gold.company_financials").
         project_root: Override for project root.
 
     Returns:
@@ -299,7 +299,9 @@ def compute_blast_radius(
                         contract_table = data.get("schema", {}).get("table", "")
                         if contract_table and contract_table != table_name:
                             items.append(BlastRadiusItem("contract", str(cpath.relative_to(root)), "direct_consumer"))
-                            if contract_table.startswith("consumable."):
+                            from brightsmith.infra.governance.serializers import normalize_zone
+                            contract_ns = contract_table.split(".", 1)[0] if "." in contract_table else ""
+                            if normalize_zone(contract_ns) == "gold":
                                 consumables.append(contract_name)
                         break
             except Exception:
@@ -746,7 +748,7 @@ def detect_schema_modification(table_name: str, contracts_dir: Path | None = Non
     exists, the table is new and the CAB step should be skipped.
 
     Args:
-        table_name: Full table name (e.g., "consumable.company_financials").
+        table_name: Full table name (e.g., "gold.company_financials").
         contracts_dir: Override for contracts directory.
 
     Returns:

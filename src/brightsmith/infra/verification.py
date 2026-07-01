@@ -91,7 +91,6 @@ def _cmd_run(args: argparse.Namespace) -> None:
     close = sum(1 for r in results if r.status == "CLOSE")
     mismatches = sum(1 for r in results if r.status == "MISMATCH")
     missing = sum(1 for r in results if r.status == "MISSING")
-    total = len(results)
 
     print(f"\nResults: {passes} pass ({close} close), {mismatches} mismatch, {missing} missing")
     print(f"Pass rate: {pass_rate:.1f}% (threshold: {args.threshold}%)")

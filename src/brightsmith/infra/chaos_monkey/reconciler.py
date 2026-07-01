@@ -32,8 +32,6 @@ class AfterActionReconciler:
         """
         # Analyze DQ results
         failed_rules = [r for r in dq_results.get("results", []) if not r["passed"]]
-        passed_rules = [r for r in dq_results.get("results", []) if r["passed"]]
-
         # Map DQ dimensions to whether they were caught
         corrupted_dimensions = manifest.dimensions_covered
         caught_dimensions = set()
@@ -108,34 +106,34 @@ class AfterActionReconciler:
 
         lines = [
             f"# After-Action Report: {manifest.source_table}",
-            f"",
+            "",
             f"**Date:** {report['reconciled_at']}",
-            f"**Agent:** @chaos-monkey",
+            "**Agent:** @chaos-monkey",
             f"**Shadow Table:** {manifest.shadow_table}",
             f"**Catch Rate:** {catch_pct}",
-            f"",
-            f"## Injection Summary",
-            f"",
-            f"| Metric | Value |",
-            f"|--------|-------|",
+            "",
+            "## Injection Summary",
+            "",
+            "| Metric | Value |",
+            "|--------|-------|",
             f"| Total rows | {manifest.total_rows} |",
             f"| Rows corrupted | {manifest.rows_corrupted} |",
             f"| Total corruptions | {len(manifest.corruptions)} |",
             f"| Corruption rate | {manifest.corruption_rate:.0%} |",
             f"| Dimensions injected | {', '.join(sorted(manifest.dimensions_covered))} |",
-            f"",
-            f"## DQ Rule Performance",
-            f"",
-            f"| Metric | Value |",
-            f"|--------|-------|",
+            "",
+            "## DQ Rule Performance",
+            "",
+            "| Metric | Value |",
+            "|--------|-------|",
             f"| Rules executed | {report['dq_summary']['rules_total']} |",
             f"| Rules failed (caught corruption) | {report['dq_summary']['rules_failed']} |",
             f"| Rules passed (missed corruption) | {report['dq_summary']['rules_passed']} |",
-            f"",
-            f"## Coverage Analysis",
-            f"",
-            f"| Dimension | Status |",
-            f"|-----------|--------|",
+            "",
+            "## Coverage Analysis",
+            "",
+            "| Dimension | Status |",
+            "|-----------|--------|",
         ]
 
         for dim in sorted(manifest.dimensions_covered):
@@ -144,27 +142,27 @@ class AfterActionReconciler:
 
         if report["gaps"]:
             lines.extend([
-                f"",
-                f"## Gaps Found",
-                f"",
+                "",
+                "## Gaps Found",
+                "",
             ])
             for gap in report["gaps"]:
                 lines.append(f"### {gap['dimension']}")
-                lines.append(f"")
+                lines.append("")
                 lines.append(f"**Recommendation:** {gap['recommendation']}")
-                lines.append(f"")
-                lines.append(f"| Row | Column | Strategy |")
-                lines.append(f"|-----|--------|----------|")
+                lines.append("")
+                lines.append("| Row | Column | Strategy |")
+                lines.append("|-----|--------|----------|")
                 for c in gap["corruptions"]:
                     lines.append(f"| {c['row']} | {c['column']} | {c['strategy']} |")
-                lines.append(f"")
+                lines.append("")
 
         if not report["gaps"]:
             lines.extend([
-                f"",
-                f"## Result",
-                f"",
-                f"All injected corruption dimensions were caught by existing DQ rules.",
+                "",
+                "## Result",
+                "",
+                "All injected corruption dimensions were caught by existing DQ rules.",
             ])
 
         content = "\n".join(lines) + "\n"
