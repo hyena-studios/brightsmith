@@ -149,3 +149,21 @@ Log all rule decisions to `governance/audit-trail/`. Include:
 | `governance/models/` | Read — logical/physical models for constraint context |
 | `docs/specs/` | Read — spec requirements |
 | `governance/audit-trail/` | Write — decision logs |
+
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@dq-rule-writer', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='decision')
+"
+```
+
+**When to log:**
+- Threshold decisions with supporting evidence
+- Rule priority assignments with rationale
+
+**Activity types:** `decision`
+**Severities:** `info`

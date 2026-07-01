@@ -112,3 +112,21 @@ Log all tagging decisions to `governance/audit-trail/`. Include:
 | `governance/eda/` | Read — detailed EDA findings from @data-analyst |
 | `governance/audit-trail/` | Write — decision logs |
 | `src/` | Read — inspect field definitions in code |
+
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@cde-tagger', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='decision')
+"
+```
+
+**When to log:**
+- CDE/PII classification decisions with rationale
+- Changes to existing tags
+
+**Activity types:** `decision`
+**Severities:** `info`

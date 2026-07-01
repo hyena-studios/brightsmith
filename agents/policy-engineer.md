@@ -71,6 +71,26 @@ Write one JSON file per policy to `governance/policies/`:
 
 File naming: `governance/policies/{policy-id}-{policy-type}.json`
 
+### Iceberg Write — Policies (Primary Output)
+
+After building each policy, write to the governance Iceberg table. The JSON file is a secondary human-readable copy; the `governance.policies` table is the source of truth.
+
+```python
+from brightsmith.infra.governance_db import write_policy
+
+write_policy(
+    policy_id=policy["policy_id"],
+    policy_name=policy.get("policy_name", policy["policy_id"]),
+    policy_type=policy["policy_type"],
+    enforcement=policy.get("status", "active"),
+    target_table=policy.get("target", {}).get("table"),
+    target_zone=zone,
+    description=policy.get("justification"),
+    config=policy.get("rule"),
+    created_by="@policy-engineer",
+)
+```
+
 Produce a policy report per spec:
 
 ```markdown

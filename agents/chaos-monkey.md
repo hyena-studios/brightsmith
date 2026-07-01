@@ -102,3 +102,21 @@ After reconciliation, produce a report at `governance/chaos-manifests/{spec}-aft
 | `domain/` | Read — data structure context |
 | `src/brightsmith.infra/chaos_monkey/` | Read/Write — your code |
 | `governance/chaos-manifests/` | Write — injection manifests and After-Action Reports |
+
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@chaos-monkey', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='finding')
+"
+```
+
+**When to log:**
+- Corruption injection results per cycle
+- DQ gaps discovered during adversarial testing
+
+**Activity types:** `finding`
+**Severities:** `info`

@@ -193,3 +193,22 @@ You DO:
 | `governance/audit-trail/` | Write | Decision logs |
 | `docs/specs/` | Read | Understand what's been built |
 | `domain/` | Read | Understand data source configuration |
+
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@insight-manager', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='recommendation')
+"
+```
+
+**When to log:**
+- Data product recommendations with value/feasibility ranking
+- External data combination opportunities
+- MCP server design recommendations
+
+**Activity types:** `recommendation`
+**Severities:** `info`
