@@ -109,6 +109,35 @@ def test_direct_attribute_assignment_updates_live_config(restore_config, tmp_pat
     assert custom == dq_runner.config.DQ_RULES_DIR
 
 
+def test_assigning_project_root_recomputes_derived_paths(restore_config, tmp_path):
+    """A1 fix: assigning the primary PROJECT_ROOT must recompute derived paths,
+    exactly like configure() — not leave WAREHOUSE_PATH/DQ_RULES_DIR at the old
+    root. (Assigning a derived path still overrides only that one path.)"""
+    cfg = restore_config
+    cfg.PROJECT_ROOT = tmp_path / "proj"
+
+    root = tmp_path / "proj"
+    assert root == cfg.PROJECT_ROOT
+    # Derived paths follow the new root — the crux of A1.
+    assert root / "governance" / "dq-rules" == cfg.DQ_RULES_DIR
+    assert root / "data" / "bronze" / "iceberg_warehouse" == cfg.WAREHOUSE_PATH
+    assert root / "data" / "catalog" / "catalog.db" == cfg.CATALOG_PATH
+    assert root / "data" / "governance" / "iceberg_warehouse" == cfg.GOVERNANCE_WAREHOUSE
+
+
+def test_assigning_derived_path_overrides_only_that_path(restore_config, tmp_path):
+    """Assigning a derived path is a single-field override (unchanged semantics):
+    it must NOT recompute/reset the other derived paths."""
+    cfg = restore_config
+    cfg.configure(project_root=tmp_path)
+    before_warehouse = cfg.WAREHOUSE_PATH
+
+    cfg.DQ_RULES_DIR = tmp_path / "custom-rules"
+
+    assert tmp_path / "custom-rules" == cfg.DQ_RULES_DIR
+    assert before_warehouse == cfg.WAREHOUSE_PATH  # untouched
+
+
 def test_monkeypatch_does_not_leak_stale_value(restore_config, tmp_path, monkeypatch):
     """monkeypatch.setattr on config + undo must not shadow the live config.
 

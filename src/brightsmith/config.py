@@ -215,6 +215,15 @@ def configure(
     pn = project_name if project_name is not None else _CONFIG.project_name
     rha = require_human_approval if require_human_approval is not None else _CONFIG.require_human_approval
     _CONFIG = _derive(pr, pn, rha, _CONFIG.confidence_floor)
+    # Drop any catalog cached under the previous configuration so a later
+    # get_catalog rebuilds against the new project/warehouse. Imported lazily to
+    # avoid a config <-> iceberg_setup import cycle.
+    try:
+        from brightsmith.infra.iceberg_setup import reset_catalog_cache
+
+        reset_catalog_cache()
+    except ImportError:
+        pass
     return _CONFIG
 
 
@@ -226,11 +235,20 @@ def configure(
 # ``config.DQ_RULES_DIR = tmp``). We expose them as live views onto _CONFIG by
 # swapping this module's class for one that intercepts attribute access:
 #   * reads resolve from the current snapshot
-#   * writes replace the relevant field in the snapshot (no recompute of derived
-#     paths — matching the historical direct-assignment behaviour)
+#   * writing a PRIMARY input (project_root/name/approval/floor) recomputes the
+#     derived paths, exactly like configure() — so ``config.PROJECT_ROOT = x``
+#     can never leave WAREHOUSE_PATH/DQ_RULES_DIR/... pointing at the old root
+#   * writing a DERIVED path (e.g. DQ_RULES_DIR) overrides just that one field
+#     (single-path test-override semantics)
 # Because managed names never become real module __dict__ entries, monkeypatch +
 # undo never leaves a stale value shadowing the live config.
 # ---------------------------------------------------------------------------
+
+# Primary inputs to _derive(); assigning any of these must recompute the derived
+# paths so the snapshot stays internally consistent (fixes A1 asymmetry).
+_PRIMARY_FIELDS = frozenset({
+    "project_root", "project_name", "require_human_approval", "confidence_floor",
+})
 
 
 class _ConfigModule(ModuleType):
@@ -244,7 +262,18 @@ class _ConfigModule(ModuleType):
         field = _FIELD_MAP.get(name)
         if field is not None:
             global _CONFIG
-            _CONFIG = dataclasses.replace(_CONFIG, **{field: value})
+            if field in _PRIMARY_FIELDS:
+                # Recompute derived paths from the new primary inputs, matching
+                # configure(). Prevents the A1 asymmetry where assigning
+                # project_root left the derived paths stale.
+                base = dataclasses.replace(_CONFIG, **{field: value})
+                _CONFIG = _derive(
+                    base.project_root, base.project_name,
+                    base.require_human_approval, base.confidence_floor,
+                )
+            else:
+                # Derived-path override: change only this field.
+                _CONFIG = dataclasses.replace(_CONFIG, **{field: value})
         else:
             super().__setattr__(name, value)
 

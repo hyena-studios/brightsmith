@@ -1,6 +1,6 @@
 {
   "name": "bs",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Brightsmith — AI agent data pipeline framework. Bronze → Silver → Gold → MCP with full governance.",
   "author": {
     "name": "jcernauske"

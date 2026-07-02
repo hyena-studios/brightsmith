@@ -386,7 +386,9 @@ class BaseMCPServer:
                     tbl = table_id[1] if isinstance(table_id, tuple) else table_id
                     tables.append({"namespace": ns, "table": tbl, "full_name": f"{ns}.{tbl}"})
             except Exception:
-                pass
+                # Advisory list-tables tool: a namespace we can't enumerate is
+                # skipped so the rest still list; logged, never silent.
+                logger.warning("list_tables: skipping namespace %s", ns, exc_info=True)
         return {"tables": tables}
 
     def _handle_get_data_quality(self, input_dict: dict) -> dict:
@@ -431,7 +433,9 @@ class BaseMCPServer:
                     "event_count": len(events),
                 }, table_name)
         except Exception:
-            pass
+            # Governance-DB lineage unavailable — fall back to files below.
+            # Logged so the fallback is visible, never silent.
+            logger.debug("get_lineage: governance-DB lookup failed, falling back to files", exc_info=True)
 
         # 2. Fall back to governance/lineage/ files
         from brightsmith.config import PROJECT_ROOT
@@ -442,8 +446,10 @@ class BaseMCPServer:
                     data = json.loads(f.read_text())
                     if table_name in str(data):
                         return {"table": table_name, "source": "governance_doc", "lineage": data}
-                except Exception:
-                    pass
+                except (OSError, ValueError) as e:
+                    # Unreadable/invalid lineage JSON is skipped; logged so the
+                    # omission is visible, never silent.
+                    logger.debug("get_lineage: skipping %s: %s", f, e)
         return {"table": table_name, "lineage": "No lineage found"}
 
     def _handle_get_contract(self, input_dict: dict) -> dict:
@@ -456,7 +462,9 @@ class BaseMCPServer:
                     contract = load_contract(c["name"])
                     return {"table": input_dict["table"], "contract": contract}
         except Exception:
-            pass
+            # Advisory contract lookup: on failure the tool reports "No contract
+            # found" rather than crashing; logged so the failure is visible.
+            logger.debug("get_contract: lookup failed for %s", input_dict.get("table"), exc_info=True)
         return {"table": input_dict["table"], "contract": "No contract found"}
 
     # --- Query utility ---
@@ -524,36 +532,53 @@ class BaseMCPServer:
             return [{"error": rejection}]
 
         # --- Layer 2: read-only DuckDB connection ---
+        # The connection is always closed in `finally` so a failing untrusted
+        # query cannot leak a connection over the life of this long-running
+        # (persistent stdio) server.
         con = duckdb.connect()
-        con.install_extension("iceberg")
-        con.load_extension("iceberg")
-        # Disable all file-system access (read_csv, COPY TO, read_parquet, …).
-        # Pragma name verified against DuckDB 1.5.0 (uv.lock).
-        con.execute("SET enable_external_access=false")
+        try:
+            con.install_extension("iceberg")
+            con.load_extension("iceberg")
+            # Disable all file-system access (read_csv, COPY TO, read_parquet, …).
+            # Pragma name verified against DuckDB 1.5.0 (uv.lock).
+            con.execute("SET enable_external_access=false")
 
-        for ns_tuple in self.catalog.list_namespaces():
-            ns = ns_tuple[0] if isinstance(ns_tuple, tuple) else ns_tuple
+            for ns_tuple in self.catalog.list_namespaces():
+                ns = ns_tuple[0] if isinstance(ns_tuple, tuple) else ns_tuple
+                try:
+                    for table_id in self.catalog.list_tables(ns):
+                        tbl_name = table_id[1] if isinstance(table_id, tuple) else table_id
+                        view_name = f"{ns}_{tbl_name}"
+                        full_id = f"{ns}.{tbl_name}"
+                        try:
+                            iceberg_table = self.catalog.load_table(full_id)
+                            metadata_path = iceberg_table.metadata_location
+                            con.execute(
+                                f"CREATE VIEW IF NOT EXISTS {view_name} AS "
+                                f"SELECT * FROM iceberg_scan('{metadata_path}')"
+                            )
+                        except (duckdb.Error, OSError) as e:
+                            # A single unloadable/relocated table must not sink the
+                            # whole query — it just won't be queryable. Logged so
+                            # the omission is visible, never silent.
+                            logger.warning("query_iceberg: skipping view for %s: %s", full_id, e)
+                except (duckdb.Error, OSError) as e:
+                    logger.warning("query_iceberg: skipping namespace %s: %s", ns, e)
+
+            # Execution of the untrusted statement itself. A bad column / unknown
+            # table / type error becomes a structured error result (matching the
+            # allowlist-rejection shape) rather than raising out of the tool
+            # handler. Genuine bugs surface because we catch only duckdb.Error.
             try:
-                for table_id in self.catalog.list_tables(ns):
-                    tbl_name = table_id[1] if isinstance(table_id, tuple) else table_id
-                    view_name = f"{ns}_{tbl_name}"
-                    full_id = f"{ns}.{tbl_name}"
-                    try:
-                        iceberg_table = self.catalog.load_table(full_id)
-                        metadata_path = iceberg_table.metadata_location
-                        con.execute(
-                            f"CREATE VIEW IF NOT EXISTS {view_name} AS "
-                            f"SELECT * FROM iceberg_scan('{metadata_path}')"
-                        )
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                result = con.execute(sql).fetchall()
+                columns_list = [desc[0] for desc in con.description]
+            except duckdb.Error as e:
+                logger.warning("query_iceberg execution failed: %s", e)
+                return [{"error": f"query failed: {e}"}]
 
-        result = con.execute(sql).fetchall()
-        columns_list = [desc[0] for desc in con.description]
-        con.close()
-        return [dict(zip(columns_list, row, strict=False)) for row in result]
+            return [dict(zip(columns_list, row, strict=False)) for row in result]
+        finally:
+            con.close()
 
     # --- Governance metadata ---
 
@@ -573,7 +598,9 @@ class BaseMCPServer:
                     governance["contract_status"] = c.get("status", "?")
                     break
         except Exception:
-            pass
+            # Best-effort governance enrichment on a tool response — absence of
+            # contract metadata must not fail the response; logged, not silent.
+            logger.debug("attach_governance: contract lookup failed for %s", table_name, exc_info=True)
 
         result["governance"] = governance
         return result

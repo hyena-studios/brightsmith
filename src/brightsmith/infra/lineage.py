@@ -263,8 +263,8 @@ def _read_all_events() -> list[dict]:
         arrow_table = table.scan().to_arrow()
         if arrow_table.num_rows == 0:
             return []
-        con = duckdb.connect()
-        rows = con.sql("SELECT * FROM arrow_table ORDER BY event_time DESC").fetchall()
+        with duckdb.connect() as con:
+            rows = con.sql("SELECT * FROM arrow_table ORDER BY event_time DESC").fetchall()
         columns = [f.name for f in table.schema().fields]
         return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception:
@@ -288,15 +288,15 @@ def query_lineage_events(
         arrow_table = table.scan().to_arrow()
         if arrow_table.num_rows == 0:
             return []
-        con = duckdb.connect()
-        rows = con.sql("""
-            SELECT *
-            FROM arrow_table
-            WHERE output_table = $1
-              AND event_type = $2
-            ORDER BY event_time DESC
-            LIMIT $3
-        """, params=[table_name, event_type, limit]).fetchall()
+        with duckdb.connect() as con:
+            rows = con.sql("""
+                SELECT *
+                FROM arrow_table
+                WHERE output_table = $1
+                  AND event_type = $2
+                ORDER BY event_time DESC
+                LIMIT $3
+            """, params=[table_name, event_type, limit]).fetchall()
         columns = [f.name for f in table.schema().fields]
         return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception:
@@ -322,17 +322,17 @@ def query_downstream_consumers(
         arrow_table = table.scan().to_arrow()
         if arrow_table.num_rows == 0:
             return []
-        con = duckdb.connect()
         # Search for table_name in the JSON array string of input_tables
         pattern = f'%"{table_name}"%'
-        rows = con.sql("""
-            SELECT *
-            FROM arrow_table
-            WHERE input_tables LIKE $1
-              AND event_type = 'START'
-            ORDER BY event_time DESC
-            LIMIT $2
-        """, params=[pattern, limit]).fetchall()
+        with duckdb.connect() as con:
+            rows = con.sql("""
+                SELECT *
+                FROM arrow_table
+                WHERE input_tables LIKE $1
+                  AND event_type = 'START'
+                ORDER BY event_time DESC
+                LIMIT $2
+            """, params=[pattern, limit]).fetchall()
         columns = [f.name for f in table.schema().fields]
         return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception:
@@ -369,19 +369,19 @@ def cmd_status() -> None:
         print("No lineage events recorded yet.")
         return
 
-    con = duckdb.connect()
-    rows = con.sql("""
-        WITH ranked AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
-            FROM arrow_table
-            WHERE event_type IN ('COMPLETE', 'FAIL')
-        )
-        SELECT job_name, event_time, row_count, duration_ms, event_type, error_message
-        FROM ranked
-        WHERE rn = 1
-        ORDER BY job_name
-    """).fetchall()
+    with duckdb.connect() as con:
+        rows = con.sql("""
+            WITH ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
+                FROM arrow_table
+                WHERE event_type IN ('COMPLETE', 'FAIL')
+            )
+            SELECT job_name, event_time, row_count, duration_ms, event_type, error_message
+            FROM ranked
+            WHERE rn = 1
+            ORDER BY job_name
+        """).fetchall()
 
     if not rows:
         print("No COMPLETE or FAIL events recorded yet.")
@@ -415,14 +415,14 @@ def cmd_history(job_name: str) -> None:
         print("No lineage events recorded yet.")
         return
 
-    con = duckdb.connect()
-    rows = con.sql(f"""
-        SELECT event_type, event_time, row_count, duration_ms, run_id,
-               output_snapshot_id, dq_rules_passed, dq_rules_total, error_message
-        FROM arrow_table
-        WHERE job_name = '{job_name}'
-        ORDER BY event_time DESC
-    """).fetchall()
+    with duckdb.connect() as con:
+        rows = con.sql(f"""
+            SELECT event_type, event_time, row_count, duration_ms, run_id,
+                   output_snapshot_id, dq_rules_passed, dq_rules_total, error_message
+            FROM arrow_table
+            WHERE job_name = '{job_name}'
+            ORDER BY event_time DESC
+        """).fetchall()
 
     if not rows:
         print(f"No events found for job: {job_name}")
@@ -455,19 +455,19 @@ def cmd_graph() -> None:
         print("No lineage events recorded yet.")
         return
 
-    con = duckdb.connect()
-    rows = con.sql("""
-        WITH ranked AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
-            FROM arrow_table
-            WHERE event_type = 'START'
-        )
-        SELECT job_name, input_tables, output_table
-        FROM ranked
-        WHERE rn = 1
-        ORDER BY job_name
-    """).fetchall()
+    with duckdb.connect() as con:
+        rows = con.sql("""
+            WITH ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
+                FROM arrow_table
+                WHERE event_type = 'START'
+            )
+            SELECT job_name, input_tables, output_table
+            FROM ranked
+            WHERE rn = 1
+            ORDER BY job_name
+        """).fetchall()
 
     if not rows:
         print("No lineage graph available.")
@@ -522,30 +522,33 @@ def cmd_generate_docs() -> None:
         print("No lineage events to generate docs from.")
         return
 
-    con = duckdb.connect()
+    with duckdb.connect() as con:
+        # Get latest COMPLETE event per job, plus the matching START for input_tables.
+        # NB: read columns from the relation — con.description is None after
+        # con.sql() (it is only populated by con.execute()).
+        complete_rel = con.sql("""
+            WITH ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
+                FROM arrow_table
+                WHERE event_type = 'COMPLETE'
+            )
+            SELECT * FROM ranked WHERE rn = 1
+        """)
+        complete_columns = complete_rel.columns
+        complete_rows = complete_rel.fetchall()
 
-    # Get latest COMPLETE event per job, plus the matching START for input_tables
-    complete_rows = con.sql("""
-        WITH ranked AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
-            FROM arrow_table
-            WHERE event_type = 'COMPLETE'
-        )
-        SELECT * FROM ranked WHERE rn = 1
-    """).fetchall()
-    complete_columns = [desc[0] for desc in con.description]
-
-    start_rows = con.sql("""
-        WITH ranked AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
-            FROM arrow_table
-            WHERE event_type = 'START'
-        )
-        SELECT * FROM ranked WHERE rn = 1
-    """).fetchall()
-    start_columns = [desc[0] for desc in con.description]
+        start_rel = con.sql("""
+            WITH ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
+                FROM arrow_table
+                WHERE event_type = 'START'
+            )
+            SELECT * FROM ranked WHERE rn = 1
+        """)
+        start_columns = start_rel.columns
+        start_rows = start_rel.fetchall()
 
     # Build start event lookup by job_name
     start_lookup: dict[str, dict] = {}
@@ -703,17 +706,19 @@ def cmd_verify(spec_name: str) -> int:
         print("[FAIL] No lineage events recorded")
         return 1
 
-    con = duckdb.connect()
-
     # Find events matching this spec (by job_name containing spec_name, or by spec_reference)
-    events = con.sql(f"""
-        SELECT *
-        FROM arrow_table
-        WHERE job_name LIKE '%{spec_name}%'
-           OR (spec_reference IS NOT NULL AND spec_reference LIKE '%{spec_name}%')
-        ORDER BY event_time DESC
-    """).fetchall()
-    event_columns = [desc[0] for desc in con.description]
+    with duckdb.connect() as con:
+        rel = con.sql(f"""
+            SELECT *
+            FROM arrow_table
+            WHERE job_name LIKE '%{spec_name}%'
+               OR (spec_reference IS NOT NULL AND spec_reference LIKE '%{spec_name}%')
+            ORDER BY event_time DESC
+        """)
+        # NB: use the relation's own columns — con.description is None after
+        # con.sql() (it is only populated by con.execute()).
+        event_columns = rel.columns
+        events = rel.fetchall()
     events_dicts = [dict(zip(event_columns, row, strict=False)) for row in events]
 
     # Check 1: Events exist

@@ -364,7 +364,16 @@ _TABLE_CONFIGS: dict[str, tuple[Schema, list[str]]] = {
     "pipeline_events": (PIPELINE_EVENTS_SCHEMA, ["spec_name", "step_name", "event_type", "event_time"]),
     "contract_metadata": (CONTRACT_METADATA_SCHEMA, ["contract_name", "version"]),
     "contract_columns": (CONTRACT_COLUMNS_SCHEMA, ["contract_name", "column_name", "version"]),
-    "glossary_terms": (GLOSSARY_TERMS_SCHEMA, ["term_id", "updated_at"]),
+    # Content-identity grain (NOT updated_at): sync_glossary_term stamps
+    # updated_at=now() every call, so keying on it made re-syncing an unchanged
+    # glossary re-append every term (non-idempotent, unbounded growth). Keying on
+    # the term's content makes re-sync of unchanged terms dedup, while a real
+    # edit to any content field creates a new row. updated_at remains a non-grain
+    # "last synced" marker.
+    "glossary_terms": (
+        GLOSSARY_TERMS_SCHEMA,
+        ["term_id", "term", "definition", "category", "source", "approval_status"],
+    ),
     "agent_activity": (AGENT_ACTIVITY_SCHEMA, ["spec_name", "agent_id", "activity_type", "summary", "event_time"]),
     "sessions": (SESSIONS_SCHEMA, ["session_id"]),
     "dq_rules": (DQ_RULES_SCHEMA, ["spec_name", "rule_id", "version"]),

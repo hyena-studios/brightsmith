@@ -226,15 +226,22 @@ class TestQueryIcebergSecurity:
 
         SELECT * FROM read_csv('…') passes the allowlist (starts with SELECT)
         but is then blocked at the DuckDB level by
-        ``SET enable_external_access=false``.  The call must raise rather than
-        return file contents.
+        ``SET enable_external_access=false``.  Since S1, query_iceberg no longer
+        lets the DuckDB error escape the handler — a blocked/invalid query
+        returns a structured ``[{"error": …}]`` (and closes its connection in
+        ``finally``) rather than raising.  The critical property is that the file
+        contents are NEVER returned; a permission/filesystem error is surfaced
+        instead.
         """
         sql = "SELECT * FROM read_csv('/etc/hosts')"
-        with pytest.raises(Exception) as exc_info:
-            server.query_iceberg(sql)
-        # DuckDB raises duckdb.PermissionException; confirm it's access-related
-        assert "Permission" in type(exc_info.value).__name__ or "permission" in str(exc_info.value).lower() or "file system" in str(exc_info.value).lower(), (
-            f"expected a permission/filesystem error, got: {exc_info.value}"
+        result = server.query_iceberg(sql)
+
+        assert isinstance(result, list), "return type must be list[dict]"
+        assert len(result) == 1
+        assert "error" in result[0], f"expected an error dict, got: {result[0]}"
+        err = result[0]["error"].lower()
+        assert "permission" in err or "file system" in err or "disabled" in err, (
+            f"expected a permission/filesystem error, got: {result[0]['error']}"
         )
 
     def test_plain_select_still_works(self, server):
@@ -249,6 +256,21 @@ class TestQueryIcebergSecurity:
         assert len(result) == 1
         assert result[0]["value"] == 1
         assert result[0]["status"] == "ok"
+
+    def test_invalid_sql_returns_error_not_raises(self, server):
+        """A syntactically-valid but semantically-invalid query (unknown column)
+        must return a structured error, not raise out of the tool handler (S1).
+
+        On a persistent stdio server, a raising handler would surface as a
+        protocol-level crash and leak the DuckDB connection; the contract is that
+        execution errors become ``[{"error": …}]`` just like allowlist rejections.
+        """
+        result = server.query_iceberg("SELECT no_such_column FROM (SELECT 1) t")
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert "error" in result[0], f"expected an error dict, got: {result[0]}"
+        assert "query failed" in result[0]["error"].lower()
 
 
 class TestValidateReadOnlySql:

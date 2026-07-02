@@ -73,7 +73,9 @@ class BaseAnomalyChecker:
                         severity=rule.severity,
                         message=rule.flag,
                     ))
-            except Exception:
+            except (TypeError, ValueError, KeyError, ArithmeticError):
+                # A single rule that trips on one row's shape/values is skipped;
+                # a logic bug (AttributeError/NameError) still surfaces.
                 continue
         return flags
 

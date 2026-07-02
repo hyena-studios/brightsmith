@@ -44,7 +44,10 @@ def _load_server():
                     grounding_docs_path=grounding_path if grounding_path.exists() else None,
                 )
     except Exception:
-        pass
+        # Domain-specific server couldn't be loaded from the manifest — fall
+        # back to the framework base server. Logged so the fallback (and any
+        # import/config error behind it) is visible, never silent.
+        logger.warning("Could not load domain MCP server from manifest; using base server", exc_info=True)
 
     # Fall back to base server
     from brightsmith.mcp.base_mcp_server import BaseMCPServer

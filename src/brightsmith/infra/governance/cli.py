@@ -106,8 +106,8 @@ def cmd_query(table_name: str) -> None:
             print(f"governance.{table_name}: 0 rows")
             return
 
-        con = duckdb.connect()
-        con.sql("SELECT * FROM arrow_table ORDER BY 1 DESC LIMIT 20").show()
+        with duckdb.connect() as con:
+            con.sql("SELECT * FROM arrow_table ORDER BY 1 DESC LIMIT 20").show()
         print(f"\n({arrow_table.num_rows} total rows)")
     except Exception as e:
         print(f"Error querying governance.{table_name}: {e}")

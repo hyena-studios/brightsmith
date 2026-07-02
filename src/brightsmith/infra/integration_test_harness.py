@@ -159,36 +159,34 @@ class PipelineTestHarness:
                 result.missing_records.extend(records)
                 continue
 
-            con = duckdb.connect()
-            con.register("tbl", arrow_data)
+            with duckdb.connect() as con:
+                con.register("tbl", arrow_data)
 
-            for golden in records:
-                query = (
-                    f"SELECT {value_col} FROM tbl "
-                    f"WHERE {entity_col} = ? AND {metric_col} = ? AND {period_col} = ?"
-                )
-                rows = con.execute(query, [golden.entity, golden.metric, golden.period]).fetchall()
-
-                if not rows:
-                    result.missing_records.append(golden)
-                    continue
-
-                actual = float(rows[0][0])
-
-                if self._within_tolerance(actual, golden.expected_value, golden.tolerance, golden.tolerance_type):
-                    result.matches.append(golden)
-                else:
-                    diff = actual - golden.expected_value
-                    result.mismatches.append(
-                        Mismatch(
-                            record=golden,
-                            actual_value=actual,
-                            difference=diff,
-                            reason=f"outside {golden.tolerance_type} tolerance of {golden.tolerance}",
-                        )
+                for golden in records:
+                    query = (
+                        f"SELECT {value_col} FROM tbl "
+                        f"WHERE {entity_col} = ? AND {metric_col} = ? AND {period_col} = ?"
                     )
+                    rows = con.execute(query, [golden.entity, golden.metric, golden.period]).fetchall()
 
-            con.close()
+                    if not rows:
+                        result.missing_records.append(golden)
+                        continue
+
+                    actual = float(rows[0][0])
+
+                    if self._within_tolerance(actual, golden.expected_value, golden.tolerance, golden.tolerance_type):
+                        result.matches.append(golden)
+                    else:
+                        diff = actual - golden.expected_value
+                        result.mismatches.append(
+                            Mismatch(
+                                record=golden,
+                                actual_value=actual,
+                                difference=diff,
+                                reason=f"outside {golden.tolerance_type} tolerance of {golden.tolerance}",
+                            )
+                        )
 
         return result
 

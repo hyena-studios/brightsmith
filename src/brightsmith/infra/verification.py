@@ -16,6 +16,7 @@ import sys
 from brightsmith.infra.golden_dataset import (
     VerificationResult,
     list_golden_datasets,
+    load_golden_dataset,
     verify_golden_dataset,
 )
 
@@ -75,10 +76,29 @@ def main() -> None:
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
+    # A golden dataset is a *precondition*, not a result. Policy:
+    #   - golden dataset present  -> enforce it (mismatch / low pass-rate = hard FAIL)
+    #   - golden dataset absent    -> SKIP (verification not applicable), exit 0
+    # The skip is printed loudly so an operator / @staff-engineer can see the
+    # spec was skipped rather than silently passed.
+    if args.spec:
+        has_golden = load_golden_dataset(args.spec) is not None
+        target = f"spec '{args.spec}'"
+    else:
+        has_golden = len(list_golden_datasets()) > 0
+        target = "any spec"
+
+    if not has_golden:
+        print(f"SKIPPED: no golden dataset found for {target} — verification not applicable.")
+        return
+
     results, pass_rate = run_verification(spec=args.spec, tolerance=args.tolerance)
 
     if not results:
-        print("No verification results — no golden datasets found.")
+        # A golden dataset exists but yielded no checkable values (e.g. a
+        # malformed table reference or empty values list). That is a real
+        # failure, not a skip — the dataset was supposed to verify something.
+        print("FAIL: golden dataset present but no values could be verified.")
         sys.exit(1)
 
     for r in results:

@@ -164,7 +164,9 @@ class BaseSystemPrompt:
             if not contracts:
                 return ""
             return f"This dataset is served by {len(contracts)} governed table(s) with active data contracts."
-        except Exception:
+        except (OSError, ValueError):
+            # Missing/unreadable contract dir → omit this optional section. A
+            # logic bug raises a different type and is caught+logged by build().
             return ""
 
     def _build_dq_section(self) -> str:
@@ -177,7 +179,9 @@ class BaseSystemPrompt:
             if not scorecards:
                 return ""
             return f"{len(scorecards)} data quality scorecard(s) available. Use the `get_data_quality` tool for detailed results per table."
-        except Exception:
+        except (OSError, ValueError):
+            # Missing/unreadable scorecards dir → omit this optional section. A
+            # logic bug raises a different type and is caught+logged by build().
             return ""
 
     def _build_glossary_section(self) -> str:
@@ -204,7 +208,10 @@ class BaseSystemPrompt:
             if len(lines) <= 2:
                 return ""
             return "\n".join(lines)
-        except Exception:
+        except (OSError, ValueError):
+            # Missing/unreadable/invalid glossary JSON → omit this optional
+            # section. A logic bug raises a different type and is caught+logged
+            # by build().
             return ""
 
     def _build_guidelines_section(self) -> str:

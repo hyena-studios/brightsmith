@@ -378,25 +378,26 @@ def run_rules(
     # Tables that can't be loaded (e.g., in test environments) are skipped —
     # rules referencing them will get individual SQL errors instead of crashing
     con = duckdb.connect()
-    con.install_extension("iceberg")
-    con.load_extension("iceberg")
-    for ref in all_table_refs:
-        try:
-            _register_iceberg_views(con, [ref], catalog, shadow=shadow)
-        except RuntimeError:
-            pass  # Rule will fail with a SQL error when it references this table
+    try:
+        con.install_extension("iceberg")
+        con.load_extension("iceberg")
+        for ref in all_table_refs:
+            try:
+                _register_iceberg_views(con, [ref], catalog, shadow=shadow)
+            except RuntimeError:
+                pass  # Rule will fail with a SQL error when it references this table
 
-    # Execute each rule
-    results = []
-    for rule in sql_rules:
-        # Rewrite SQL to use view names
-        table_refs = _extract_table_refs(rule["sql"])
-        rewritten_sql = _rewrite_sql(rule["sql"], table_refs)
-        rule_copy = {**rule, "sql": rewritten_sql}
-        result = execute_sql_rule(rule_copy, con)
-        results.append(result)
-
-    con.close()
+        # Execute each rule
+        results = []
+        for rule in sql_rules:
+            # Rewrite SQL to use view names
+            table_refs = _extract_table_refs(rule["sql"])
+            rewritten_sql = _rewrite_sql(rule["sql"], table_refs)
+            rule_copy = {**rule, "sql": rewritten_sql}
+            result = execute_sql_rule(rule_copy, con)
+            results.append(result)
+    finally:
+        con.close()
 
     # Build run summary
     run_id = str(uuid.uuid4())[:8]

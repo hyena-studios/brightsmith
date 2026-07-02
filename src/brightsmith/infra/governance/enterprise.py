@@ -149,9 +149,9 @@ def enterprise_record_exists(table_name: str, id_field: str, value: str) -> bool
     arrow_table = table.scan().to_arrow()
     if arrow_table.num_rows == 0:
         return False
-    con = duckdb.connect()
-    rel = con.sql(f"SELECT 1 FROM arrow_table WHERE {id_field} = $1 LIMIT 1", params=[value])
-    return rel.fetchone() is not None
+    with duckdb.connect() as con:
+        rel = con.sql(f"SELECT 1 FROM arrow_table WHERE {id_field} = $1 LIMIT 1", params=[value])
+        return rel.fetchone() is not None
 
 
 def get_enterprise_records(table_name: str) -> list[dict]:

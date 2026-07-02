@@ -188,10 +188,37 @@ def _assert_table_not_relocated(catalog_path: str | Path, identifier: Any) -> No
     raise WarehouseRelocationError(_relocation_message([(namespace, table_name, meta_loc)]))
 
 
-def get_catalog(warehouse_path: str | Path, catalog_path: str | Path) -> SqlCatalog:
-    """Return a PyIceberg SqlCatalog backed by SQLite.
+# Process-wide catalog cache. Building a SqlCatalog spins up a SQLAlchemy engine
+# with a SQLite connection pool; without caching, every governance read (and any
+# other per-call get_catalog site) creates a fresh engine that is never disposed
+# — a steady resource leak and needless per-call overhead. Keyed on the RESOLVED
+# (warehouse, catalog, project_name) triple so a reconfigure that changes any of
+# them yields a distinct catalog. Tests that reconfigure between cases should call
+# reset_catalog_cache().
+_CATALOG_CACHE: dict[tuple[str, str, str], SqlCatalog] = {}
 
-    Creates the catalog DB and warehouse directory if they don't exist.
+
+def reset_catalog_cache() -> None:
+    """Drop all cached catalogs (disposing their engines).
+
+    Call this when the config's project name or warehouse/catalog paths change
+    within a single process (chiefly in tests) so a later get_catalog does not
+    hand back a catalog bound to the previous configuration.
+    """
+    for cat in _CATALOG_CACHE.values():
+        engine = getattr(cat, "engine", None)
+        if engine is not None:
+            engine.dispose()
+    _CATALOG_CACHE.clear()
+
+
+def get_catalog(warehouse_path: str | Path, catalog_path: str | Path) -> SqlCatalog:
+    """Return a PyIceberg SqlCatalog backed by SQLite (cached per config triple).
+
+    Creates the catalog DB and warehouse directory if they don't exist. Repeated
+    calls with the same resolved (warehouse, catalog, project_name) return the
+    SAME catalog instance — see :data:`_CATALOG_CACHE` and
+    :func:`reset_catalog_cache`.
 
     The returned catalog's ``load_table`` is guarded: loading a table whose
     ``metadata_location`` points at a file that does not exist because its baked
@@ -205,6 +232,11 @@ def get_catalog(warehouse_path: str | Path, catalog_path: str | Path) -> SqlCata
     catalog_path = Path(catalog_path).resolve()
     warehouse_path.mkdir(parents=True, exist_ok=True)
     catalog_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cache_key = (str(warehouse_path), str(catalog_path), config.PROJECT_NAME)
+    cached = _CATALOG_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
 
     catalog = SqlCatalog(
         config.PROJECT_NAME,
@@ -221,6 +253,7 @@ def get_catalog(warehouse_path: str | Path, catalog_path: str | Path) -> SqlCata
         return _orig_load_table(identifier, *args, **kwargs)
 
     catalog.load_table = _guarded_load_table  # type: ignore[method-assign]
+    _CATALOG_CACHE[cache_key] = catalog
     return catalog
 
 
@@ -287,8 +320,8 @@ def read_with_duckdb(
     else:
         arrow_table = table.scan().to_arrow()  # noqa: F841 — DuckDB resolves this from local scope
 
-    con = duckdb.connect()
-    result = con.sql("SELECT * FROM arrow_table").fetchall()
+    with duckdb.connect() as con:
+        result = con.sql("SELECT * FROM arrow_table").fetchall()
     columns = [field.name for field in table.schema().fields]
     return [dict(zip(columns, row, strict=False)) for row in result]
 
@@ -324,17 +357,16 @@ def filter_existing_records(
     existing_arrow = table.scan(selected_fields=(id_field,)).to_arrow()
 
     new_arrow = pa.Table.from_pylist(deduped)
-    con = duckdb.connect()
-    con.register("new_records", new_arrow)
-    con.register("existing_ids", existing_arrow)
+    with duckdb.connect() as con:
+        con.register("new_records", new_arrow)
+        con.register("existing_ids", existing_arrow)
 
-    result = con.execute(f"""
-        SELECT n.*
-        FROM new_records n
-        LEFT JOIN existing_ids e ON n.{id_field} = e.{id_field}
-        WHERE e.{id_field} IS NULL
-    """).to_arrow_table()
-    con.close()
+        result = con.execute(f"""
+            SELECT n.*
+            FROM new_records n
+            LEFT JOIN existing_ids e ON n.{id_field} = e.{id_field}
+            WHERE e.{id_field} IS NULL
+        """).to_arrow_table()
 
     new_records = result.to_pylist()
     skipped = len(records) - len(new_records)

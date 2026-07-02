@@ -312,7 +312,9 @@ def generate_contract(
                     col["business_term_id"] = match.get("term_id")
                     # CDE/PII flags are independent product classifications.
     except Exception:
-        pass
+        # Optional glossary cross-reference — a missing/invalid glossary just
+        # leaves business_term_id unset; logged so the omission is visible.
+        logger.debug("generate_contract: glossary cross-reference skipped for %s", table_name, exc_info=True)
 
     # Derive contract name from table name
     contract_name = tbl.replace("_", "-")

@@ -26,20 +26,13 @@ from pathlib import Path
 # Repo layout: tests/infra/this_file -> repo root is parents[2].
 SRC = Path(__file__).resolve().parents[2] / "src" / "brightsmith"
 
-# Files whose *entire* body is in scope for WP-2.1.
-FULL_SCOPE_FILES = [
-    SRC / "run.py",
-    SRC / "infra" / "dq_runner.py",
-    SRC / "infra" / "pipeline_gate.py",
-    SRC / "bronze" / "base_ingestor.py",
-    # Out of scope for fixing, but explicitly covered so its deliberately
-    # fault-tolerant lineage wrapper stays documented on the allowlist.
-    SRC / "infra" / "promote.py",
-    # M2.3 — full-scope coverage of the governance-read + observability modules.
-    SRC / "infra" / "governance" / "queries.py",
-    SRC / "infra" / "lineage.py",
-    SRC / "infra" / "cab.py",
-]
+# EVERY source file is in scope. A broad ``except Exception`` anywhere in the
+# package must either re-raise or appear on the comment-justified ALLOWLIST
+# below — there is no "unscoped" corner where a silent swallow can hide. Auto-
+# discovered so a newly-added module is covered the moment it lands.
+FULL_SCOPE_FILES = sorted(
+    p for p in (SRC).rglob("*.py") if "__pycache__" not in p.parts
+)
 
 # All previously-partial files now graduate to FULL_SCOPE (M2.3).
 PARTIAL_SCOPE_FILES: dict = {}
@@ -96,6 +89,51 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     # query for an ADVISORY report (logs debug). Per-file parse loops were NARROWED
     # to (OSError/parse/AttributeError/TypeError) so a logic bug still surfaces.
     ("cab.py", "compute_blast_radius"): "advisory blast-radius: best-effort lineage query, logged; file parses narrowed",
+    # --- Whole-tree scope: MCP server (advisory/tool-boundary handlers) ---
+    # These serve an LLM client. A failure becomes a degraded/structured tool
+    # response (logged), never a silent success or a crash of the persistent
+    # stdio server. Enrichment reads narrowed where a specific type fit.
+    ("base_mcp_server.py", "_handle_list_tables"): "advisory tool: unreadable namespace skipped + logged",
+    ("base_mcp_server.py", "_handle_get_lineage"): "governance-DB miss falls back to files + logged; file parse narrowed to (OSError, ValueError)",
+    ("base_mcp_server.py", "_handle_get_contract"): "advisory tool: lookup failure -> 'No contract found' + logged",
+    ("base_mcp_server.py", "query_iceberg_simple"): "load/read failure returned as structured [{'error': …}] result",
+    ("base_mcp_server.py", "attach_governance"): "best-effort governance metadata enrichment on a response; logged",
+    ("base_mcp_server.py", "handle_call_tool"): "MCP tool-dispatch boundary: any handler error returned as structured error to client",
+    # --- contract.py (contract lifecycle: failures become visible results) ---
+    ("contract.py", "list_contracts"): "per-file parse failure recorded as status='error' entry in the listing",
+    ("contract.py", "_build_lineage_section"): "best-effort lineage enrichment for a contract; logged",
+    ("contract.py", "generate_contract"): "Iceberg-load failure logged (empty schema); optional glossary xref logged",
+    ("contract.py", "verify_contract"): "table-load / data-read failure recorded as a FAIL verification result",
+    ("contract.py", "diff_contract"): "table-load failure recorded as an INFO diff item",
+    # --- golden_dataset.py (correctness gate: fails safe) ---
+    ("golden_dataset.py", "verify_golden_dataset"): "table-load failure logged + all values recorded MISSING -> verification fails conservatively, never false-passes",
+    ("golden_dataset.py", "list_golden_datasets"): "per-file parse failure recorded as a value_count=0 entry in the listing",
+    # --- governance/sync.py (file->Iceberg sync: every handler logs w/ exc_info) ---
+    ("sync.py", "_sync_dq_results"): "per-file sync failure logged (exc_info); other files continue",
+    ("sync.py", "_sync_pipeline_state"): "per-file sync failure logged (exc_info); other files continue",
+    ("sync.py", "_sync_contracts"): "per-file sync failure logged (exc_info); other files continue",
+    ("sync.py", "_sync_glossary"): "sync failure logged (exc_info)",
+    ("sync.py", "_enrich_spec_registry"): "per-file enrichment failure logged (exc_info); other files continue",
+    ("sync.py", "_sync_data_dictionary"): "sync failure logged (exc_info)",
+    ("sync.py", "_sync_data_models"): "per-file sync failure logged (exc_info); other files continue",
+    ("sync.py", "_sync_policies"): "per-file sync failure logged (exc_info); other files continue",
+    ("sync.py", "_sync_domain_context"): "sync failure logged (exc_info)",
+    # --- governance/migration.py (one-time file->Iceberg migration: all log) ---
+    ("migration.py", "_migrate_dq_rules"): "per-file migration failure logged (exc_info); other files continue",
+    ("migration.py", "_migrate_dq_acknowledgments"): "per-file migration failure logged (exc_info); other files continue",
+    ("migration.py", "_migrate_cab_decisions"): "per-file migration failure logged (exc_info); other files continue",
+    ("migration.py", "_migrate_golden_datasets"): "per-file migration failure logged (exc_info); other files continue",
+    ("migration.py", "_migrate_run_history"): "per-file migration failure logged (exc_info); other files continue",
+    ("migration.py", "_migrate_chaos_manifests"): "per-file migration failure logged (exc_info); other files continue",
+    ("migration.py", "_migrate_documents"): "per-file migration failure logged (exc_info); other files continue",
+    # --- integration_test_harness.py ---
+    ("integration_test_harness.py", "validate"): "absent table -> all records recorded MISSING (fails safe, never a false match)",
+    # --- base_system_prompt.py ---
+    ("base_system_prompt.py", "build"): "per-section builder failure logged (exc_info) + section skipped; prompt still built",
+    # --- CLI boundaries (loud to operator: printed + non-zero/None return) ---
+    ("__main__.py", "_cmd_cleanup"): "chaos CLI: cleanup failure printed to operator",
+    ("cli.py", "cmd_query"): "governance CLI: query failure printed + sys.exit(1)",
+    ("serve.py", "_load_server"): "domain server load failure logged + falls back to base server",
 }
 
 

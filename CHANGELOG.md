@@ -9,17 +9,49 @@ Brightsmith uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [0.4.0] — 2026-07-02
+
+### Fixed
+
+- **A1 — direct `config.PROJECT_ROOT = …` assignment now recomputes derived paths**, matching `configure()`. Previously, assigning a primary input (project_root/name/approval/floor) through the back-compat shim replaced only that one field and left `WAREHOUSE_PATH` / `DQ_RULES_DIR` / `CATALOG_PATH` / … pointing at the *old* root — an internally-inconsistent snapshot. Assigning a *derived* path (e.g. `config.DQ_RULES_DIR = tmp`) remains a single-field override.
+- **`lineage verify` and `lineage generate-docs` were crashing** — both read `con.description` after `con.sql(...)`, which is `None` in DuckDB 1.5 (only `con.execute()` populates it), raising `TypeError: 'NoneType' object is not iterable`. These CLI paths were untested (25% module coverage); now fixed to read the DuckDB relation's own `.columns`, and covered by new round-trip tests.
+- **Glossary sync was not idempotent** — the `glossary_terms` grain keyed on the `now()`-stamped `updated_at`, so re-running `sync_from_files` re-appended every term (unbounded governance-DB growth) despite its "idempotent via promote()" contract. The grain is now content-based (`term_id` + the term's content fields): an unchanged re-sync is a no-op, while a genuine edit still creates a new row.
+- **`BaseMCPServer.query_iceberg` no longer crashes or leaks on a bad query** — execution errors from untrusted SQL are returned as a structured `[{"error": …}]` (matching the allowlist-rejection shape) inside a `try/finally` that always closes the connection. Previously an invalid statement raised out of the tool handler and skipped `con.close()`, leaking a connection on every failure on the long-lived stdio server.
+- **DuckDB / SQLite connection leaks eliminated** — every `duckdb.connect()` is now context-managed, and PyIceberg `SqlCatalog` engines are cached per (warehouse, catalog, project) instead of rebuilt per call. A full test run went from **542 `ResourceWarning: unclosed database` to 0**.
+
 ### Changed
+
+- **Module-level config shim + `GRIST_*` vars: removal deferred, shim hardened.** 0.3.0 targeted these for removal in 0.4.0; instead the shim's assignment asymmetry (A1, above) was fixed and the shim retained for compatibility. Full removal in favour of `get_config()` / `configure()` is deferred to a future major release. `GRIST_*` continue to emit a `DeprecationWarning`.
+- **`verification run` gate is now conditional on golden-dataset presence** — a golden dataset present → it is enforced (mismatch / pass-rate below `--threshold` = hard FAIL); a golden dataset absent → `SKIPPED` (exit 0, printed loudly), since verification is not applicable. A dataset that exists but yields no checkable values is still a FAIL.
+- **`glossary_terms` grain changed** from `["term_id", "updated_at"]` to content-identity fields (see Fixed). Existing rows re-derive on the next sync; the table is write-only backfill, so no reader is affected.
+
+### Added
+
+- **`brightsmith.infra.iceberg_setup.reset_catalog_cache()`** — drops the process-wide `SqlCatalog` cache (disposing engines); called automatically by `configure()` and by the test fixture between cases.
+- **Characterization + regression test suites** — `test_lineage_roundtrip.py` (emit→read→query→CLI), `test_governance_sync_migration.py` (sync/migration end-to-end + idempotency), `test_no_unclosed_connections.py` (asserts no `unclosed database` ResourceWarning escapes a read/query flow), and `test_verification.py` (gate semantics). Two production bugs above were surfaced by these.
+- **No-swallowed-exceptions guard now scans the entire `src` tree** (was a hand-maintained 8-file list). Every broad `except Exception` in the package must re-raise, narrow to a specific type, or carry a written allowlist justification — a new module with an unjustified swallow fails CI automatically.
+
+### Internal
+
+- **Plugin manifest + `pyproject.toml` version bumped `0.3.0 → 0.4.0`.**
+
+### Governance-hardening batch (also in 0.4.0)
+
+_The pre-remediation "Unreleased" work — loud-failure gates, sessions table, typed CI — also ships in 0.4.0._
+
+#### Changed
 
 - **BREAKING — `log_agent_finding` now raises on a governance-DB write failure by default** (was fault-tolerant: logged a warning and returned `None`). The governance DB is authoritative for the agent-activity feed, so a dropped finding must fail the calling pipeline step rather than silently disappear — the same loud-failure doctrine the DQ and contract gates follow. Pass `strict=False` to restore best-effort logging where a logging hiccup must not fail the surrounding work. `write_agent_activity` (the underlying writer) already raised and is unchanged.
 - **Pipeline-gate completion is now gated on the governance-DB write.** `complete_step` / `skip_step` commit the authoritative JSON state file *last* — only after `_emit_governance_event` (and any `--finding` write) succeeds. Previously the file was saved *before* the Iceberg write, so a failed governance write left the step marked `COMPLETED` on disk and the next `check` cleared anyway. Now a failed governance write leaves the file un-advanced, so the next step's `check` stays `BLOCKED` and the pipeline stops deterministically — no agent cooperation required. Retrying `complete` is idempotent (governance writes dedup on their grain `record_id`).
 
-### Added
+#### Added
 
 - **`pipeline_gate complete --finding "<summary>"`** — records an end-of-step summary to the governance `agent_activity` feed atomically with completion. The finding write is strict: if it fails, completion is not recorded and the next `check` stays `BLOCKED`.
 - **Session logs restored as an Iceberg-authoritative `sessions` governance table** (the deleted `docs/sessions/` practice). New `sessions` schema, `write_session()` / `log_session()` writers (strict-by-default, idempotent on `session_id`), and `get_sessions()` query. The markdown file under `docs/sessions/` becomes an optional human-readable export; the table is the record of truth. `docs/workflows/session-logging.md` updated accordingly.
 
-### Internal
+#### Internal
 
 - **Agent definitions consolidated to a single source of truth (`agents/`).** The repo previously carried two copies of all 25 agents — the plugin-shipped `agents/` and a project-local `.claude/agents/` — which had drifted 1,087 lines apart. Because pipeline skills dispatch via the `bs:` plugin namespace (which resolves from `agents/`), the shipped copy was the stale one: it lacked the governance-DB logging blocks and the `temporal-modeler` / `lineage-tracker` / `mcp-engineer` rewrites. The maintained `.claude/agents/` content was promoted into `agents/` and the project-local copy was removed. Dogfood in-repo via `claude --plugin-dir .` so agents resolve as `bs:*`, exactly as an installed user sees them.
 - **Plugin manifest version bumped `0.2.0 → 0.3.0`** to match `pyproject.toml`.

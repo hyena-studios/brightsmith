@@ -98,14 +98,14 @@ def _query_table(table_name: str, sql: str, params: list | None = None) -> list[
         arrow_table = table.scan().to_arrow()
         if arrow_table.num_rows == 0:
             return []
-        con = duckdb.connect()
-        if params:
-            rel = con.sql(sql, params=params)
-        else:
-            rel = con.sql(sql)
-        columns = [desc[0] for desc in rel.description]
-        rows = rel.fetchall()
-        return [dict(zip(columns, row, strict=False)) for row in rows]
+        with duckdb.connect() as con:
+            if params:
+                rel = con.sql(sql, params=params)
+            else:
+                rel = con.sql(sql)
+            columns = [desc[0] for desc in rel.description]
+            rows = rel.fetchall()
+            return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception as e:
         logger.error("Query failed on governance.%s", table_name, exc_info=True)
         raise GovernanceReadError(table_name, e) from e

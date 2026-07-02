@@ -1,6 +1,6 @@
 [project]
 name = "brightsmith"
-version = "0.3.0"
+version = "0.4.0"
 description = "AI agent data pipeline framework — Bronze to MCP with full governance"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -11,6 +11,9 @@ dependencies = [
     "mcp>=1.0",
     "pyarrow>=17.0",
     "pyiceberg[sql-sqlite]>=0.7",
+    # Runtime dependency of DuckDB's Arrow/timestamp bridge (imported lazily by
+    # the duckdb C-extension, not declared in its metadata — so it must be pinned
+    # explicitly here or read_with_duckdb fails with ModuleNotFoundError: pytz).
     "pytz>=2026.1.post1",
     "pyyaml>=6.0.3",
 ]
