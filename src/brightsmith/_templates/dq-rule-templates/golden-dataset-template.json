@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "description": "Template for golden datasets — known-correct reference values for pipeline output validation. One file per spec at governance/golden-datasets/{spec}-golden.json.",
+  "format": {
+    "spec": "spec-name",
+    "table": "namespace.table_name",
+    "source_description": "Where these reference values come from (e.g., company 10-K filing, CMS published statistics)",
+    "created_by": "@data-analyst or @staff-engineer",
+    "created_at": "ISO-8601 timestamp",
+    "records": [
+      {
+        "entity": "Entity identifier (e.g., company CIK, patient ID)",
+        "metric": "What is being measured (e.g., 'revenue', 'total_claims')",
+        "period": "Time period (e.g., 'FY2010', '2023-Q1')",
+        "expected_value": 65225000000,
+        "tolerance": 0.01,
+        "tolerance_type": "relative (fraction) or absolute (raw value difference)",
+        "source": "Authoritative reference (e.g., 'Apple 10-K FY2010, p.42')",
+        "notes": "Optional context about why this value is correct"
+      }
+    ]
+  },
+  "rules": {
+    "minimum_records": 3,
+    "must_span_entities": true,
+    "must_include_edge_cases": "At least one record should test a known edge case from the EDA report"
+  }
+}

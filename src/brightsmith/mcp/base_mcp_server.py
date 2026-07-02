@@ -539,7 +539,23 @@ class BaseMCPServer:
         try:
             con.install_extension("iceberg")
             con.load_extension("iceberg")
-            # Disable all file-system access (read_csv, COPY TO, read_parquet, …).
+
+            # `iceberg_scan()` views are lazy: the file reads they need happen
+            # when the view is *queried*, not when it is created. A blanket
+            # `enable_external_access=false` blocks those reads unconditionally,
+            # so disabling access before registering views made every real-table
+            # query fail with "Table … does not exist" (audit finding C1) — the
+            # views were created but could never be scanned. Fix (sketch A):
+            # scope external access to the warehouse root via
+            # `allowed_directories`, which DuckDB honors even with
+            # `enable_external_access=false`, *before* disabling access, so
+            # `iceberg_scan` can still read warehouse files while everything
+            # else (read_csv, read_parquet outside the warehouse, COPY, …)
+            # stays blocked. Verified empirically against the pinned DuckDB
+            # 1.5.0 (uv.lock) — see docs/technical-audit-2026-07-02.md sketch A.
+            warehouse_root = str(self.warehouse_path.resolve())
+            con.execute("SET allowed_directories = ?", [[warehouse_root]])
+            # Disable all other file-system access (read_csv, COPY TO, read_parquet, …).
             # Pragma name verified against DuckDB 1.5.0 (uv.lock).
             con.execute("SET enable_external_access=false")
 
@@ -564,6 +580,12 @@ class BaseMCPServer:
                             logger.warning("query_iceberg: skipping view for %s: %s", full_id, e)
                 except (duckdb.Error, OSError) as e:
                     logger.warning("query_iceberg: skipping namespace %s: %s", ns, e)
+
+            # Lock the configuration so the untrusted statement below cannot
+            # flip `enable_external_access` / `allowed_directories` back open.
+            # Defense-in-depth: Layer 1 already rejects SET as a leading
+            # keyword, so this only matters if that allowlist is ever bypassed.
+            con.execute("SET lock_configuration=true")
 
             # Execution of the untrusted statement itself. A bad column / unknown
             # table / type error becomes a structured error result (matching the

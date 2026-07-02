@@ -1,0 +1,37 @@
+# Trimmed fixture, modeled on futureproof-data's domain/manifest.yaml
+# `pipeline.zones` shape (a real field project — see
+# docs/technical-audit-2026-07-02.md, H5.2). The real manifest has many more
+# steps per zone; this fixture keeps 2 silver steps (to exercise multi-step
+# aggregation), 1 gold step, and 1 mcp entry (class-based, not a callable
+# transform step — must be skipped by the zone registry, parsed by serve.py
+# instead).
+#
+# `module` values are file paths (as the field manifest uses), resolved
+# against PROJECT_ROOT at execution time. The test that uses this fixture
+# writes matching stub .py files at these paths under its tmp project root.
+
+name: nested-pipeline-fixture
+version: "0.1"
+description: "Trimmed fixture for the nested pipeline.zones manifest shape (H5.2)"
+sources: []
+pipeline:
+  zones:
+    silver:
+      - name: source_one
+        module: src/silver/source_one_transformer.py
+        function: transform
+        status: active
+      - name: source_two
+        module: src/silver/source_two_transformer.py
+        function: transform
+        status: active
+    gold:
+      - name: aggregate
+        module: src/gold/aggregate_transformer.py
+        function: transform
+        status: active
+    mcp:
+      - name: fixture_server
+        module: src/mcp_server/fixture_server.py
+        class: FixtureMCPServer
+        status: active

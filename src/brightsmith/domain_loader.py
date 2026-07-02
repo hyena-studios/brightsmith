@@ -47,7 +47,18 @@ def __getattr__(name):
 
 @dataclass
 class SourceConfig:
-    """Configuration for a single data source."""
+    """Configuration for a single data source.
+
+    Most sources declare one table (``table:``). Multi-table sources (e.g.
+    O*NET's 7-table bulk extract, field evidence: futureproof-data's
+    ``onet.yaml``) declare ``tables:`` instead — a list of names, or a
+    mapping keyed by table name carrying per-table metadata (per-table
+    metadata itself is not consumed by this loader). ``table`` is always
+    populated (the first entry of ``tables`` for back-compat with existing
+    single-table callers); ``tables`` always holds the full list, and
+    defaults to ``[table]`` when not passed explicitly (back-compat for
+    callers constructing SourceConfig directly, e.g. tests).
+    """
 
     name: str
     namespace: str
@@ -56,12 +67,21 @@ class SourceConfig:
     entities: dict[int | str, str]
     dedup_grain: list[str]
     cache_dir: Path
+    tables: list[str] = field(default_factory=list)
     fetcher_path: str | None = None
     flattener_path: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.tables:
+            self.tables = [self.table]
 
     @property
     def full_table_name(self) -> str:
         return f"{self.namespace}.{self.table}"
+
+    @property
+    def full_table_names(self) -> list[str]:
+        return [f"{self.namespace}.{t}" for t in self.tables]
 
 
 @dataclass
@@ -108,6 +128,11 @@ class DomainManifest:
     hints: DomainHints
     domain: DomainAssignment | None = None
     pipeline: dict | None = None
+    # Top-level `mcp: {module, class}` block (H1) — names the domain-specific
+    # MCP server class serve.py should load instead of the generic
+    # BaseMCPServer. Distinct from a `pipeline.zones.mcp` entry (the shape
+    # field manifests use), which serve.py also checks as a fallback.
+    mcp: dict | None = None
 
 
 def _resolve_path(path_str: str | None, project_root: Path) -> Path | None:
@@ -118,6 +143,44 @@ def _resolve_path(path_str: str | None, project_root: Path) -> Path | None:
     if p.is_absolute():
         return p
     return project_root / p
+
+
+def _resolve_table_names(data: dict, source_config_path: Path) -> list[str]:
+    """Resolve the table name(s) declared by a source config (H5.1).
+
+    Supports the singular ``table:`` key (one table per source — unchanged
+    behavior) and the plural ``tables:`` key for multi-table sources, which
+    may be either a YAML list of names or a mapping keyed by table name
+    carrying per-table metadata (e.g. ``source_file``/``dedup_grain`` — field
+    evidence: futureproof-data's O*NET source declares 5 tables this way).
+    Per-table metadata under a mapping form is not consumed here; only the
+    table names are extracted.
+
+    Raises:
+        KeyError: Neither ``table:`` nor ``tables:`` is present.
+        ValueError: ``tables:`` is present but not a list/mapping, or is empty.
+    """
+    if "table" in data:
+        return [data["table"]]
+
+    tables = data.get("tables")
+    if tables is None:
+        raise KeyError(
+            f"Source config {source_config_path} has neither 'table:' (singular) "
+            f"nor 'tables:' (plural) — one is required."
+        )
+    if isinstance(tables, dict):
+        names = list(tables.keys())
+    elif isinstance(tables, list):
+        names = list(tables)
+    else:
+        raise ValueError(
+            f"Source config {source_config_path}: 'tables:' must be a list or "
+            f"mapping of table names, got {type(tables).__name__}"
+        )
+    if not names:
+        raise ValueError(f"Source config {source_config_path}: 'tables:' is empty")
+    return names
 
 
 def _load_source_config(source_entry: dict, project_root: Path) -> SourceConfig:
@@ -133,15 +196,17 @@ def _load_source_config(source_entry: dict, project_root: Path) -> SourceConfig:
     with open(source_config_path) as f:
         data = yaml.safe_load(f)
 
-    # Ensure entity keys are the right type (YAML may parse them as ints or strings)
-    entities = {}
-    for k, v in data.get("entities", {}).items():
-        entities[k] = v
+    # YAML may parse entity keys as ints or strings depending on quoting;
+    # SourceConfig.entities accepts both, so the raw dict is used as-is.
+    entities = data.get("entities", {})
+
+    table_names = _resolve_table_names(data, source_config_path)
 
     return SourceConfig(
         name=data["name"],
         namespace=data["namespace"],
-        table=data["table"],
+        table=table_names[0],
+        tables=table_names,
         fetch=data.get("fetch", {}),
         entities=entities,
         dedup_grain=data.get("dedup_grain", []),
@@ -213,6 +278,7 @@ def load_manifest(manifest_path: Path | None = None) -> DomainManifest:
         hints=hints,
         domain=domain,
         pipeline=data.get("pipeline"),
+        mcp=data.get("mcp"),
     )
 
     logger.info(

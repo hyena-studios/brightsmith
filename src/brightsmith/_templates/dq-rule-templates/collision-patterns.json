@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "description": "DQ rule patterns for collision resolution validation. @dq-rule-writer must evaluate each pattern when concept normalization involves multi-source concepts.",
+  "patterns": [
+    {
+      "pattern_id": "COLLISION-UNIQUE-PER-GRAIN",
+      "dimension": "Uniqueness",
+      "priority": "P0",
+      "description": "After collision resolution, each canonical concept must appear at most once per entity-period grain",
+      "sql_template": "SELECT COUNT(*) FROM (SELECT {entity_id}, canonical_concept, {period_fields}, COUNT(*) AS cnt FROM {table} GROUP BY {entity_id}, canonical_concept, {period_fields} HAVING cnt > 1)",
+      "threshold": "result = 0",
+      "mandatory": true
+    },
+    {
+      "pattern_id": "COLLISION-RULES-APPLIED",
+      "dimension": "Consistency",
+      "priority": "P1",
+      "description": "Source tags used in conformed data should match primary_sources ordering from collision rules",
+      "note": "Implemented as a programmatic check, not pure SQL",
+      "mandatory": true
+    }
+  ]
+}

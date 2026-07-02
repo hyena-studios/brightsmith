@@ -132,6 +132,18 @@ class TestExtractTableRefs:
         refs = _extract_table_refs("SELECT 1")
         assert refs == []
 
+    def test_table_name_with_digits(self):
+        """M4/T6a — a table name containing digits (e.g. a year-partitioned
+        table) must resolve; the old `[a-z_]+` pattern couldn't match it."""
+        refs = _extract_table_refs("SELECT * FROM gold.revenue_2024")
+        assert ("gold", "revenue_2024") in refs
+
+    def test_table_name_with_digits_in_join(self):
+        sql = "SELECT * FROM gold.revenue_2024 r JOIN silver.entity_mappings m ON r.cik = m.cik"
+        refs = _extract_table_refs(sql)
+        assert ("gold", "revenue_2024") in refs
+        assert ("silver", "entity_mappings") in refs
+
 
 # ---------------------------------------------------------------------------
 # SQL rewriting
@@ -151,6 +163,11 @@ class TestRewriteSql:
         result = _rewrite_sql(sql, [("bronze", "xbrl_company_facts"), ("silver", "entity_mappings")])
         assert "bronze_xbrl_company_facts" in result
         assert "silver_entity_mappings" in result
+
+    def test_table_name_with_digits(self):
+        sql = "SELECT * FROM gold.revenue_2024"
+        result = _rewrite_sql(sql, [("gold", "revenue_2024")])
+        assert result == "SELECT * FROM gold_revenue_2024"
 
 
 # ---------------------------------------------------------------------------

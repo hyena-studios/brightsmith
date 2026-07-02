@@ -4,6 +4,8 @@ Validates: manifest parsing, source config loading, hints parsing,
 missing manifest handling, and get_source lookup.
 """
 
+import shutil
+from pathlib import Path
 
 import pytest
 import yaml
@@ -15,6 +17,8 @@ from brightsmith.domain_loader import (
     load_manifest,
     show_domain,
 )
+
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "domain_loader"
 
 # --- Fixtures ---
 
@@ -178,6 +182,121 @@ class TestSourceConfig:
         assert source.table == "test_data"
         assert len(source.entities) == 2
         assert source.dedup_grain == ["id", "date"]
+
+    def test_singular_table_unchanged(self, minimal_manifest):
+        """Singular `table:` still populates both `table` and `tables` (H5.1)."""
+        manifest = load_manifest(minimal_manifest)
+        source = manifest.sources[0]
+        assert source.table == "test_data"
+        assert source.tables == ["test_data"]
+        assert source.full_table_name == "bronze.test_data"
+        assert source.full_table_names == ["bronze.test_data"]
+
+
+# ---------------------------------------------------------------------------
+# H5.1 — `tables:` (plural, multi-table sources).
+#
+# `_load_source_config` used to hard-require singular `table:` and raised
+# KeyError for sources declaring `tables:` — the shape multi-table sources
+# naturally use (field evidence: futureproof-data's `onet.yaml`, copied in
+# trimmed form to tests/fixtures/domain_loader/onet_source_trimmed.yaml).
+# ---------------------------------------------------------------------------
+
+
+def _manifest_with_source_file(tmp_path, source_yaml_path: Path):
+    """Build a minimal manifest.yaml pointing at a given source config file."""
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    dest = sources_dir / source_yaml_path.name
+    shutil.copy(source_yaml_path, dest)
+
+    manifest = {
+        "name": "tables-test",
+        "version": "1.0",
+        "description": "tables: plural source test",
+        "sources": [
+            {"name": "onet", "source_config": f"sources/{source_yaml_path.name}"}
+        ],
+    }
+    manifest_path = tmp_path / "manifest.yaml"
+    with open(manifest_path, "w") as f:
+        yaml.dump(manifest, f)
+    return manifest_path
+
+
+class TestPluralTablesSource:
+    """`tables:` (plural) sources must load without KeyError (H5.1)."""
+
+    def test_onet_style_tables_mapping_loads(self, tmp_path):
+        """A `tables:` mapping (onet.yaml's real shape) loads all table names."""
+        manifest_path = _manifest_with_source_file(
+            tmp_path, FIXTURES_DIR / "onet_source_trimmed.yaml"
+        )
+        manifest = load_manifest(manifest_path)
+        source = manifest.sources[0]
+
+        assert source.tables == ["onet_occupations", "onet_task_statements"]
+        # `table` is set to the first entry for back-compat with single-table callers.
+        assert source.table == "onet_occupations"
+        assert source.full_table_names == [
+            "bronze.onet_occupations",
+            "bronze.onet_task_statements",
+        ]
+
+    def test_tables_as_plain_list_loads(self, tmp_path):
+        """`tables:` given as a plain YAML list (no per-table metadata) also loads."""
+        source_config = {
+            "name": "multi",
+            "namespace": "bronze",
+            "tables": ["table_a", "table_b", "table_c"],
+            "fetch": {},
+            "entities": {},
+            "dedup_grain": [],
+            "cache_dir": "data/raw/multi_cache",
+        }
+        sources_dir = tmp_path / "sources"
+        sources_dir.mkdir()
+        (sources_dir / "multi.yaml").write_text(yaml.dump(source_config))
+
+        manifest = {
+            "name": "tables-list-test",
+            "version": "1.0",
+            "description": "",
+            "sources": [{"name": "multi", "source_config": "sources/multi.yaml"}],
+        }
+        manifest_path = tmp_path / "manifest.yaml"
+        manifest_path.write_text(yaml.dump(manifest))
+
+        result = load_manifest(manifest_path)
+        source = result.sources[0]
+        assert source.tables == ["table_a", "table_b", "table_c"]
+        assert source.table == "table_a"
+
+    def test_neither_table_nor_tables_raises(self, tmp_path):
+        """A source config with neither `table:` nor `tables:` fails loudly."""
+        source_config = {
+            "name": "broken",
+            "namespace": "bronze",
+            "fetch": {},
+            "entities": {},
+            "dedup_grain": [],
+            "cache_dir": "data/raw/cache",
+        }
+        sources_dir = tmp_path / "sources"
+        sources_dir.mkdir()
+        (sources_dir / "broken.yaml").write_text(yaml.dump(source_config))
+
+        manifest = {
+            "name": "broken-test",
+            "version": "1.0",
+            "description": "",
+            "sources": [{"name": "broken", "source_config": "sources/broken.yaml"}],
+        }
+        manifest_path = tmp_path / "manifest.yaml"
+        manifest_path.write_text(yaml.dump(manifest))
+
+        with pytest.raises(KeyError, match="table"):
+            load_manifest(manifest_path)
 
 
 # --- Get Source ---

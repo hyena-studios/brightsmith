@@ -273,6 +273,88 @@ class TestQueryIcebergSecurity:
         assert "query failed" in result[0]["error"].lower()
 
 
+class TestQueryIcebergRealTable:
+    """C1 — query_iceberg must be able to read real Iceberg tables while
+    staying read-only (docs/technical-audit-2026-07-02.md, sketch A).
+    """
+
+    @staticmethod
+    def _make_table(warehouse_path, catalog_path):
+        from pyiceberg.schema import Schema
+        from pyiceberg.types import IntegerType, NestedField, StringType
+
+        from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
+
+        catalog = get_catalog(warehouse_path, catalog_path)
+        schema = Schema(
+            NestedField(1, "id", IntegerType(), required=True),
+            NestedField(2, "name", StringType(), required=True),
+        )
+        table = get_or_create_table(catalog, "gold", "verify_tbl", schema)
+        append_data(table, [{"id": 1, "name": "alice"}, {"id": 2, "name": "bob"}], strict=False)
+        return table
+
+    def test_query_iceberg_reads_real_table(self, tmp_path):
+        """A real Iceberg table created via the project's own helpers must be
+        queryable through query_iceberg — this is the C1 regression: before
+        the fix, the view existed but every scan failed with
+        'Table … does not exist' because external access was disabled before
+        the (lazy) iceberg_scan view was ever read.
+        """
+        warehouse_path = tmp_path / "warehouse"
+        catalog_path = tmp_path / "catalog.db"
+        self._make_table(warehouse_path, catalog_path)
+
+        server = ConcreteServer(warehouse_path=warehouse_path, catalog_path=catalog_path)
+        result = server.query_iceberg("SELECT * FROM gold_verify_tbl ORDER BY id")
+
+        assert isinstance(result, list)
+        assert len(result) == 2, f"expected 2 real rows, got: {result}"
+        assert "error" not in result[0]
+        assert result[0] == {"id": 1, "name": "alice"}
+        assert result[1] == {"id": 2, "name": "bob"}
+
+    def test_read_csv_still_blocked_after_real_table_query(self, tmp_path):
+        """read_csv against an arbitrary local file must still be blocked
+        after a successful real-table query on the same server instance —
+        the allowed_directories scoping must not leak into a broader grant.
+        """
+        warehouse_path = tmp_path / "warehouse"
+        catalog_path = tmp_path / "catalog.db"
+        self._make_table(warehouse_path, catalog_path)
+
+        server = ConcreteServer(warehouse_path=warehouse_path, catalog_path=catalog_path)
+
+        real_result = server.query_iceberg("SELECT * FROM gold_verify_tbl ORDER BY id")
+        assert len(real_result) == 2
+        assert "error" not in real_result[0]
+
+        blocked_result = server.query_iceberg("SELECT * FROM read_csv('/etc/hosts')")
+        assert isinstance(blocked_result, list)
+        assert len(blocked_result) == 1
+        assert "error" in blocked_result[0]
+        err = blocked_result[0]["error"].lower()
+        assert "permission" in err or "file system" in err or "disabled" in err, (
+            f"expected a permission/filesystem error, got: {blocked_result[0]['error']}"
+        )
+
+    def test_set_enable_external_access_rejected(self, tmp_path):
+        """A direct attempt to re-enable external access must be rejected —
+        SET is not an allowed leading keyword on the untrusted surface
+        (Layer 1), and lock_configuration=true backs this up at the DuckDB
+        level (Layer 2) even if the allowlist were ever bypassed.
+        """
+        server = ConcreteServer(
+            warehouse_path=tmp_path / "warehouse",
+            catalog_path=tmp_path / "catalog.db",
+        )
+        result = server.query_iceberg("SET enable_external_access=true")
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert "error" in result[0]
+
+
 class TestValidateReadOnlySql:
     """Unit tests for the _validate_read_only_sql helper."""
 

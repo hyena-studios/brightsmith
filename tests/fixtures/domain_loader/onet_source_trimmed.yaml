@@ -1,0 +1,32 @@
+# Trimmed fixture, modeled on futureproof-data's domain/sources/onet.yaml
+# (a real field project — see docs/technical-audit-2026-07-02.md, H5.1).
+#
+# The real source declares 5 O*NET tables under `tables:` as a mapping
+# keyed by table name, each carrying its own `source_file`/`dedup_grain`.
+# This fixture keeps that shape but trims it to 2 tables so the test stays
+# small. It has NO top-level `table:` key — that's the point: this is the
+# multi-table shape that used to raise KeyError in _load_source_config.
+
+name: onet
+namespace: bronze
+
+tables:
+  onet_occupations:
+    source_file: "Occupation Data.txt"
+    dedup_grain:
+      - onet_soc_code
+  onet_task_statements:
+    source_file: "Task Statements.txt"
+    dedup_grain:
+      - onet_soc_code
+      - task_id
+
+fetch:
+  bulk_zip_download:
+    url: https://www.onetcenter.org/dl_files/database/db_30_2_text.zip
+    format: tsv_in_zip
+
+entities:
+  onet: "O*NET 30.2 Database — Test Fixture"
+
+cache_dir: data/raw/onet_cache

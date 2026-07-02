@@ -22,6 +22,10 @@ build/
 htmlcov/
 coverage.xml
 
+# Test/lint caches (not committed, not gitignored before — permanent git status noise)
+.pytest_cache/
+.ruff_cache/
+
 # DQ results (timestamped, can regenerate)
 governance/dq-results/*.json
 

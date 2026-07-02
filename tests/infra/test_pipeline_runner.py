@@ -9,6 +9,7 @@ from pathlib import Path
 from brightsmith.run import (
     EXIT_DQ_FAILURE,
     EXIT_SUCCESS,
+    EXIT_TRANSFORM_ERROR,
     GoldenResult,
     PipelineResult,
     ZoneResult,
@@ -304,3 +305,96 @@ def test_validate_only_runs_real_dq(tmp_path):
     proc = _run_runner(tmp_path, "--zone", "bronze", "--validate-only")
     assert proc.returncode == EXIT_DQ_FAILURE, proc.stdout + proc.stderr
     assert "VO-FAIL" in proc.stdout, proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# H2 — SKIPPED misclassification (docs/technical-audit-2026-07-02.md).
+#
+# `_execute_zone_module` used to raise bare `ValueError` for "no module
+# registered", and `run_pipeline` caught `ValueError` to detect that case —
+# which also caught any `ValueError` raised by the domain transform itself,
+# silently reclassifying real failures as SKIPPED with exit 0. Fixed by
+# raising a dedicated `ZoneNotRegisteredError` and narrowing the catch.
+# ---------------------------------------------------------------------------
+
+
+def _write_failing_transform_manifest(tmp_path: Path) -> None:
+    """Register a bronze transform whose main() raises ValueError, simulating
+    a real domain failure (e.g. append_data's strict-mode column error)."""
+    (tmp_path / "failing_transform.py").write_text(
+        "def main():\n"
+        "    raise ValueError('simulated strict-mode misspelled-column error')\n"
+    )
+    (tmp_path / "domain").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "domain" / "manifest.yaml").write_text(
+        "name: test\n"
+        "version: '0.1'\n"
+        "pipeline:\n"
+        "  bronze:\n"
+        "    module: failing_transform\n"
+        "    function: main\n"
+    )
+
+
+def test_registered_zone_value_error_yields_failed_not_skipped(tmp_path):
+    """A registered zone whose transform raises ValueError must FAIL loudly
+    (exit EXIT_TRANSFORM_ERROR), never be silently reclassified as SKIPPED.
+    """
+    _write_failing_transform_manifest(tmp_path)
+
+    proc = _run_runner(tmp_path, "--zone", "bronze")
+    assert proc.returncode == EXIT_TRANSFORM_ERROR, proc.stdout + proc.stderr
+    assert "SKIPPED" not in proc.stdout, proc.stdout
+    assert "simulated strict-mode misspelled-column error" in proc.stdout, proc.stdout
+
+
+def test_unregistered_zone_still_skipped(tmp_path):
+    """A zone with no module registered at all must still be SKIPPED (not
+    FAILED) and must not fail the run.
+    """
+    _write_noop_manifest(tmp_path)  # registers only "bronze"
+
+    proc = _run_runner(tmp_path, "--zone", "silver")
+    assert proc.returncode == EXIT_SUCCESS, proc.stdout + proc.stderr
+    assert "SKIPPED" in proc.stdout, proc.stdout
+
+
+def test_registered_zone_value_error_yields_failed_in_process(tmp_path):
+    """In-process equivalent of the subprocess test above: exercises
+    run_pipeline() directly against a monkeypatched zone registry so the
+    FAILED/TRANSFORM_ERROR outcome is asserted on the PipelineResult object,
+    not just process exit code / stdout text.
+    """
+    from unittest.mock import patch
+
+    def _raise_value_error() -> dict:
+        raise ValueError("simulated strict-mode misspelled-column error")
+
+    with (
+        patch("brightsmith.run._ZONE_REGISTRY", {"bronze": "dummy:main"}),
+        patch("brightsmith.run._load_zone_registry"),
+        patch("brightsmith.run._execute_zone_module", side_effect=lambda zone: _raise_value_error()),
+        patch("brightsmith.run._preflight_relocation"),
+    ):
+        result = run_pipeline(zones=["bronze"])
+
+    assert result.zones["bronze"].status == "FAILED"
+    assert result.status == "TRANSFORM_ERROR"
+    assert result.exit_code == EXIT_TRANSFORM_ERROR
+
+
+def test_unregistered_zone_still_skipped_in_process():
+    """In-process equivalent: an unregistered zone must yield SKIPPED via
+    run_pipeline(), not FAILED.
+    """
+    from unittest.mock import patch
+
+    with (
+        patch("brightsmith.run._ZONE_REGISTRY", {}),
+        patch("brightsmith.run._load_zone_registry"),
+        patch("brightsmith.run._preflight_relocation"),
+    ):
+        result = run_pipeline(zones=["silver"])
+
+    assert result.zones["silver"].status == "SKIPPED"
+    assert result.exit_code == EXIT_SUCCESS

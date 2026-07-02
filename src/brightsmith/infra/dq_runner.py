@@ -152,8 +152,13 @@ def evaluate_threshold(raw_result: Any, threshold_expr: str) -> tuple[bool, str]
 # Aliases accepted at boundaries: raw→bronze, base→silver, consumable→gold, ai_ready→mcp.
 _KNOWN_NAMESPACES = {"bronze", "silver", "gold", "mcp", "raw", "base", "consumable", "ai_ready"}
 
-# Matches namespace.table references in SQL (e.g., bronze.financial_facts)
-_TABLE_REF_RE = re.compile(r"\b([a-z_]+)\.([a-z_]+)\b")
+# Matches namespace.table references in SQL (e.g., bronze.financial_facts,
+# gold.revenue_2024). Namespaces are known-lowercase words (validated against
+# _KNOWN_NAMESPACES below); table names may contain digits, so the table half
+# allows [a-z0-9_] with a leading letter (audit finding M4/T6a — the previous
+# `[a-z_]+` pattern couldn't match a table name with a digit in it at all,
+# e.g. "revenue_2024", silently leaving the view unregistered).
+_TABLE_REF_RE = re.compile(r"\b([a-z][a-z0-9_]*)\.([a-z][a-z0-9_]*)\b")
 
 
 def _extract_table_refs(sql: str) -> list[tuple[str, str]]:

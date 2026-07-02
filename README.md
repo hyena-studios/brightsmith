@@ -305,7 +305,7 @@ When `False` (dev/demo mode):
 ### Option 2: Headless Pipeline
 
 ```bash
-pip install git+https://github.com/jcernauske/brightsmith.git
+pip install git+https://github.com/hyena-studios/brightsmith.git
 
 # Run the full pipeline without AI agents
 python -m brightsmith.run --zone bronze
@@ -385,7 +385,7 @@ brightsmith/
 ├── hooks/                        Plugin hooks
 │   ├── hooks.json                Hook config (SessionStart, PreToolUse)
 │   └── require-subagent-type.sh  Enforces subagent_type on all Agent calls
-├── agents/                       Plugin agents (setup.md only — rest copied to consumer projects at init)
+├── agents/                       Plugin agents (25 agent definitions)
 ├── src/brightsmith/              Framework package (pip-installable)
 │   ├── config.py                 Global config (env var overrides for domain projects)
 │   ├── domain_loader.py          Manifest + source config parsing
@@ -411,8 +411,6 @@ brightsmith/
 │       ├── glossary_validator.py    Business term completeness
 │       ├── glossary_loader.py       Three-tier glossary composition
 │       └── staging.py               Proposal staging
-├── .claude/
-│   └── agents/                   25 agent definitions (copied to consumer projects at init)
 ├── domain/                       Domain pack (your data source config)
 ├── governance/                   All governance artifacts (20+ directories)
 ├── docs/

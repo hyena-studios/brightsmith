@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import importlib.util
 import json
 import logging
 import sys
@@ -37,6 +38,37 @@ EXIT_DQ_FAILURE = 1
 EXIT_TRANSFORM_ERROR = 2
 EXIT_CONTRACT_VIOLATION = 3
 EXIT_CONFIG_ERROR = 4
+
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class ZoneNotRegisteredError(Exception):
+    """Raised when a zone has no transformation module registered.
+
+    Deliberately distinct from ``ValueError`` (audit finding H2): the domain
+    transform a zone module calls into can itself raise ``ValueError`` for
+    legitimate reasons (e.g. ``append_data``'s strict-mode misspelled-column
+    error, ``compute_grain_id``'s missing-grain-field error). Catching bare
+    ``ValueError`` in ``run_pipeline`` to detect "no module registered" also
+    caught those real transform failures and silently reclassified them as
+    SKIPPED with exit 0. Raising this dedicated type lets the caller catch
+    only the "not registered" case.
+    """
+
+
+class PipelineManifestShapeError(Exception):
+    """Raised when ``domain/manifest.yaml``'s ``pipeline:`` section matches
+    neither the flat nor the nested shape (audit finding H5.2).
+
+    Previously an unrecognized shape left ``_ZONE_REGISTRY`` silently empty —
+    the headless runner would report every zone SKIPPED with no indication
+    that the manifest was actually malformed. This type ensures a bad
+    manifest fails loudly instead.
+    """
+
 
 # ---------------------------------------------------------------------------
 # Zone ordering
@@ -162,12 +194,41 @@ class PipelineResult:
 # ---------------------------------------------------------------------------
 # Zone execution registry
 # ---------------------------------------------------------------------------
+#
+# A zone maps to an ORDERED LIST of steps (audit finding H5.2). Historically
+# a zone was a single "module:function" string; multi-source domains
+# naturally produce several transform steps per zone (one per source), so
+# the registry now holds a list of `_ZoneStep`s per zone and executes them
+# in order, aggregating rows_promoted/rows_skipped across all of them.
 
-_ZONE_REGISTRY: dict[str, str] = {}
+
+@dataclass(frozen=True)
+class _ZoneStep:
+    """One executable transform step within a zone."""
+
+    module: str
+    function: str = "main"
+    # True when `module` is a filesystem path (e.g. "src/silver/foo.py", as
+    # field manifests use) rather than a dotted import path — determines
+    # whether we import via `importlib.import_module` or
+    # `importlib.util.spec_from_file_location`.
+    file_path: bool = False
+
+
+_ZONE_REGISTRY: dict[str, list[_ZoneStep]] = {}
+
+
+def _parse_step_string(module_path: str) -> _ZoneStep:
+    """Parse a legacy "module:function" (or bare "module") string into a step."""
+    if ":" in module_path:
+        mod_name, func_name = module_path.rsplit(":", 1)
+    else:
+        mod_name, func_name = module_path, "main"
+    return _ZoneStep(module=mod_name, function=func_name, file_path=False)
 
 
 def register_zone(zone: str, module_path: str) -> None:
-    """Register a zone's transformation module.
+    """Register a zone's transformation module (single-step, dotted path).
 
     Args:
         zone: Zone name (bronze, silver, gold, or mcp).  Alias names
@@ -177,7 +238,82 @@ def register_zone(zone: str, module_path: str) -> None:
     """
     from brightsmith.infra.governance.serializers import normalize_zone
     canonical = normalize_zone(zone) or zone
-    _ZONE_REGISTRY[canonical] = module_path
+    _ZONE_REGISTRY[canonical] = [_parse_step_string(module_path)]
+
+
+def _is_file_path_module(module: str) -> bool:
+    """True when a manifest ``module:`` value looks like a file path rather
+    than a dotted import path (e.g. "src/silver/foo.py" vs "silver.foo")."""
+    return module.endswith(".py") or "/" in module
+
+
+def _load_flat_zone_registry(pipeline: dict, normalize_zone) -> None:
+    """Parse the flat manifest shape: ``pipeline: {zone: {module, function}}``.
+
+    One step per zone. A zone entry with no ``module`` key is a legitimate
+    stub (e.g. a spec'd-but-not-yet-implemented zone) and is silently
+    skipped, matching the framework's pre-existing behavior for this shape.
+    """
+    for zone_name, zone_config in pipeline.items():
+        if not isinstance(zone_config, dict):
+            continue
+        module = zone_config.get("module", "")
+        function = zone_config.get("function", "main")
+        if module:
+            canonical = normalize_zone(zone_name) or zone_name
+            step = _ZoneStep(module=module, function=function, file_path=_is_file_path_module(module))
+            _ZONE_REGISTRY[canonical] = [step]
+
+
+def _load_nested_zone_registry(zones_block: dict, normalize_zone) -> None:
+    """Parse the nested manifest shape: ``pipeline: {zones: {zone: [steps]}}``.
+
+    This is the shape multi-source domains produce naturally (field evidence:
+    futureproof-data's manifest) — an ordered list of step dicts per zone,
+    each with a ``module`` (often a file path) and ``function``. A single
+    dict (rather than a list) per zone is also accepted for the shape
+    documented in docs/specs/headless-pipeline-runner.md.
+
+    The ``mcp`` zone commonly declares a server via a ``class:`` key instead
+    of a callable ``function:`` (see the field manifest's ``pipeline.zones.mcp``
+    entry) — that's an MCP server registration parsed by ``serve.py``, not a
+    callable transform step, so it is skipped here rather than registered.
+    """
+    if not isinstance(zones_block, dict):
+        raise PipelineManifestShapeError(
+            "domain/manifest.yaml 'pipeline.zones' must be a mapping of "
+            f"zone name -> step(s), got {type(zones_block).__name__}"
+        )
+
+    for zone_name, steps in zones_block.items():
+        if isinstance(steps, dict):
+            steps = [steps]
+        if not isinstance(steps, list):
+            raise PipelineManifestShapeError(
+                f"domain/manifest.yaml 'pipeline.zones.{zone_name}' must be a list "
+                f"of step mappings (or a single mapping), got {type(steps).__name__}"
+            )
+
+        parsed_steps: list[_ZoneStep] = []
+        for step in steps:
+            if not isinstance(step, dict):
+                raise PipelineManifestShapeError(
+                    f"domain/manifest.yaml 'pipeline.zones.{zone_name}' step must be "
+                    f"a mapping, got {type(step).__name__}"
+                )
+            if "class" in step and "function" not in step:
+                # MCP server declaration, not a callable transform step.
+                continue
+            module = step.get("module", "")
+            function = step.get("function", "main")
+            if module:
+                parsed_steps.append(
+                    _ZoneStep(module=module, function=function, file_path=_is_file_path_module(module))
+                )
+
+        if parsed_steps:
+            canonical = normalize_zone(zone_name) or zone_name
+            _ZONE_REGISTRY[canonical] = parsed_steps
 
 
 def _load_zone_registry() -> None:
@@ -186,6 +322,12 @@ def _load_zone_registry() -> None:
     Zone names are normalized to canonical medallion names (bronze/silver/gold/mcp)
     at this boundary so that manifests using legacy aliases (raw/base/consumable/
     ai_ready) continue to work transparently.
+
+    Supports both the flat shape (``pipeline: {zone: {module, function}}``)
+    and the nested shape (``pipeline: {zones: {zone: [steps]}}``, H5.2). If
+    the ``pipeline`` block is present but matches neither shape, raises
+    :class:`PipelineManifestShapeError` rather than leaving the registry
+    silently empty (the pre-fix failure mode).
     """
     if _ZONE_REGISTRY:
         return
@@ -199,35 +341,78 @@ def _load_zone_registry() -> None:
         # registry empty. A malformed manifest (yaml/parse error) is NOT caught
         # here: it must propagate so a broken config fails loudly.
         return
+
     pipeline = getattr(manifest, "pipeline", None)
-    if pipeline:
-        for zone_name, zone_config in pipeline.items():
-            module = zone_config.get("module", "")
-            function = zone_config.get("function", "main")
-            if module:
-                canonical = normalize_zone(zone_name) or zone_name
-                _ZONE_REGISTRY[canonical] = f"{module}:{function}"
+    if not pipeline:
+        return  # No pipeline section at all — legitimately empty.
+
+    if not isinstance(pipeline, dict):
+        raise PipelineManifestShapeError(
+            f"domain/manifest.yaml 'pipeline' section must be a mapping, got {type(pipeline).__name__}"
+        )
+
+    if "zones" in pipeline:
+        _load_nested_zone_registry(pipeline["zones"], normalize_zone)
+    elif all(isinstance(v, dict) for v in pipeline.values()):
+        _load_flat_zone_registry(pipeline, normalize_zone)
+    else:
+        raise PipelineManifestShapeError(
+            "domain/manifest.yaml 'pipeline' section did not match a recognized "
+            "shape: flat 'pipeline: {zone: {module, function}}' or nested "
+            "'pipeline: {zones: {zone: [...steps]}}'. Fix the manifest — a zone "
+            "registry left silently empty is the failure this error replaces."
+        )
+
+
+def _import_step_module(step: _ZoneStep):
+    """Import a zone step's module, dotted-path or file-path."""
+    if not step.file_path:
+        return importlib.import_module(step.module)
+
+    from brightsmith.config import PROJECT_ROOT
+
+    file_path = Path(step.module)
+    if not file_path.is_absolute():
+        file_path = PROJECT_ROOT / file_path
+    if not file_path.exists():
+        raise ImportError(f"Zone step module file not found: {file_path}")
+
+    # A synthetic, unique module name avoids collisions between same-named
+    # step files in different directories (e.g. two "transformer.py" files).
+    module_name = f"_brightsmith_zone_step__{file_path.stem}__{abs(hash(str(file_path)))}"
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load zone step module from file: {file_path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _execute_zone_module(zone: str) -> dict:
-    """Execute a registered zone transformation module.
+    """Execute every registered step for a zone, in order.
 
     Returns:
-        Dict with rows_promoted, rows_skipped keys (or empty on error).
+        Dict with aggregated ``rows_promoted``/``rows_skipped`` across all
+        steps registered for the zone.
+
+    Raises:
+        ZoneNotRegisteredError: No steps registered for this zone.
     """
-    module_path = _ZONE_REGISTRY.get(zone)
-    if not module_path:
-        raise ValueError(f"No transformation module registered for zone '{zone}'")
+    steps = _ZONE_REGISTRY.get(zone)
+    if not steps:
+        raise ZoneNotRegisteredError(f"No transformation module registered for zone '{zone}'")
 
-    if ":" in module_path:
-        mod_name, func_name = module_path.rsplit(":", 1)
-    else:
-        mod_name, func_name = module_path, "main"
+    total_promoted = 0
+    total_skipped = 0
+    for step in steps:
+        mod = _import_step_module(step)
+        func = getattr(mod, step.function)
+        result = func()
+        if isinstance(result, dict):
+            total_promoted += result.get("rows_promoted", result.get("promoted", 0))
+            total_skipped += result.get("rows_skipped", result.get("skipped", 0))
 
-    mod = importlib.import_module(mod_name)
-    func = getattr(mod, func_name)
-    result = func()
-    return result if isinstance(result, dict) else {}
+    return {"rows_promoted": total_promoted, "rows_skipped": total_skipped}
 
 
 # ---------------------------------------------------------------------------
@@ -341,8 +526,11 @@ def run_pipeline(
                 exec_result = _execute_zone_module(zone)
                 zr.rows_promoted = exec_result.get("rows_promoted", exec_result.get("promoted", 0))
                 zr.rows_skipped = exec_result.get("rows_skipped", exec_result.get("skipped", 0))
-            except ValueError as e:
-                # No module registered — skip if validate-only would apply
+            except ZoneNotRegisteredError as e:
+                # No module registered — skip if validate-only would apply.
+                # A ValueError raised by the domain transform itself is NOT
+                # caught here (H2 fix) — it falls through to the generic
+                # Exception handler below and is reported as FAILED.
                 zr.status = "SKIPPED"
                 zr.warnings.append(str(e))
                 result.add_zone_result(zone, zr)
@@ -585,12 +773,11 @@ def check_headless_ready() -> tuple[bool, list[str]]:
         issues.append("No zone transformation modules registered in manifest")
     else:
         for zone in ZONE_ORDER:
-            if zone in _ZONE_REGISTRY:
-                mod_path = _ZONE_REGISTRY[zone].split(":")[0]
+            for step in _ZONE_REGISTRY.get(zone, []):
                 try:
-                    importlib.import_module(mod_path)
-                except ImportError as e:
-                    issues.append(f"Zone '{zone}' module '{mod_path}' not importable: {e}")
+                    _import_step_module(step)
+                except (ImportError, OSError) as e:
+                    issues.append(f"Zone '{zone}' module '{step.module}' not importable: {e}")
 
     # No anthropic imports in zone code
     src_dir = PROJECT_ROOT / "src"

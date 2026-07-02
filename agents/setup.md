@@ -89,7 +89,7 @@ version = "0.1.0"
 description = "{user's description}"
 requires-python = ">=3.11"
 dependencies = [
-    "brightsmith @ git+https://github.com/jcernauske/brightsmith.git",
+    "brightsmith @ git+https://github.com/hyena-studios/brightsmith.git",
 ]
 
 [dependency-groups]

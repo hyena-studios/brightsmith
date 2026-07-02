@@ -133,7 +133,7 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     # --- CLI boundaries (loud to operator: printed + non-zero/None return) ---
     ("__main__.py", "_cmd_cleanup"): "chaos CLI: cleanup failure printed to operator",
     ("cli.py", "cmd_query"): "governance CLI: query failure printed + sys.exit(1)",
-    ("serve.py", "_load_server"): "domain server load failure logged + falls back to base server",
+    ("serve.py", "_try_load_domain_server"): "domain server load failure logged + falls back to next source",
 }
 
 

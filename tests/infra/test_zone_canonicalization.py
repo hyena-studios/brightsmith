@@ -153,7 +153,11 @@ def test_contract_matches_ai_ready_to_mcp():
 
 
 def test_register_zone_normalizes_alias():
-    """register_zone accepts an alias zone name and stores it canonically."""
+    """register_zone accepts an alias zone name and stores it canonically.
+
+    The registry holds an ordered list of steps per zone (H5.2) — register_zone
+    stores a single-step list for its dotted "module:function" argument.
+    """
     from brightsmith.run import _ZONE_REGISTRY, register_zone
 
     # Store the original registry state to restore it after.
@@ -162,7 +166,11 @@ def test_register_zone_normalizes_alias():
         register_zone("raw", "my_module:main")
         assert "bronze" in _ZONE_REGISTRY, "alias 'raw' must be stored as 'bronze'"
         assert "raw" not in _ZONE_REGISTRY, "alias name must not remain in registry"
-        assert _ZONE_REGISTRY["bronze"] == "my_module:main"
+        steps = _ZONE_REGISTRY["bronze"]
+        assert len(steps) == 1
+        assert steps[0].module == "my_module"
+        assert steps[0].function == "main"
+        assert steps[0].file_path is False
     finally:
         _ZONE_REGISTRY.clear()
         _ZONE_REGISTRY.update(original)
@@ -176,7 +184,10 @@ def test_register_zone_canonical_unchanged():
     try:
         register_zone("silver", "silver_module:main")
         assert "silver" in _ZONE_REGISTRY
-        assert _ZONE_REGISTRY["silver"] == "silver_module:main"
+        steps = _ZONE_REGISTRY["silver"]
+        assert len(steps) == 1
+        assert steps[0].module == "silver_module"
+        assert steps[0].function == "main"
     finally:
         _ZONE_REGISTRY.clear()
         _ZONE_REGISTRY.update(original)

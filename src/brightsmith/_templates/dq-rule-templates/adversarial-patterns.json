@@ -1,0 +1,76 @@
+{
+  "version": "1.0",
+  "description": "Adversarial DQ rule patterns — rules designed by reasoning about failure modes, not just EDA observations. @dq-rule-writer must evaluate each pattern using the adversarial rule writing protocol.",
+  "patterns": [
+    {
+      "pattern_id": "ADV-GRAIN-UNIQUE",
+      "dimension": "Uniqueness",
+      "priority": "P0",
+      "description": "No duplicate rows at the declared grain",
+      "sql_template": "SELECT COUNT(*) FROM (SELECT {grain_fields}, COUNT(*) AS cnt FROM {table} GROUP BY {grain_fields} HAVING cnt > 1)",
+      "threshold": "result = 0",
+      "mandatory": true
+    },
+    {
+      "pattern_id": "ADV-FK-VALID",
+      "dimension": "Referential Integrity",
+      "priority": "P0",
+      "description": "All FK references resolve to existing parent rows",
+      "sql_template": "SELECT COUNT(*) FROM {child_table} c LEFT JOIN {parent_table} p ON {join_condition} WHERE p.{parent_key} IS NULL",
+      "threshold": "result = 0",
+      "mandatory_when": "table has foreign key relationships"
+    },
+    {
+      "pattern_id": "ADV-TEMPORAL-ORDER",
+      "dimension": "Consistency",
+      "priority": "P0",
+      "description": "Start date must be before or equal to end date",
+      "sql_template": "SELECT COUNT(*) FROM {table} WHERE {start_col} > {end_col}",
+      "threshold": "result = 0",
+      "mandatory_when": "table has start/end date columns"
+    },
+    {
+      "pattern_id": "ADV-ENTITY-COVERAGE",
+      "dimension": "Coverage",
+      "priority": "P1",
+      "description": "All expected entities are present",
+      "sql_template": "SELECT COUNT(DISTINCT {entity_field}) FROM {table}",
+      "threshold": "result >= {expected_entity_count}",
+      "mandatory": true
+    },
+    {
+      "pattern_id": "ADV-PERIOD-COVERAGE",
+      "dimension": "Coverage",
+      "priority": "P1",
+      "description": "All expected time periods are present per entity",
+      "sql_template": "SELECT COUNT(*) FROM (SELECT {entity_field}, COUNT(DISTINCT {period_field}) AS periods FROM {table} GROUP BY {entity_field} HAVING periods < {min_periods})",
+      "threshold": "result = 0",
+      "mandatory_when": "table has temporal grain"
+    },
+    {
+      "pattern_id": "ADV-VALUE-RANGE",
+      "dimension": "Reasonableness",
+      "priority": "P1",
+      "description": "Values must be within expected range (from EDA)",
+      "sql_template": "SELECT COUNT(*) FROM {table} WHERE {value_col} < {eda_min} OR {value_col} > {eda_max}",
+      "threshold": "result = 0"
+    },
+    {
+      "pattern_id": "ADV-DISTRIBUTION-VARIANCE",
+      "dimension": "Reasonableness",
+      "priority": "P2",
+      "description": "Value variance must be non-zero (detect value spiking)",
+      "sql_template": "SELECT VARIANCE({value_col}) FROM {table}",
+      "threshold": "result > 0",
+      "mandatory_when": "table has numeric value columns"
+    },
+    {
+      "pattern_id": "ADV-CROSS-COLUMN",
+      "dimension": "Consistency",
+      "priority": "P1",
+      "description": "Cross-column business rules hold (domain-specific). Template reminds @dq-rule-writer to reason about what cross-column relationships must hold.",
+      "note": "Domain project defines specific cross-column rules (e.g., total = sum of parts)",
+      "mandatory_when": "table has derived or related columns"
+    }
+  ]
+}

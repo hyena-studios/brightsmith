@@ -416,13 +416,13 @@ def cmd_history(job_name: str) -> None:
         return
 
     with duckdb.connect() as con:
-        rows = con.sql(f"""
+        rows = con.sql("""
             SELECT event_type, event_time, row_count, duration_ms, run_id,
                    output_snapshot_id, dq_rules_passed, dq_rules_total, error_message
             FROM arrow_table
-            WHERE job_name = '{job_name}'
+            WHERE job_name = $1
             ORDER BY event_time DESC
-        """).fetchall()
+        """, params=[job_name]).fetchall()
 
     if not rows:
         print(f"No events found for job: {job_name}")

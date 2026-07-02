@@ -120,6 +120,21 @@ def test_cmd_history_prints_events(gov_warehouse, capsys):
     assert "COMPLETE" in out
 
 
+def test_cmd_history_job_name_with_quote_does_not_crash(gov_warehouse, capsys):
+    """L1/T6b — cmd_history's job_name filter is parameterized ($1), not an
+    f-string, so a job_name containing a single quote must not break the SQL
+    (the old `WHERE job_name = '{job_name}'` interpolation would raise a
+    DuckDB parser error on a bare embedded quote)."""
+    job = "promote:base.o'brien_facts"
+    _emit_pair(job=job, out="base.o'brien_facts")
+
+    cmd_history(job)  # must not raise
+
+    out = capsys.readouterr().out
+    assert job in out
+    assert "COMPLETE" in out
+
+
 def test_cmd_generate_docs_writes_openlineage_json(gov_warehouse, capsys):
     """generate-docs writes one OpenLineage .json per job with a COMPLETE event."""
     _emit_pair(job="promote:base.facts")
