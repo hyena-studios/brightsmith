@@ -93,6 +93,59 @@ def detect_relocation(
     return offending
 
 
+def list_catalog_table_locations(
+    catalog_path: str | Path,
+    project_name: str | None = None,
+) -> dict[tuple[str, str], str]:
+    """Cheaply read every (namespace, table) -> metadata_location pair
+    straight from the SQLite catalog backing store.
+
+    A single lightweight SQL query — no PyIceberg ``Table`` construction, no
+    ``metadata.json`` parsing, no relocation-guard overhead (mirrors
+    :func:`detect_relocation`'s raw-SQLite read pattern). Intended as a cheap
+    staleness signal (audit finding M6): a caller that caches Iceberg view
+    registrations (e.g. ``BaseMCPServer``'s persistent query connection) can
+    compare this dict against its last-seen snapshot to decide whether an
+    expensive rebuild (which DOES need the guarded ``catalog.load_table()``
+    path) is required, without paying that cost on every call.
+
+    NOT a substitute for ``catalog.load_table()`` — this bypasses the
+    relocation guard entirely, so the returned locations must only be used
+    for comparison/staleness-detection, never treated as verified-safe paths
+    to read from directly.
+
+    Returns an empty dict if the catalog DB or its ``iceberg_tables`` table
+    doesn't exist yet (fresh/empty project) — same tolerance as
+    ``detect_relocation``.
+    """
+    name = project_name if project_name is not None else config.PROJECT_NAME
+    db = Path(catalog_path)
+    if not db.exists():
+        return {}
+
+    con = sqlite3.connect(str(db))
+    try:
+        cur = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='iceberg_tables'"
+        )
+        if cur.fetchone() is None:
+            return {}
+        rows = con.execute(
+            "SELECT table_namespace, table_name, metadata_location "
+            "FROM iceberg_tables WHERE catalog_name = ?",
+            (name,),
+        ).fetchall()
+    except sqlite3.DatabaseError:
+        # A catalog we cannot read yields no signal — same tolerance as
+        # detect_relocation; the caller's caching layer treats this like a
+        # fresh/empty catalog rather than raising.
+        return {}
+    finally:
+        con.close()
+
+    return {(ns, tbl): loc for ns, tbl, loc in rows if loc}
+
+
 def _baked_prefix(meta_loc: str) -> str:
     """Best-effort extraction of the stale project-root prefix from a path,
     for use in the error message. Falls back to the directory of the file."""
@@ -313,17 +366,44 @@ def append_data(table: Table, records: list[dict], strict: bool = True) -> int:
 def read_with_duckdb(
     table: Table,
     snapshot_id: int | None = None,
+    columns: list[str] | None = None,
+    limit: int | None = None,
 ) -> list[dict]:
-    """Read an Iceberg table via PyIceberg scan → Arrow → DuckDB."""
+    """Read an Iceberg table via PyIceberg scan → Arrow → DuckDB.
+
+    Args:
+        table: Iceberg table to read.
+        snapshot_id: Optional snapshot to pin the read to (unchanged behavior).
+        columns: Optional column projection. Passed to PyIceberg's
+            ``scan(selected_fields=...)``, which prunes columns at the scan
+            layer (not read off disk at all) rather than reading every column
+            and discarding some in Python. ``None`` (default) reads every
+            column — identical to the pre-existing behavior.
+        limit: Optional row cap. Passed to PyIceberg's ``scan(limit=...)``,
+            which stops the scan once satisfied rather than materializing the
+            whole table and slicing in Python. ``None`` (default) reads every
+            row — identical to the pre-existing behavior.
+
+    Note: PyIceberg's ``selected_fields`` does NOT preserve the caller's
+    column order — it returns fields in the table's schema order. The
+    returned dicts' keys are therefore built from the Arrow result's actual
+    schema (``arrow_table.schema.names``), not the ``columns`` argument, so
+    keys always line up with values regardless of the order requested.
+    """
+    scan_kwargs: dict[str, Any] = {}
     if snapshot_id is not None:
-        arrow_table = table.scan(snapshot_id=snapshot_id).to_arrow()  # noqa: F841 — DuckDB resolves this from local scope
-    else:
-        arrow_table = table.scan().to_arrow()  # noqa: F841 — DuckDB resolves this from local scope
+        scan_kwargs["snapshot_id"] = snapshot_id
+    if columns is not None:
+        scan_kwargs["selected_fields"] = tuple(columns)
+    if limit is not None:
+        scan_kwargs["limit"] = limit
+
+    arrow_table = table.scan(**scan_kwargs).to_arrow()  # noqa: F841 — DuckDB resolves this from local scope
 
     with duckdb.connect() as con:
         result = con.sql("SELECT * FROM arrow_table").fetchall()
-    columns = [field.name for field in table.schema().fields]
-    return [dict(zip(columns, row, strict=False)) for row in result]
+    result_columns = arrow_table.schema.names
+    return [dict(zip(result_columns, row, strict=False)) for row in result]
 
 
 def filter_existing_records(

@@ -7,6 +7,7 @@ parsing, and the rule lifecycle (proposed -> approved -> active).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -561,6 +562,123 @@ class TestRunRulesIntegration:
 
         assert result["rules_total"] == 1
         assert result["results"][0]["rule_id"] == "INT-003"
+
+
+# ---------------------------------------------------------------------------
+# W5 (audit finding M3): the DQ rule lifecycle must be enforced for
+# status-less rules, not silently bypassed via an "active" default.
+# ---------------------------------------------------------------------------
+
+
+class TestRuleLifecycleGate:
+    """load_rules() now defaults missing `status` to "proposed"; run_rules()
+    only executes PROPOSED rules when REQUIRE_HUMAN_APPROVAL is False, and
+    always logs a loud warning naming what it skipped."""
+
+    @pytest.fixture
+    def lifecycle_env(self, tmp_path):
+        from pyiceberg.schema import Schema
+        from pyiceberg.types import NestedField, StringType
+
+        from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
+
+        warehouse = tmp_path / "warehouse"
+        catalog_db = tmp_path / "catalog.db"
+        catalog = get_catalog(warehouse, catalog_db)
+
+        schema = Schema(NestedField(1, "id", StringType(), required=True))
+        table = get_or_create_table(catalog, "silver", "lifecycle_facts", schema)
+        append_data(table, [{"id": "A"}])
+
+        rules_dir = tmp_path / "dq-rules"
+        rules_dir.mkdir()
+        results_dir = tmp_path / "dq-results"
+        results_dir.mkdir()
+
+        rules_path = rules_dir / "lifecycle-test.json"
+        rules_path.write_text(json.dumps({
+            "spec": "lifecycle-test",
+            "tables": ["silver.lifecycle_facts"],
+            "rules": [{
+                "rule_id": "NOSTATUS-1",
+                "priority": "P1",
+                "category": "Validity",
+                "description": "status-less rule — must default to proposed, not active",
+                "sql": "SELECT COUNT(*) FROM silver.lifecycle_facts",
+                "threshold": "result >= 0",
+                # Deliberately no "status" key.
+            }],
+        }, indent=2))
+
+        return {
+            "catalog": catalog,
+            "rules_dir": rules_dir,
+            "results_dir": results_dir,
+            "rules_path": rules_path,
+        }
+
+    def test_status_less_rule_defaults_to_proposed(self, lifecycle_env):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", lifecycle_env["rules_dir"]):
+            rules = load_rules(spec="lifecycle-test")
+        assert rules[0]["status"] == "proposed"
+
+    def test_proposed_rule_does_not_execute_when_approval_required(self, lifecycle_env, monkeypatch):
+        import brightsmith.config as cfg
+        monkeypatch.setattr(cfg, "REQUIRE_HUMAN_APPROVAL", True)
+
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", lifecycle_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", lifecycle_env["results_dir"]):
+            result = run_rules(spec="lifecycle-test", catalog=lifecycle_env["catalog"])
+
+        assert result["rules_total"] == 0
+        assert "NOSTATUS-1" not in [r["rule_id"] for r in result["results"]]
+
+    def test_proposed_rule_auto_advances_when_approval_not_required(self, lifecycle_env, monkeypatch):
+        import brightsmith.config as cfg
+        monkeypatch.setattr(cfg, "REQUIRE_HUMAN_APPROVAL", False)
+
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", lifecycle_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", lifecycle_env["results_dir"]):
+            result = run_rules(spec="lifecycle-test", catalog=lifecycle_env["catalog"])
+
+        assert result["rules_total"] == 1
+        assert "NOSTATUS-1" in [r["rule_id"] for r in result["results"]]
+
+        # Auto-advance is execution-time only — it must NOT rewrite the rules
+        # file (a durable transition still goes through approve_rules/the
+        # `approve` CLI, so `dq_runner status` keeps reflecting reality).
+        on_disk = json.loads(lifecycle_env["rules_path"].read_text())
+        assert on_disk["rules"][0].get("status") is None
+
+    def test_skipped_proposed_rule_logs_one_warning_with_approve_command(self, lifecycle_env, monkeypatch, caplog):
+        import brightsmith.config as cfg
+        monkeypatch.setattr(cfg, "REQUIRE_HUMAN_APPROVAL", True)
+
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", lifecycle_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", lifecycle_env["results_dir"]):
+            with caplog.at_level(logging.WARNING, logger="brightsmith.infra.dq_runner"):
+                run_rules(spec="lifecycle-test", catalog=lifecycle_env["catalog"])
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
+        message = warnings[0].getMessage()
+        assert "NOSTATUS-1" in message
+        assert "python -m brightsmith.infra.dq_runner approve NOSTATUS-1" in message
+
+    def test_active_rule_executes_regardless_of_approval_toggle(self, lifecycle_env, monkeypatch):
+        import brightsmith.config as cfg
+        monkeypatch.setattr(cfg, "REQUIRE_HUMAN_APPROVAL", True)
+
+        data = json.loads(lifecycle_env["rules_path"].read_text())
+        data["rules"][0]["status"] = "active"
+        lifecycle_env["rules_path"].write_text(json.dumps(data, indent=2))
+
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", lifecycle_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", lifecycle_env["results_dir"]):
+            result = run_rules(spec="lifecycle-test", catalog=lifecycle_env["catalog"])
+
+        assert result["rules_total"] == 1
+        assert "NOSTATUS-1" in [r["rule_id"] for r in result["results"]]
 
 
 # ---------------------------------------------------------------------------

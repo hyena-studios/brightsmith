@@ -33,15 +33,27 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import duckdb
 
-from brightsmith.infra.iceberg_setup import get_catalog
+from brightsmith.infra.iceberg_setup import get_catalog, list_catalog_table_locations
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# SQL identifier validation (W3c/d — docs/technical-audit-2026-07-02.md M1/M6)
+# ---------------------------------------------------------------------------
+
+# Table/namespace/column identifiers are validated against this strict
+# pattern before ever being interpolated into SQL text. VALUES (filter
+# values) are never interpolated — they are always passed as DuckDB bind
+# parameters. Adapted from futureproof-data's `_query_engine.py` (a field
+# rewrite of these same helpers) `_IDENT_PATTERN`.
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # ---------------------------------------------------------------------------
 # Read-only SQL validation (WP-1.5 / S1)
@@ -210,6 +222,16 @@ class BaseMCPServer:
         self.anomaly_checker = anomaly_checker
         self.system_prompt = system_prompt
         self._catalog = None
+
+        # --- Cached query connection (M6) ---
+        # See _ensure_query_connection for the caching/refresh design. A
+        # persistent duckdb connection is opened lazily on first query and
+        # reused across query_iceberg / query_iceberg_simple calls until the
+        # catalog's table set or a table's metadata_location changes.
+        self._query_con: duckdb.DuckDBPyConnection | None = None
+        self._view_registry: dict[str, str] = {}  # view_name -> metadata_location
+        self._table_locations_seen: dict[tuple[str, str], str] | None = None
+        self._query_lock = threading.RLock()
 
     @property
     def catalog(self):
@@ -469,74 +491,61 @@ class BaseMCPServer:
 
     # --- Query utility ---
 
-    def query_iceberg_simple(
-        self,
-        table_name: str,
-        filters: dict | None = None,
-        columns: list[str] | None = None,
-        limit: int = 100,
-    ) -> list[dict]:
-        """Query an Iceberg table with simple filters.
+    def _view_name_for(self, table_name: str) -> str:
+        """Translate ``namespace.table`` -> the ``namespace_table`` view name
+        registered by :meth:`_ensure_query_connection`, validating both
+        halves are safe SQL identifiers before they are ever interpolated
+        into a SQL statement.
 
-        Args:
-            table_name: Full table name (namespace.table).
-            filters: Column-value equality filters.
-            columns: Columns to return (empty = all).
-            limit: Max rows.
-
-        Returns:
-            List of row dicts.
+        Raises:
+            ValueError: ``table_name`` isn't a ``namespace.table`` pair of
+                identifiers matching ``_IDENT_RE``.
         """
-        from brightsmith.infra.iceberg_setup import read_with_duckdb
+        parts = table_name.split(".", 1)
+        if len(parts) != 2 or not all(_IDENT_RE.match(p) for p in parts):
+            raise ValueError(f"invalid table name: {table_name!r}")
+        ns, tbl = parts
+        return f"{ns}_{tbl}"
 
-        try:
-            table = self.catalog.load_table(table_name)
-            rows = read_with_duckdb(table)
-        except Exception as e:
-            return [{"error": f"Cannot query {table_name}: {e}"}]
+    def _ensure_query_connection(self) -> duckdb.DuckDBPyConnection:
+        """Return a ready-to-query DuckDB connection with every current
+        Iceberg table registered as a view.
 
-        # Apply filters
-        if filters:
-            for col, val in filters.items():
-                rows = [r for r in rows if str(r.get(col, "")) == str(val)]
+        Design (docs/technical-audit-2026-07-02.md M6 / W3d): a PERSISTENT
+        connection is cached on the instance and reused across
+        ``query_iceberg``/``query_iceberg_simple`` calls instead of being
+        rebuilt from scratch every time. Each call still pays one CHEAP
+        staleness check — a single raw-SQLite read of the catalog's
+        (namespace, table) -> metadata_location rows via
+        :func:`list_catalog_table_locations` (no PyIceberg ``Table``
+        construction, no ``metadata.json`` parsing) — compared against the
+        last-registered snapshot:
 
-        # Select columns
-        if columns:
-            rows = [{k: r.get(k) for k in columns} for r in rows]
+        * Unchanged since last call (the common case): the cached,
+          already-locked connection is returned as-is. No view DDL, no
+          per-table catalog I/O beyond that one cheap read.
+        * Changed (a table was added/removed, or an existing table's
+          metadata_location moved because new data was committed): the
+          connection is torn down and rebuilt from scratch. This is the only
+          path that pays the guarded ``catalog.load_table()`` per table
+          (which re-applies the relocation guard) and re-creates every view —
+          all BEFORE ``lock_configuration`` is set. A locked connection
+          cannot re-register views, so "refresh" here always means
+          close-and-reopen, never mutating a locked connection in place.
 
-        return rows[:limit]
-
-    def query_iceberg(self, sql: str) -> list[dict]:
-        """Execute read-only SQL against Iceberg tables via DuckDB.
-
-        This is the single choke point for MCP-client data access.  Two
-        layers of read-only enforcement protect the host:
-
-        1. ``_validate_read_only_sql`` rejects any statement whose first
-           keyword is not in {SELECT, WITH, DESCRIBE, SHOW}, returning a
-           structured ``[{"error": "…"}]`` without opening DuckDB execution.
-        2. ``SET enable_external_access=false`` (DuckDB 1.x pragma) is set on
-           every connection, blocking file-system reads and writes even if a
-           statement somehow passed the allowlist.
-
-        On allowlist rejection the connection is closed before SQL reaches
-        DuckDB and a ``[{"error": "<reason>"}]`` list is returned — matching
-        the success-path return shape so callers do not need special handling.
-
-        Future RLS filters, entitlement checks, and audit logging inject here.
+        Security ordering is identical to (and only executed during) a
+        rebuild, matching the C1 fix: allowed_directories ->
+        enable_external_access=false -> view registrations ->
+        lock_configuration=true -> (caller executes SQL against the result).
         """
-        # --- Layer 1: allowlist validation (before any DuckDB connection) ---
-        rejection = _validate_read_only_sql(sql)
-        if rejection is not None:
-            logger.warning("query_iceberg rejected SQL: %s", rejection)
-            return [{"error": rejection}]
+        with self._query_lock:
+            current = list_catalog_table_locations(self.catalog_path)
+            if self._query_con is not None and current == self._table_locations_seen:
+                return self._query_con
 
-        # --- Layer 2: read-only DuckDB connection ---
-        # The connection is always closed in `finally` so a failing untrusted
-        # query cannot leak a connection over the life of this long-running
-        # (persistent stdio) server.
-        con = duckdb.connect()
-        try:
+            self.close_query_connection()
+
+            con = duckdb.connect()
             con.install_extension("iceberg")
             con.load_extension("iceberg")
 
@@ -559,33 +568,173 @@ class BaseMCPServer:
             # Pragma name verified against DuckDB 1.5.0 (uv.lock).
             con.execute("SET enable_external_access=false")
 
-            for ns_tuple in self.catalog.list_namespaces():
-                ns = ns_tuple[0] if isinstance(ns_tuple, tuple) else ns_tuple
+            registry: dict[str, str] = {}
+            for ns, tbl in current:
+                full_id = f"{ns}.{tbl}"
+                view_name = f"{ns}_{tbl}"
                 try:
-                    for table_id in self.catalog.list_tables(ns):
-                        tbl_name = table_id[1] if isinstance(table_id, tuple) else table_id
-                        view_name = f"{ns}_{tbl_name}"
-                        full_id = f"{ns}.{tbl_name}"
-                        try:
-                            iceberg_table = self.catalog.load_table(full_id)
-                            metadata_path = iceberg_table.metadata_location
-                            con.execute(
-                                f"CREATE VIEW IF NOT EXISTS {view_name} AS "
-                                f"SELECT * FROM iceberg_scan('{metadata_path}')"
-                            )
-                        except (duckdb.Error, OSError) as e:
-                            # A single unloadable/relocated table must not sink the
-                            # whole query — it just won't be queryable. Logged so
-                            # the omission is visible, never silent.
-                            logger.warning("query_iceberg: skipping view for %s: %s", full_id, e)
+                    iceberg_table = self.catalog.load_table(full_id)
+                    metadata_path = iceberg_table.metadata_location
+                    con.execute(
+                        f"CREATE VIEW IF NOT EXISTS {view_name} AS "
+                        f"SELECT * FROM iceberg_scan('{metadata_path}')"
+                    )
+                    registry[view_name] = metadata_path
                 except (duckdb.Error, OSError) as e:
-                    logger.warning("query_iceberg: skipping namespace %s: %s", ns, e)
+                    # A single unloadable/relocated table must not sink the
+                    # whole connection — it just won't be queryable. Logged so
+                    # the omission is visible, never silent.
+                    logger.warning("query_iceberg: skipping view for %s: %s", full_id, e)
 
-            # Lock the configuration so the untrusted statement below cannot
-            # flip `enable_external_access` / `allowed_directories` back open.
-            # Defense-in-depth: Layer 1 already rejects SET as a leading
-            # keyword, so this only matters if that allowlist is ever bypassed.
+            # Lock the configuration so untrusted SQL executed against this
+            # connection cannot flip `enable_external_access` /
+            # `allowed_directories` back open. Defense-in-depth: Layer 1 of
+            # query_iceberg already rejects SET as a leading keyword, so this
+            # only matters if that allowlist is ever bypassed. Once set, this
+            # connection can never register another view — the only way to
+            # pick up new/changed tables is the close-and-reopen path above.
             con.execute("SET lock_configuration=true")
+
+            self._query_con = con
+            self._view_registry = registry
+            self._table_locations_seen = current
+            return con
+
+    def close_query_connection(self) -> None:
+        """Close and drop the cached persistent query connection, if any.
+
+        Idempotent — safe to call with no connection open. Called
+        automatically by ``__del__`` so a forgotten close doesn't leak a
+        DuckDB connection (see tests/infra/test_no_unclosed_connections.py);
+        domain projects managing an explicit server shutdown may also call it
+        directly.
+        """
+        con = self._query_con
+        self._query_con = None
+        self._view_registry = {}
+        self._table_locations_seen = None
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                # Best-effort cleanup during teardown/refresh/finalization —
+                # a close failure here must never raise out of __del__.
+                # (Allowlisted in tests/infra/test_no_swallowed_exceptions.py.)
+                logger.debug("query connection close failed", exc_info=True)
+
+    def __del__(self) -> None:
+        # getattr guard: if __init__ raised before _query_con was set (e.g. a
+        # subclass failing in its own __init__ before calling super()),
+        # __del__ must not itself raise an AttributeError during finalization.
+        if getattr(self, "_query_con", None) is not None:
+            self.close_query_connection()
+
+    def query_iceberg_simple(
+        self,
+        table_name: str,
+        filters: dict | None = None,
+        columns: list[str] | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Query an Iceberg table with simple filters — predicate pushdown.
+
+        Docs/technical-audit-2026-07-02.md M1/W3c: this used to read the
+        WHOLE table into Python (``read_with_duckdb``) and filter/limit
+        there. It now builds a parameterized SQL statement against the
+        cached ``iceberg_scan`` view (see ``_ensure_query_connection``, M6)
+        so filtering and limiting happen inside DuckDB — a non-matching
+        filter or a small ``limit`` never materializes more than DuckDB
+        itself needs to scan.
+
+        ``table_name``/``columns``/filter *keys* are validated against a
+        strict identifier pattern (``_IDENT_RE``) before being interpolated
+        into SQL; filter *values* are always passed as DuckDB bind
+        parameters, never interpolated — adapted from futureproof-data's
+        ``_query_engine.py`` (``query_filtered``), which upstreams this exact
+        pattern back into the framework.
+
+        Args:
+            table_name: Full table name (namespace.table).
+            filters: Column-value equality filters (values are bind params).
+            columns: Columns to return (empty = all).
+            limit: Max rows, pushed into the SQL as ``LIMIT``.
+
+        Returns:
+            List of row dicts, or ``[{"error": "..."}]`` on a validation or
+            execution failure (matching ``query_iceberg``'s error shape).
+        """
+        try:
+            view_name = self._view_name_for(table_name)
+        except ValueError as e:
+            return [{"error": str(e)}]
+
+        if columns:
+            for c in columns:
+                if not _IDENT_RE.match(c):
+                    return [{"error": f"invalid column identifier: {c!r}"}]
+
+        where_parts: list[str] = []
+        params: list[Any] = []
+        if filters:
+            for col, val in filters.items():
+                if not _IDENT_RE.match(col):
+                    return [{"error": f"invalid filter column: {col!r}"}]
+                where_parts.append(f"{col} = ?")
+                params.append(val)
+        where_clause = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        select_cols = ", ".join(columns) if columns else "*"
+        safe_limit = max(0, int(limit))
+        sql = f"SELECT {select_cols} FROM {view_name}{where_clause} LIMIT {safe_limit}"
+
+        try:
+            with self._query_lock:
+                self._ensure_query_connection()
+                if view_name not in self._view_registry:
+                    return [{"error": f"Cannot query {table_name}: table not found in catalog"}]
+                con = self._query_con
+                assert con is not None  # _ensure_query_connection always sets this
+                cur = con.execute(sql, params) if params else con.execute(sql)
+                rows_raw = cur.fetchall()
+                col_names = [d[0] for d in con.description]
+        except Exception as e:
+            # Any failure here (unknown column, mid-flight table drift, engine
+            # error) becomes a structured result — never raises out of an MCP
+            # tool handler. (Allowlisted in test_no_swallowed_exceptions.py.)
+            return [{"error": f"Cannot query {table_name}: {e}"}]
+
+        return [dict(zip(col_names, row, strict=False)) for row in rows_raw]
+
+    def query_iceberg(self, sql: str) -> list[dict]:
+        """Execute read-only SQL against Iceberg tables via DuckDB.
+
+        This is the single choke point for MCP-client data access.  Two
+        layers of read-only enforcement protect the host:
+
+        1. ``_validate_read_only_sql`` rejects any statement whose first
+           keyword is not in {SELECT, WITH, DESCRIBE, SHOW}, returning a
+           structured ``[{"error": "…"}]`` without touching the query
+           connection.
+        2. ``SET enable_external_access=false`` (DuckDB 1.x pragma) is set on
+           the cached connection (see ``_ensure_query_connection``), blocking
+           file-system reads and writes even if a statement somehow passed
+           the allowlist.
+
+        Unlike round-1, the DuckDB connection is now a PERSISTENT,
+        per-instance cache (M6) rather than opened and closed on every call —
+        see ``_ensure_query_connection`` for the refresh design. It is closed
+        via ``close_query_connection``/``__del__``, not a per-call ``finally``.
+
+        Future RLS filters, entitlement checks, and audit logging inject here.
+        """
+        # --- Layer 1: allowlist validation (before touching the connection) ---
+        rejection = _validate_read_only_sql(sql)
+        if rejection is not None:
+            logger.warning("query_iceberg rejected SQL: %s", rejection)
+            return [{"error": rejection}]
+
+        # --- Layer 2: cached, locked, read-only DuckDB connection ---
+        with self._query_lock:
+            con = self._ensure_query_connection()
 
             # Execution of the untrusted statement itself. A bad column / unknown
             # table / type error becomes a structured error result (matching the
@@ -599,8 +748,6 @@ class BaseMCPServer:
                 return [{"error": f"query failed: {e}"}]
 
             return [dict(zip(columns_list, row, strict=False)) for row in result]
-        finally:
-            con.close()
 
     # --- Governance metadata ---
 

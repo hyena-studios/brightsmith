@@ -321,3 +321,126 @@ def test_verify_contract_accepts_qualified_table_name(tmp_path, monkeypatch):
         "_to_contract_name normalization not applied at entry of verify_contract. "
         f"Results: {[(r.check, r.status, r.detail) for r in results_qualified]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# W3e: grain_unique / row_count via SQL aggregates, not full materialization
+# ---------------------------------------------------------------------------
+
+
+def _seed_env(tmp_path, monkeypatch):
+    """Point brightsmith.config at an isolated tmp_path project (same pattern
+    as test_verify_contract_accepts_qualified_table_name)."""
+    import brightsmith.config as _cfg
+
+    warehouse = tmp_path / "data" / "bronze" / "iceberg_warehouse"
+    catalog_db = tmp_path / "data" / "catalog" / "catalog.db"
+    gov_warehouse = tmp_path / "data" / "governance" / "iceberg_warehouse"
+
+    monkeypatch.setattr(_cfg, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(_cfg, "WAREHOUSE_PATH", warehouse)
+    monkeypatch.setattr(_cfg, "CATALOG_PATH", catalog_db)
+    monkeypatch.setattr(_cfg, "GOVERNANCE_WAREHOUSE", gov_warehouse)
+    return warehouse, catalog_db
+
+
+def test_grain_unique_fails_on_duplicate_rows_via_sql_aggregate(tmp_path, monkeypatch):
+    """grain_unique must FAIL on a table with duplicate grain rows.
+
+    Exercises the SQL-aggregate path (_count_duplicate_grains, W3e) rather
+    than the old full-table-materialize-then-hash-in-Python path.
+    """
+    from pyiceberg.schema import Schema
+    from pyiceberg.types import DoubleType, NestedField, StringType
+
+    from brightsmith.infra.contract import generate_contract
+    from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
+
+    warehouse, catalog_db = _seed_env(tmp_path, monkeypatch)
+
+    schema = Schema(
+        NestedField(1, "widget_id", StringType(), required=True),
+        NestedField(2, "score", DoubleType(), required=False),
+    )
+    catalog = get_catalog(warehouse, catalog_db)
+    tbl = get_or_create_table(catalog, "gold", "dup_widget", schema)
+    # widget_id "W1" appears twice — a genuine grain violation.
+    append_data(tbl, [
+        {"widget_id": "W1", "score": 1.0},
+        {"widget_id": "W1", "score": 2.0},
+        {"widget_id": "W2", "score": 3.0},
+    ])
+
+    generate_contract("gold.dup_widget", grain_columns=["widget_id"])
+
+    results = verify_contract("dup-widget")
+    grain_result = next(r for r in results if r.check == "grain_unique")
+    assert grain_result.status == "FAIL", f"expected FAIL, got: {grain_result}"
+    assert "1 duplicates" in grain_result.detail
+
+
+def test_grain_unique_passes_on_unique_rows_via_sql_aggregate(tmp_path, monkeypatch):
+    """grain_unique must PASS when every grain value is unique."""
+    from pyiceberg.schema import Schema
+    from pyiceberg.types import DoubleType, NestedField, StringType
+
+    from brightsmith.infra.contract import generate_contract
+    from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
+
+    warehouse, catalog_db = _seed_env(tmp_path, monkeypatch)
+
+    schema = Schema(
+        NestedField(1, "widget_id", StringType(), required=True),
+        NestedField(2, "score", DoubleType(), required=False),
+    )
+    catalog = get_catalog(warehouse, catalog_db)
+    tbl = get_or_create_table(catalog, "gold", "unique_widget", schema)
+    append_data(tbl, [
+        {"widget_id": "W1", "score": 1.0},
+        {"widget_id": "W2", "score": 2.0},
+    ])
+
+    generate_contract("gold.unique_widget", grain_columns=["widget_id"])
+
+    results = verify_contract("unique-widget")
+    grain_result = next(r for r in results if r.check == "grain_unique")
+    assert grain_result.status == "PASS"
+    assert grain_result.detail == "0 duplicates"
+
+
+def test_row_count_check_reflects_real_count(tmp_path, monkeypatch):
+    """row_count must reflect the table's actual row count (from Iceberg
+    snapshot metadata, W3e) and FAIL once the requirement exceeds it."""
+    from pyiceberg.schema import Schema
+    from pyiceberg.types import DoubleType, NestedField, StringType
+
+    from brightsmith.infra.contract import generate_contract, load_contract, save_contract
+    from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
+
+    warehouse, catalog_db = _seed_env(tmp_path, monkeypatch)
+
+    schema = Schema(
+        NestedField(1, "widget_id", StringType(), required=True),
+        NestedField(2, "score", DoubleType(), required=False),
+    )
+    catalog = get_catalog(warehouse, catalog_db)
+    tbl = get_or_create_table(catalog, "gold", "count_widget", schema)
+    append_data(tbl, [{"widget_id": f"W{i}", "score": float(i)} for i in range(5)])
+
+    generate_contract("gold.count_widget")  # default min_row_count=1 -> PASS
+
+    results = verify_contract("count-widget")
+    row_count_result = next(r for r in results if r.check == "row_count")
+    assert row_count_result.status == "PASS"
+    assert "5 rows, min 1" in row_count_result.detail
+
+    # Tighten the requirement past the real count -> must FAIL with the
+    # correct (real) row count, not a stale or truncated figure.
+    contract = load_contract("count-widget")
+    contract["quality"]["completeness"]["min_row_count"] = 100
+    save_contract(contract)
+
+    results = verify_contract("count-widget")
+    row_count_result = next(r for r in results if r.check == "row_count")
+    assert row_count_result.status == "FAIL"
+    assert "5 rows, min 100" in row_count_result.detail

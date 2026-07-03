@@ -201,3 +201,87 @@ class TestEdgeCases:
     def test_nonexistent_snapshot_raises_error(self, iceberg_env):
         with pytest.raises(ValueError, match="Snapshot not found"):
             read_with_duckdb(iceberg_env["table"], snapshot_id=9999999999)
+
+
+# ---------------------------------------------------------------------------
+# W3a — read_with_duckdb(columns=, limit=) (docs/technical-audit-2026-07-02.md
+# M1: full-table materialization was the default read pattern everywhere).
+# ---------------------------------------------------------------------------
+
+
+class TestColumnAndLimitPushdown:
+    """columns=/limit= push projection and row-capping into the PyIceberg
+    scan itself, rather than reading everything and slicing in Python."""
+
+    def test_columns_none_is_identical_to_no_args(self, iceberg_env):
+        """The no-arg / columns=None behavior must be byte-for-byte unchanged."""
+        assert read_with_duckdb(iceberg_env["table"]) == read_with_duckdb(
+            iceberg_env["table"], columns=None,
+        )
+
+    def test_columns_projects_only_requested_fields(self, iceberg_env):
+        rows = read_with_duckdb(iceberg_env["table"], columns=["company_id", "value"])
+        assert rows
+        assert all(set(r.keys()) == {"company_id", "value"} for r in rows)
+
+    def test_columns_out_of_schema_order_still_maps_values_correctly(self, iceberg_env):
+        """PyIceberg's selected_fields does NOT preserve the caller's column
+        order (returns schema order) — the dict keys must still line up with
+        the right values regardless of the order requested."""
+        # Schema order is company_id, metric_name, value, ...; request reversed.
+        rows = read_with_duckdb(iceberg_env["table"], columns=["value", "company_id"])
+        full_rows = read_with_duckdb(iceberg_env["table"])
+        # company_id repeats across batches with different values, so compare
+        # as a multiset of (company_id, value) pairs rather than a dict (which
+        # would silently collapse duplicate keys and hide a mis-zip).
+        expected_pairs = sorted((r["company_id"], r["value"]) for r in full_rows)
+        actual_pairs = sorted((r["company_id"], r["value"]) for r in rows)
+        assert actual_pairs == expected_pairs
+
+    def test_limit_caps_row_count(self, iceberg_env):
+        rows = read_with_duckdb(iceberg_env["table"], limit=2)
+        assert len(rows) == 2
+
+    def test_limit_none_returns_all_rows(self, iceberg_env):
+        assert len(read_with_duckdb(iceberg_env["table"], limit=None)) == 6
+
+    def test_columns_and_limit_scan_receives_both_kwargs(self, iceberg_env, monkeypatch):
+        """Behavioral spy: scan() must actually be called with selected_fields
+        and limit — not emulated by reading everything and slicing in Python."""
+        from brightsmith.infra import iceberg_setup
+
+        table = iceberg_env["table"]
+        original_scan = type(table).scan
+        calls = []
+
+        def spy_scan(self, *args, **kwargs):
+            calls.append(kwargs)
+            return original_scan(self, *args, **kwargs)
+
+        monkeypatch.setattr(type(table), "scan", spy_scan)
+        iceberg_setup.read_with_duckdb(table, columns=["company_id"], limit=1)
+
+        assert len(calls) == 1
+        assert calls[0].get("selected_fields") == ("company_id",)
+        assert calls[0].get("limit") == 1
+
+    def test_no_args_scan_receives_no_selected_fields_or_limit_kwargs(self, iceberg_env, monkeypatch):
+        """The unchanged no-arg path must not pass selected_fields/limit at
+        all (proves the default behavior is truly untouched, not just
+        equivalent-by-coincidence)."""
+        from brightsmith.infra import iceberg_setup
+
+        table = iceberg_env["table"]
+        original_scan = type(table).scan
+        calls = []
+
+        def spy_scan(self, *args, **kwargs):
+            calls.append(kwargs)
+            return original_scan(self, *args, **kwargs)
+
+        monkeypatch.setattr(type(table), "scan", spy_scan)
+        iceberg_setup.read_with_duckdb(table)
+
+        assert len(calls) == 1
+        assert "selected_fields" not in calls[0]
+        assert "limit" not in calls[0]

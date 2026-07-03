@@ -435,3 +435,222 @@ class TestValidateReadOnlySql:
         """A single trailing semicolon is fine — SQL convention."""
         from brightsmith.mcp.base_mcp_server import _validate_read_only_sql
         assert _validate_read_only_sql("SELECT 1;") is None
+
+
+# ---------------------------------------------------------------------------
+# W3c/d — predicate pushdown (query_iceberg_simple) and cached view
+# registrations (query_iceberg), docs/technical-audit-2026-07-02.md M1/M6.
+# ---------------------------------------------------------------------------
+
+
+class TestQueryIcebergSimplePushdown:
+    """query_iceberg_simple must push filters/columns/limit into SQL against
+    a cached iceberg_scan view, never materialize the whole table in Python.
+    """
+
+    @staticmethod
+    def _make_table(warehouse_path, catalog_path, rows):
+        from pyiceberg.schema import Schema
+        from pyiceberg.types import IntegerType, NestedField, StringType
+
+        from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
+
+        catalog = get_catalog(warehouse_path, catalog_path)
+        schema = Schema(
+            NestedField(1, "id", IntegerType(), required=True),
+            NestedField(2, "name", StringType(), required=True),
+        )
+        table = get_or_create_table(catalog, "gold", "simple_tbl", schema)
+        append_data(table, rows, strict=False)
+        return table
+
+    def test_non_matching_filter_returns_empty_without_full_materialization(self, tmp_path, monkeypatch):
+        warehouse_path = tmp_path / "warehouse"
+        catalog_path = tmp_path / "catalog.db"
+        self._make_table(warehouse_path, catalog_path, [
+            {"id": 1, "name": "alice"}, {"id": 2, "name": "bob"},
+        ])
+
+        # If query_iceberg_simple ever fell back to reading the whole table
+        # into Python (the pre-fix behavior), this spy would be hit.
+        import brightsmith.infra.iceberg_setup as iceberg_mod
+        calls = []
+        monkeypatch.setattr(
+            iceberg_mod, "read_with_duckdb",
+            lambda *a, **k: calls.append((a, k)) or (_ for _ in ()).throw(AssertionError("full materialization used")),
+        )
+
+        server = ConcreteServer(warehouse_path=warehouse_path, catalog_path=catalog_path)
+        result = server.query_iceberg_simple("gold.simple_tbl", filters={"name": "nobody"})
+
+        assert result == []
+        assert calls == []
+
+    def test_filter_pushed_down_returns_matching_row(self, tmp_path):
+        warehouse_path = tmp_path / "warehouse"
+        catalog_path = tmp_path / "catalog.db"
+        self._make_table(warehouse_path, catalog_path, [
+            {"id": 1, "name": "alice"}, {"id": 2, "name": "bob"},
+        ])
+        server = ConcreteServer(warehouse_path=warehouse_path, catalog_path=catalog_path)
+
+        result = server.query_iceberg_simple("gold.simple_tbl", filters={"name": "bob"})
+        assert result == [{"id": 2, "name": "bob"}]
+
+    def test_columns_projects_only_requested_fields(self, tmp_path):
+        warehouse_path = tmp_path / "warehouse"
+        catalog_path = tmp_path / "catalog.db"
+        self._make_table(warehouse_path, catalog_path, [{"id": 1, "name": "alice"}])
+        server = ConcreteServer(warehouse_path=warehouse_path, catalog_path=catalog_path)
+
+        result = server.query_iceberg_simple("gold.simple_tbl", columns=["name"])
+        assert result == [{"name": "alice"}]
+
+    def test_limit_caps_rows(self, tmp_path):
+        warehouse_path = tmp_path / "warehouse"
+        catalog_path = tmp_path / "catalog.db"
+        self._make_table(warehouse_path, catalog_path, [
+            {"id": i, "name": f"n{i}"} for i in range(5)
+        ])
+        server = ConcreteServer(warehouse_path=warehouse_path, catalog_path=catalog_path)
+
+        result = server.query_iceberg_simple("gold.simple_tbl", limit=2)
+        assert len(result) == 2
+
+    def test_filter_value_is_bind_parameter_not_interpolated(self, tmp_path):
+        """A filter value containing a SQL-meaningful character (quote) must
+        not corrupt the query — proves values are bound, not interpolated."""
+        warehouse_path = tmp_path / "warehouse"
+        catalog_path = tmp_path / "catalog.db"
+        self._make_table(warehouse_path, catalog_path, [{"id": 1, "name": "o'brien"}])
+        server = ConcreteServer(warehouse_path=warehouse_path, catalog_path=catalog_path)
+
+        result = server.query_iceberg_simple("gold.simple_tbl", filters={"name": "o'brien"})
+        assert result == [{"id": 1, "name": "o'brien"}]
+
+    def test_invalid_table_name_rejected(self, tmp_path):
+        server = ConcreteServer(warehouse_path=tmp_path / "w", catalog_path=tmp_path / "c.db")
+        result = server.query_iceberg_simple("gold; DROP TABLE x")
+        assert "error" in result[0]
+
+    def test_invalid_column_identifier_rejected(self, tmp_path):
+        server = ConcreteServer(warehouse_path=tmp_path / "w", catalog_path=tmp_path / "c.db")
+        result = server.query_iceberg_simple("gold.simple_tbl", columns=["name; DROP TABLE x"])
+        assert "error" in result[0]
+
+    def test_invalid_filter_column_rejected(self, tmp_path):
+        server = ConcreteServer(warehouse_path=tmp_path / "w", catalog_path=tmp_path / "c.db")
+        result = server.query_iceberg_simple("gold.simple_tbl", filters={"name; DROP": "x"})
+        assert "error" in result[0]
+
+    def test_unknown_table_returns_structured_error(self, tmp_path):
+        warehouse_path = tmp_path / "warehouse"
+        catalog_path = tmp_path / "catalog.db"
+        server = ConcreteServer(warehouse_path=warehouse_path, catalog_path=catalog_path)
+        result = server.query_iceberg_simple("gold.does_not_exist")
+        assert "error" in result[0]
+
+
+class TestQueryConnectionCaching:
+    """query_iceberg/query_iceberg_simple share a cached, persistent DuckDB
+    connection (M6) — rebuilt only when the catalog's table set changes."""
+
+    @staticmethod
+    def _make_table(warehouse_path, catalog_path, namespace, table, rows):
+        from pyiceberg.schema import Schema
+        from pyiceberg.types import IntegerType, NestedField
+
+        from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
+
+        catalog = get_catalog(warehouse_path, catalog_path)
+        schema = Schema(NestedField(1, "id", IntegerType(), required=True))
+        tbl = get_or_create_table(catalog, namespace, table, schema)
+        append_data(tbl, rows, strict=False)
+        return tbl
+
+    def test_second_query_reuses_cached_connection_no_table_reload(self, tmp_path, monkeypatch):
+        warehouse_path = tmp_path / "warehouse"
+        catalog_path = tmp_path / "catalog.db"
+        self._make_table(warehouse_path, catalog_path, "gold", "cache_tbl", [{"id": 1}])
+
+        server = ConcreteServer(warehouse_path=warehouse_path, catalog_path=catalog_path)
+        first = server.query_iceberg("SELECT * FROM gold_cache_tbl")
+        assert first == [{"id": 1}]
+        con_after_first = server._query_con
+
+        load_calls = []
+        original_load_table = server.catalog.load_table
+
+        def spy_load_table(ident, *a, **k):
+            load_calls.append(ident)
+            return original_load_table(ident, *a, **k)
+
+        monkeypatch.setattr(server.catalog, "load_table", spy_load_table)
+
+        second = server.query_iceberg("SELECT * FROM gold_cache_tbl")
+        assert second == [{"id": 1}]
+        assert load_calls == [], "unchanged catalog must not re-load any table on the second query"
+        assert server._query_con is con_after_first, "connection must be reused, not rebuilt"
+
+    def test_new_table_triggers_rebuild_and_is_queryable(self, tmp_path):
+        warehouse_path = tmp_path / "warehouse"
+        catalog_path = tmp_path / "catalog.db"
+        self._make_table(warehouse_path, catalog_path, "gold", "cache_tbl", [{"id": 1}])
+
+        server = ConcreteServer(warehouse_path=warehouse_path, catalog_path=catalog_path)
+        server.query_iceberg("SELECT * FROM gold_cache_tbl")
+        con_before = server._query_con
+
+        # A new table appears in the catalog after the first query.
+        self._make_table(warehouse_path, catalog_path, "gold", "cache_tbl2", [{"id": 2}])
+
+        result = server.query_iceberg("SELECT * FROM gold_cache_tbl2")
+        assert result == [{"id": 2}]
+        assert server._query_con is not con_before, "new table must trigger a connection rebuild"
+
+    def test_read_csv_still_blocked_after_cache_refresh(self, tmp_path):
+        """The security-critical regression: after a cache refresh (new table
+        triggers close+reopen), the fresh connection must still have
+        enable_external_access=false / lock_configuration=true applied —
+        refresh must not accidentally reopen the door."""
+        warehouse_path = tmp_path / "warehouse"
+        catalog_path = tmp_path / "catalog.db"
+        self._make_table(warehouse_path, catalog_path, "gold", "cache_tbl", [{"id": 1}])
+
+        server = ConcreteServer(warehouse_path=warehouse_path, catalog_path=catalog_path)
+        server.query_iceberg("SELECT * FROM gold_cache_tbl")
+
+        # Trigger a rebuild.
+        self._make_table(warehouse_path, catalog_path, "gold", "cache_tbl2", [{"id": 2}])
+        server.query_iceberg("SELECT * FROM gold_cache_tbl2")
+
+        blocked = server.query_iceberg("SELECT * FROM read_csv('/etc/hosts')")
+        assert isinstance(blocked, list)
+        assert "error" in blocked[0]
+        err = blocked[0]["error"].lower()
+        assert "permission" in err or "file system" in err or "disabled" in err
+
+    def test_query_iceberg_simple_and_query_iceberg_share_the_cache(self, tmp_path):
+        warehouse_path = tmp_path / "warehouse"
+        catalog_path = tmp_path / "catalog.db"
+        self._make_table(warehouse_path, catalog_path, "gold", "cache_tbl", [{"id": 1}])
+
+        server = ConcreteServer(warehouse_path=warehouse_path, catalog_path=catalog_path)
+        server.query_iceberg_simple("gold.cache_tbl")
+        con_after_simple = server._query_con
+        assert con_after_simple is not None
+
+        result = server.query_iceberg("SELECT * FROM gold_cache_tbl")
+        assert result == [{"id": 1}]
+        assert server._query_con is con_after_simple, "both methods must reuse the same cached connection"
+
+
+class TestQueryConnectionLifecycle:
+    def test_close_query_connection_is_idempotent(self, tmp_path):
+        server = ConcreteServer(warehouse_path=tmp_path / "w", catalog_path=tmp_path / "c.db")
+        server.close_query_connection()  # no-op, never queried
+        server.query_iceberg("SELECT 1 AS x")
+        assert server._query_con is not None
+        server.close_query_connection()
+        assert server._query_con is None
+        server.close_query_connection()  # idempotent second call

@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,8 @@ import duckdb
 from brightsmith import config
 from brightsmith.infra.governance.serializers import ZONE_ALIASES, normalize_table_name
 from brightsmith.infra.iceberg_setup import get_catalog
+
+logger = logging.getLogger(__name__)
 
 # Legacy module-level names. These stay assignable module attributes so existing
 # tests (and domain packs) can patch them directly. Left at the _UNSET sentinel,
@@ -71,9 +75,60 @@ def load_rules(spec: str | None = None) -> list[dict]:
         for rule in data.get("rules", []):
             rule.setdefault("spec", file_spec)
             rule.setdefault("tables", tables)
-            rule.setdefault("status", "active")
+            # BREAKING (audit finding M3/W5, CHANGELOG [Unreleased]): a rule
+            # that omits `status` used to default to "active" and bypass the
+            # PROPOSED -> APPROVED -> ACTIVE lifecycle entirely. It now
+            # defaults to "proposed" like any freshly-authored rule — see
+            # _gate_rule_lifecycle for what that means for execution.
+            rule.setdefault("status", "proposed")
             rules.append(rule)
     return rules
+
+
+def _gate_rule_lifecycle(rules: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Partition rules into (executable, skipped) per the DQ rule lifecycle
+    (PROPOSED -> APPROVED -> ACTIVE, audit finding M3/W5).
+
+    APPROVED and ACTIVE rules always execute. PROPOSED rules — including
+    status-less rules, which now default to "proposed" (see ``load_rules``)
+    instead of silently defaulting to "active" — execute only when
+    ``brightsmith.config.REQUIRE_HUMAN_APPROVAL`` is False, in which case
+    they auto-advance to approved for the purposes of THIS run (matching
+    CLAUDE.md's documented toggle semantics: "DQ rule approval respects
+    REQUIRE_HUMAN_APPROVAL — when False, proposed rules auto-advance to
+    approved"). The auto-advance is execution-time only; it does not rewrite
+    the rules file. A durable status change still goes through
+    ``approve_rules``/the ``approve`` CLI, so ``dq_runner status`` continues
+    to show the rule's real on-disk lifecycle state.
+
+    When REQUIRE_HUMAN_APPROVAL is True, PROPOSED (and status-less) rules do
+    NOT execute — they land in the second, skipped list instead.
+
+    Returns:
+        (executable_rules, skipped_rules)
+    """
+    executable: list[dict] = []
+    skipped: list[dict] = []
+    for rule in rules:
+        status = str(rule.get("status", "proposed")).lower()
+        auto_advance = status == "proposed" and not config.REQUIRE_HUMAN_APPROVAL
+        if status in ("approved", "active") or auto_advance:
+            executable.append(rule)
+        else:
+            skipped.append(rule)
+    return executable, skipped
+
+
+def _warn_skipped_proposed_rules(skipped: list[dict]) -> None:
+    """Log ONE loud warning naming every rule the lifecycle gate skipped,
+    plus the exact command to approve them — never a silent no-op."""
+    rule_ids = [r.get("rule_id", "?") for r in skipped]
+    logger.warning(
+        "DQ rule lifecycle: %d rule(s) NOT executed — PROPOSED and "
+        "REQUIRE_HUMAN_APPROVAL is True (M3/W5). Skipped: %s. Approve with: "
+        "python -m brightsmith.infra.dq_runner approve %s",
+        len(rule_ids), ", ".join(rule_ids), " ".join(rule_ids),
+    )
 
 
 def _save_rules_file(path: Path, data: dict) -> None:
@@ -344,6 +399,7 @@ def run_rules(
     priority: str | None = None,
     catalog=None,
     shadow: bool = False,
+    rule_filter: Callable[[dict], bool] | None = None,
 ) -> dict:
     """Execute DQ rules against real Iceberg data.
 
@@ -352,6 +408,14 @@ def run_rules(
         priority: Filter to this priority level only (e.g., "P0").
         catalog: PyIceberg catalog. If None, loads from default paths.
         shadow: If True, resolve tables from shadow_ namespace (chaos monkey).
+        rule_filter: Optional predicate applied after status/priority
+            filtering. Only rules for which it returns True are executed
+            (and therefore only they appear in the returned results and get
+            written to governance). Used by ``run.py``'s ``_run_dq_for_zone``
+            (audit finding M2/W4) so a single ``run_rules()`` invocation can
+            be scoped to one zone's rules instead of the caller discarding
+            non-matching results from a run of EVERY rule — a 4-zone
+            pipeline no longer executes every rule 4x.
 
     Returns:
         Run result dict with run_id, summary stats, and per-rule results.
@@ -361,15 +425,27 @@ def run_rules(
 
     rules = load_rules(spec=spec)
 
-    # Filter by status — only APPROVED and ACTIVE rules execute
-    rules = [r for r in rules if r.get("status", "active").lower() in ("approved", "active")]
-
     # Filter by priority if specified
     if priority:
         rules = [r for r in rules if r.get("priority", "").upper() == priority.upper()]
 
     # Filter to SQL-based rules only (skip implementation-only rules)
     sql_rules = [r for r in rules if "sql" in r]
+
+    # Optional caller-supplied predicate (e.g. "only rules touching this
+    # zone") — applied before the lifecycle gate so a per-zone call only
+    # executes, auto-advances, and warns about rules actually in its scope.
+    if rule_filter is not None:
+        sql_rules = [r for r in sql_rules if rule_filter(r)]
+
+    # DQ rule lifecycle gate (PROPOSED -> APPROVED -> ACTIVE, audit finding
+    # M3/W5): only APPROVED/ACTIVE rules execute unconditionally; PROPOSED
+    # rules (including status-less rules — see load_rules) execute only when
+    # REQUIRE_HUMAN_APPROVAL is False. Anything skipped is reported loudly —
+    # never a silent no-op.
+    sql_rules, skipped_rules = _gate_rule_lifecycle(sql_rules)
+    if skipped_rules:
+        _warn_skipped_proposed_rules(skipped_rules)
 
     # Collect all table references across all rules
     all_table_refs = []

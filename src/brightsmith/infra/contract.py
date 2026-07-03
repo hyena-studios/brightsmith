@@ -16,11 +16,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import duckdb
 import yaml
 
 logger = logging.getLogger(__name__)
@@ -33,6 +35,21 @@ BREAKING_CHANGES = {"column_removed", "column_type_changed", "grain_changed", "c
 NON_BREAKING_CHANGES = {"column_added", "description_changed", "consumer_added"}
 
 CONTRACT_STATUSES = {"draft", "active", "deprecated"}
+
+# Identifier validator for column names interpolated into SQL (grain columns
+# come from the contract YAML, not user input, but this stays defense-in-depth
+# consistent with base_mcp_server.py's _IDENT_RE).
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# Cap for the row-level bounded read used by checks that genuinely need actual
+# row values (freshness's latest timestamp, required-columns null counts) —
+# audit finding M1/W3e. Grain uniqueness and row count are computed without
+# reading any row data at all (see _count_duplicate_grains, _table_row_count);
+# this limit only bounds the two checks that cannot be turned into a pure
+# aggregate. Generous enough for governance-scale tables; on a table larger
+# than this, freshness/required-columns checks only see the first N rows
+# rather than materializing the whole table into memory.
+_BOUNDED_READ_LIMIT = 100_000
 
 # Iceberg type name → contract type name mapping
 _TYPE_MAP = {
@@ -380,6 +397,51 @@ def generate_contract(
 # ---------------------------------------------------------------------------
 
 
+def _count_duplicate_grains(iceberg_table, grain_cols: list[str]) -> int:
+    """Count duplicate grain rows via a SQL aggregate over a column-pruned scan.
+
+    Audit finding M1/W3e: this used to materialize the WHOLE table (every
+    column, every row, via ``read_with_duckdb``) just to hash grain tuples in
+    a Python loop. It now scans only the grain columns (PyIceberg
+    ``selected_fields``) and lets DuckDB compute the duplicate count as a
+    single aggregate — no Python-side row iteration at all.
+
+    Returns the number of "extra" occurrences: total rows minus distinct
+    grain tuples, matching the previous Python computation
+    (``len(grains) - len(set(grains))``). DuckDB's DISTINCT groups NULLs
+    together (same as the old ``str(None)`` tuple collision), so the two
+    are equivalent on NULL grain values too.
+    """
+    for col in grain_cols:
+        if not _IDENT_RE.match(col):
+            raise ValueError(f"invalid grain column identifier: {col!r}")
+
+    arrow_table = iceberg_table.scan(selected_fields=tuple(grain_cols)).to_arrow()  # noqa: F841 — resolved by DuckDB from local scope
+    cols_sql = ", ".join(grain_cols)
+    with duckdb.connect() as con:
+        # An aggregate with no GROUP BY always returns exactly one row —
+        # fetchall()[0] (rather than fetchone(), which types as tuple | None)
+        # avoids an unreachable None-check for a result that can't be empty.
+        total, distinct = con.sql(
+            f"SELECT COUNT(*), COUNT(DISTINCT ({cols_sql})) FROM arrow_table"
+        ).fetchall()[0]
+    return total - distinct
+
+
+def _table_row_count(iceberg_table) -> int:
+    """Return the table's total row count from Iceberg snapshot metadata.
+
+    Audit finding M1/W3e: every Iceberg writer records a cumulative
+    ``total-records`` figure in each snapshot's summary, so the row count is
+    available with zero data-file reads — no scan, no materialization, at any
+    table size. A table with no snapshot yet (never written to) has 0 rows.
+    """
+    snapshot = iceberg_table.current_snapshot()
+    if snapshot is None:
+        return 0
+    return int(snapshot.summary.get("total-records", 0))
+
+
 def verify_contract(
     name: str,
     contracts_dir: Path | None = None,
@@ -444,29 +506,55 @@ def verify_contract(
             "schema_match", "PASS", f"{len(contract_cols)}/{len(contract_cols)} columns",
         ))
 
-    # 2-6. Data-dependent checks
-    try:
-        rows = read_with_duckdb(iceberg_table)
-    except Exception as e:
-        results.append(ContractVerificationResult("data_read", "FAIL", f"Cannot read data: {e}"))
-        return results
-
-    # 2. Grain unique
+    # 2. Grain unique — SQL aggregate over a column-pruned scan (M1/W3e). No
+    # longer needs the shared `rows` materialization below at all.
     grain_cols = schema_section.get("grain", {}).get("columns", [])
     if grain_cols and quality.get("uniqueness", {}).get("grain_unique"):
-        grains = [tuple(str(r.get(c, "")) for c in grain_cols) for r in rows]
-        dupes = len(grains) - len(set(grains))
-        if dupes > 0:
-            results.append(ContractVerificationResult("grain_unique", "FAIL", f"{dupes} duplicates"))
+        try:
+            dupes = _count_duplicate_grains(iceberg_table, grain_cols)
+        except Exception as e:
+            results.append(ContractVerificationResult("grain_unique", "FAIL", f"Cannot check grain uniqueness: {e}"))
         else:
-            results.append(ContractVerificationResult("grain_unique", "PASS", "0 duplicates"))
+            if dupes > 0:
+                results.append(ContractVerificationResult("grain_unique", "FAIL", f"{dupes} duplicates"))
+            else:
+                results.append(ContractVerificationResult("grain_unique", "PASS", "0 duplicates"))
     else:
         results.append(ContractVerificationResult("grain_unique", "SKIP", "no grain defined"))
 
-    # 3. Freshness
+    # 3 & 5. Freshness and required-columns null checks genuinely need
+    # row-level values (the latest timestamp; per-row nulls), not an
+    # aggregate. Column-pruned to only what these two checks need and capped
+    # at _BOUNDED_READ_LIMIT rows (M1/W3e) — a table larger than that is read
+    # up to the cap rather than materialized in full. Skipped entirely (no
+    # read at all) when neither check is configured.
     freshness = quality.get("freshness", {})
     max_hours = freshness.get("max_staleness_hours")
     measured_by = freshness.get("measured_by", "ingested_at")
+    required_cols = quality.get("completeness", {}).get("required_columns", [])
+
+    # A configured column that isn't actually on the live table (e.g. a
+    # generated contract's default `measured_by: ingested_at` on a table that
+    # never had that column) is excluded from the scan rather than raising —
+    # matches the pre-W3e behavior where a full-row read simply had no such
+    # key and every `.get()` on it returned None (SKIP/"nulls found" for that
+    # column, not a hard failure).
+    needed_cols: list[str] = []
+    if max_hours and measured_by in table_fields:
+        needed_cols.append(measured_by)
+    for col in required_cols:
+        if col in table_fields and col not in needed_cols:
+            needed_cols.append(col)
+
+    rows: list[dict] = []
+    if needed_cols:
+        try:
+            rows = read_with_duckdb(iceberg_table, columns=needed_cols, limit=_BOUNDED_READ_LIMIT)
+        except Exception as e:
+            results.append(ContractVerificationResult("data_read", "FAIL", f"Cannot read data: {e}"))
+            return results
+
+    # 3. Freshness
     if max_hours and rows:
         timestamps = [t for r in rows if (t := r.get(measured_by))]
         if timestamps:
@@ -488,20 +576,25 @@ def verify_contract(
     else:
         results.append(ContractVerificationResult("freshness", "SKIP", "no freshness SLA"))
 
-    # 4. Row count
+    # 4. Row count — from Iceberg snapshot metadata (M1/W3e), zero data scan
+    # regardless of table size. See _table_row_count.
     min_rows = quality.get("completeness", {}).get("min_row_count", 0)
     if min_rows:
-        if len(rows) >= min_rows:
-            results.append(ContractVerificationResult(
-                "row_count", "PASS", f"{len(rows)} rows, min {min_rows}",
-            ))
+        try:
+            row_count = _table_row_count(iceberg_table)
+        except Exception as e:
+            results.append(ContractVerificationResult("row_count", "FAIL", f"Cannot determine row count: {e}"))
         else:
-            results.append(ContractVerificationResult(
-                "row_count", "FAIL", f"{len(rows)} rows, min {min_rows}",
-            ))
+            if row_count >= min_rows:
+                results.append(ContractVerificationResult(
+                    "row_count", "PASS", f"{row_count} rows, min {min_rows}",
+                ))
+            else:
+                results.append(ContractVerificationResult(
+                    "row_count", "FAIL", f"{row_count} rows, min {min_rows}",
+                ))
 
     # 5. Required columns (null check)
-    required_cols = quality.get("completeness", {}).get("required_columns", [])
     if required_cols:
         null_counts = {}
         for col in required_cols:

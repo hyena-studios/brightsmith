@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pip show brightsmith > /dev/null 2>&1 || pip install -e ${CLAUDE_PLUGIN_ROOT}",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/ensure-installed.sh",
             "timeout": 30
           }
         ]

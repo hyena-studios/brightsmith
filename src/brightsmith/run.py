@@ -594,10 +594,15 @@ def _run_dq_for_zone(zone: str) -> tuple[bool, int, int, list[str]]:
 
     Returns (p0_ok, passed, failed, p0_failures).
 
-    Execution goes through ``dq_runner.run_rules()``, which runs every
-    approved/active SQL rule against real Iceberg data and records the run in
-    the governance warehouse. We then filter its per-rule results down to the
-    rules that touch this zone and derive the gate outcome.
+    Execution goes through ``dq_runner.run_rules(rule_filter=...)`` (audit
+    finding M2/W4), scoped to only the rules that touch this zone via
+    ``_rule_matches_zone``. Previously this called ``run_rules()`` unfiltered
+    — every rule, regardless of zone — and discarded non-matching results
+    here; a 4-zone pipeline run executed every rule 4x and wrote 4 governance
+    ``dq_runs`` records for the same rules. Each rule now executes exactly
+    once per pipeline run, at the point its own zone runs (so bronze P0
+    failures still abort before silver/gold/mcp run at all — fail-fast is
+    unchanged, only the redundant re-execution is gone).
 
     An errored P0 rule counts as a FAILURE (decision D3 — a gate that cannot
     fail is worse than no gate). ``run_rules`` already sets ``passed=False`` on
@@ -614,18 +619,15 @@ def _run_dq_for_zone(zone: str) -> tuple[bool, int, int, list[str]]:
     if not zone_rules:
         return (True, 0, 0, [])
 
-    zone_rule_ids = {r["rule_id"] for r in zone_rules}
     priorities = {r["rule_id"]: str(r.get("priority", "P3")).upper() for r in zone_rules}
 
-    result = run_rules()
+    result = run_rules(rule_filter=lambda r: _rule_matches_zone(r, zone))
 
     passed = 0
     failed = 0
     p0_failures: list[str] = []
     for r in result["results"]:
         rule_id = r["rule_id"]
-        if rule_id not in zone_rule_ids:
-            continue
         if r["passed"]:
             passed += 1
         else:

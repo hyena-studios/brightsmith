@@ -290,3 +290,47 @@ class TestDedup:
         table = catalog.load_table("bronze.test_data")
         rows = read_with_duckdb(table)
         assert len(rows) == 2
+
+
+# ---------------------------------------------------------------------------
+# W3b — _build_existing_grains reads only the grain columns (docs/technical-
+# audit-2026-07-02.md M1: "reads all columns of all rows when it needs only
+# the grain fields").
+# ---------------------------------------------------------------------------
+
+
+class TestBuildExistingGrainsColumnPruning:
+    def test_reads_only_grain_columns_not_the_whole_table(self, tmp_workspace, monkeypatch):
+        """Behavioral spy: read_with_duckdb (called internally by
+        _build_existing_grains) must be invoked with columns= set to exactly
+        the dedup_grain fields — proving column pruning actually happens,
+        not just that the resulting set is correct."""
+        import brightsmith.bronze.base_ingestor as base_ingestor_mod
+
+        source = _make_source_config(dedup_grain=["id", "name"])
+        manifest = _make_manifest(source)
+        ingestor = SimpleIngestor(source, manifest, {1: [{"id": 1, "name": "alpha", "value": "100"}]})
+
+        # First ingest creates the table with one row so the second call has
+        # something to read grains from.
+        ingestor.ingest(
+            warehouse_path=tmp_workspace["warehouse"],
+            catalog_path=tmp_workspace["catalog"],
+        )
+
+        calls = []
+        original = base_ingestor_mod.read_with_duckdb
+
+        def spy(table, *args, **kwargs):
+            calls.append(kwargs)
+            return original(table, *args, **kwargs)
+
+        monkeypatch.setattr(base_ingestor_mod, "read_with_duckdb", spy)
+
+        catalog = get_catalog(tmp_workspace["warehouse"], tmp_workspace["catalog"])
+        table = catalog.load_table("bronze.test_data")
+        grains = ingestor._build_existing_grains(table)
+
+        assert len(calls) == 1
+        assert calls[0].get("columns") == ["id", "name"]
+        assert grains == {("1", "alpha")}

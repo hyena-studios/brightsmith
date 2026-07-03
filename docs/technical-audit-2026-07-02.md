@@ -162,13 +162,15 @@ Verified via `gh api` and redirect check: there is exactly **one** GitHub repo (
 
 **Deliberately not fixing:** the `config.py` module-class shim (removal already consciously deferred to a major release — agreed; it's tested and documented); governance-table compaction/snapshot expiration (M5 — document the limitation, defer implementation until a real project feels it); agent/skill prompt quality (different discipline, different review); `_rewrite_sql` robustness beyond the digit fix (a real SQL parser is not worth it at this maturity); Python 3.13/3.14 CI lanes (nice-to-have; suite already passes on 3.14 locally).
 
-**Definition of done:**
+**Definition of done — ALL MET as of 2026-07-02 EOD (verified independently, not from agent claims):**
 
-1. Consumer-journey CI job green, including a `query_iceberg` assertion returning rows from a real Iceberg table.
-2. `pipeline_gate.py` + `run.py` ≥ 70% coverage.
-3. Zero Critical/High findings open.
-4. Scaffolded project's `uv sync && python -m brightsmith.run --dry-run` succeeds from a wheel install.
-5. README contains no references to removed paths or wrong repos.
+1. ✅ Consumer-journey verification green, including `query_iceberg` returning rows from a real Iceberg table — `scripts/consumer_journey_smoke.sh` passes end-to-end from outside the checkout (wheel → scratch venv → scaffold → bronze pipeline → MCP query); wired as a blocking CI job. (CI-on-GitHub run pending push.)
+2. ✅ `pipeline_gate.py` **97%**, `run.py` **99%** coverage (targets were ≥70%; started at 25%/44%). Total: 64% → **74%**, 632 → **825 tests**.
+3. ✅ Zero Critical/High findings open — C1, H1–H5 all fixed with regression tests; each verified by independent reproduction, mutation spot-checks, or behavioral probes.
+4. ✅ Wheel-scaffolded project works (proven by #1's smoke test, which is exactly this journey).
+5. ✅ README accurate — stale paths/URLs fixed, plus a new governance-database maintenance section (M5).
+
+**Post-remediation grade: A−** (from B−). What separates this from a flat A, honestly stated: the consumer-journey CI job hasn't yet run on GitHub Actions (local pass only, until pushed); `contract.py` (59%), `dq_runner.py` (63%), and the governance CLI/exporters/parsers remain under-covered; M5 compaction is documented guidance rather than automated maintenance; and the agent/skill prompt layer — a large part of the product — remains outside any audit. None of these is a correctness defect; all are conscious, recorded deferrals.
 
 ---
 

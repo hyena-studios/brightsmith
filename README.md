@@ -261,6 +261,69 @@ Every transformation produces governance metadata:
 | Run history | `governance/run-history/` | Headless pipeline execution logs |
 | Approvals | `governance/approvals/` | Plain-English approval documents for human gates |
 
+### Governance database maintenance
+
+The governance artifacts above are backed by an Iceberg-native governance
+database (`src/brightsmith/infra/governance/`), not the JSON/YAML/Markdown
+files directly — those files are dual-written for human readability, but
+every DQ run, contract sync, lineage event, and agent finding also lands in
+its own Iceberg table under `data/governance/iceberg_warehouse/`.
+
+**Growth characteristics.** Every governance write goes through the same
+single-record `promote()` path as everything else in the framework: one
+Iceberg snapshot plus one small Parquet data file per event. There is no
+batching — a spec that logs 50 DQ rule results and 20 agent findings during
+implementation produces 70 snapshots and 70 tiny files, cumulatively, forever
+(these tables are append-only by design; nothing deletes old rows). Reads
+(`governance/queries.py`) scan the whole table to Arrow before filtering, the
+same full-materialization pattern W3e fixed for contract verification — so
+governance reads get slower as the table grows, not just larger on disk.
+
+**When to care.** This is a non-issue for the size of project the framework
+is built for today: a handful of specs, thousands of governance events,
+weeks-to-months of history reads and writes in well under a second. Start
+paying attention once a single governance table (most likely
+`dq_rule_results` or `agent_activity`, the highest-frequency writers) crosses
+roughly **low tens of thousands of events**, or a project has been running
+for **multiple months** of continuous headless/CI runs. Below that, this
+section is background knowledge, not an action item.
+
+**Recommended maintenance.** PyIceberg (pinned version, see `pyproject.toml`)
+supports snapshot expiration natively; there is no in-repo tooling for this
+today (deliberately deferred — see `docs/technical-audit-2026-07-02.md` M5),
+so it's a manual, occasional operation:
+
+```python
+from datetime import UTC, datetime, timedelta
+
+from brightsmith.config import CATALOG_PATH, GOVERNANCE_WAREHOUSE
+from brightsmith.infra.iceberg_setup import get_catalog
+
+catalog = get_catalog(GOVERNANCE_WAREHOUSE, CATALOG_PATH)
+table = catalog.load_table("governance_product.dq_rule_results")  # repeat per table
+
+cutoff = datetime.now(UTC) - timedelta(days=90)
+table.maintenance.expire_snapshots().older_than(cutoff).commit()
+```
+
+This drops old snapshot *metadata* (and the data files only those snapshots
+referenced) while leaving current data intact — safe to run without
+downtime. It does **not** compact the many small Parquet files accumulated
+by one-record-per-write into fewer, larger ones; PyIceberg does not yet
+expose a `rewrite_data_files`-style compaction procedure at the pinned
+version, so file-count reduction currently requires a Spark/Trino engine
+with Iceberg's maintenance procedures, or is simply not worth doing at the
+scale this framework targets.
+
+**`governance/run-history/`** (JSON files, one per headless pipeline run) is
+separate from the Iceberg governance DB and grows the same way: one file per
+`python -m brightsmith.run` invocation, no rotation. It's gitignored, so this
+is a disk-usage concern only, not a repo-hygiene one — a project running
+headless pipelines on a schedule (cron/CI) for months should periodically
+prune the oldest files by hand or with a scheduled `find ... -mtime +N
+-delete`; no rotation code ships with the framework (L5 — documented
+limitation, not implemented, matching M5's deferral above).
+
 ## Human-in-the-Loop
 
 `REQUIRE_HUMAN_APPROVAL` in `src/brightsmith/config.py` is the single global toggle (or set `BRIGHTSMITH_REQUIRE_HUMAN_APPROVAL=false` env var).

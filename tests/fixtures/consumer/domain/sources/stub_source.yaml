@@ -1,0 +1,20 @@
+# Source config for the consumer-journey smoke test's stub ingestor.
+# See tests/fixtures/consumer/src/raw/stub_ingestor.py.
+
+name: stub_source
+namespace: bronze
+table: stub_facts
+
+# Two inline "entities" — no network fetch involved (see StubIngestor.fetch).
+entities:
+  1: "Entity One"
+  2: "Entity Two"
+
+fetch:
+  api:
+    url_template: "inline://stub-source/{entity_id}"
+
+dedup_grain:
+  - entity_id
+
+cache_dir: data/raw/json_cache

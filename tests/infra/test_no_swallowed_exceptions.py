@@ -97,6 +97,7 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     ("base_mcp_server.py", "_handle_get_lineage"): "governance-DB miss falls back to files + logged; file parse narrowed to (OSError, ValueError)",
     ("base_mcp_server.py", "_handle_get_contract"): "advisory tool: lookup failure -> 'No contract found' + logged",
     ("base_mcp_server.py", "query_iceberg_simple"): "load/read failure returned as structured [{'error': …}] result",
+    ("base_mcp_server.py", "close_query_connection"): "best-effort connection close during teardown/refresh/__del__; must never raise out of a finalizer",
     ("base_mcp_server.py", "attach_governance"): "best-effort governance metadata enrichment on a response; logged",
     ("base_mcp_server.py", "handle_call_tool"): "MCP tool-dispatch boundary: any handler error returned as structured error to client",
     # --- contract.py (contract lifecycle: failures become visible results) ---

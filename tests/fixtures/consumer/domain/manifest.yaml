@@ -1,0 +1,24 @@
+# Domain manifest for the wheel-install consumer-journey smoke test
+# (W2 — docs/technical-audit-2026-07-02.md Theme 1 / task 2.1).
+#
+# This is copied verbatim into a freshly `brightsmith.setup init`-scaffolded
+# project by scripts/consumer_journey_smoke.sh. It exercises the exact
+# manifest shape a real consumer writes: a single source, a flat `pipeline:`
+# block registering a file-path bronze transform module. No network access,
+# no real credentials — the ingestor below only reads inline data.
+
+name: consumer-journey-fixture
+version: "1.0"
+description: "Stub domain pack for the wheel-install consumer-journey smoke test"
+
+sources:
+  - name: stub_source
+    source_config: domain/sources/stub_source.yaml
+
+# Flat pipeline shape (see manifest.yaml.example): one step per zone, a
+# file-path module (resolved against the scaffolded project root, not this
+# repo checkout — that's the whole point of the smoke test).
+pipeline:
+  bronze:
+    module: src/raw/stub_ingestor.py
+    function: main

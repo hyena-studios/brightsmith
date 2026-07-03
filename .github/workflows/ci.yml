@@ -47,3 +47,26 @@ jobs:
 
       - name: Warehouse paths relocatable (guards committed example warehouses)
         run: uv run python -m brightsmith.infra.relocate --check
+
+  consumer-journey:
+    name: Consumer journey (wheel-install smoke test)
+    runs-on: ubuntu-latest
+    # Single lane, not the full matrix — this job builds the wheel, installs
+    # it into a scratch venv OUTSIDE the checkout, scaffolds a project via
+    # `brightsmith.setup init`, runs the headless pipeline against a fixture
+    # domain pack, and queries the result through BaseMCPServer. It is the
+    # structural fix for docs/technical-audit-2026-07-02.md Theme 1: the
+    # framework's tests never played the consumer, so consumer-seam defects
+    # (C1, H1, H2, H4, H5) survived undetected. Blocking, no continue-on-error.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Run consumer-journey smoke test
+        run: bash scripts/consumer_journey_smoke.sh

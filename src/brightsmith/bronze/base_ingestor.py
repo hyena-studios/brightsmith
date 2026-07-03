@@ -116,7 +116,9 @@ class BaseIngestor(ABC):
             return set()
 
         try:
-            existing = read_with_duckdb(table)
+            # Read only the grain columns (M1) — dedup only needs them, not
+            # every column of every row.
+            existing = read_with_duckdb(table, columns=grain_fields)
             return {
                 tuple(str(r.get(f, "")) for f in grain_fields)
                 for r in existing
