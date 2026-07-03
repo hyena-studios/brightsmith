@@ -1,297 +1,178 @@
-# Brightsmith
+<h1 align="center">Brightsmith</h1>
 
-[![CI](https://github.com/hyena-studios/brightsmith/actions/workflows/ci.yml/badge.svg)](https://github.com/hyena-studios/brightsmith/actions/workflows/ci.yml)
+<p align="center"><i>A data pipeline framework where AI agents do the data engineering — point it at any raw data source and get governed, documented, AI-queryable datasets without telling it what the data means.</i></p>
 
-AI agent data pipeline framework. Takes raw data from any source and forges it into governed, AI-ready datasets — without knowing the domain upfront.
+<p align="center">
+  <a href="https://github.com/hyena-studios/brightsmith/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/hyena-studios/brightsmith/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="License" src="https://img.shields.io/badge/license-Apache_2.0-green">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue">
+  <img alt="Storage" src="https://img.shields.io/badge/storage-Apache_Iceberg-lightblue">
+  <img alt="Runtime" src="https://img.shields.io/badge/runs_in-Claude_Code-orange">
+</p>
 
-**Bronze → Silver → Gold → MCP** with full governance metadata at every step.
-
-## What Makes Brightsmith Different
-
-Most data pipelines are built for a specific domain. Brightsmith discovers the domain from the data itself.
-
-1. You point it at a data source (API, files, database)
-2. AI agents ingest the raw data, profile it, and determine what it is
-3. A canonical **domain context document** is produced — vocabulary, entity types, temporal patterns, applicable regulations, taxonomy systems
-4. Every downstream agent reads that same document — no independent assumptions, no drift
-5. The pipeline builds governed data products through spec-driven development with human approval gates
-6. The MCP zone produces a **tool-use chat agent** that queries live Iceberg data
-
-Brightsmith was extracted from [sec-edgar-pipeline](https://github.com/jcernauske/sec_edgair), a production-grade SEC EDGAR financial data pipeline. Everything domain-specific was replaced with a discovery mechanism. Same rigor, any data. Field-tested with [sec-edgar-brightsmith](https://github.com/jcernauske/sec_edgar_grist).
-
-## Install as Claude Code Plugin
-
-```bash
-# From any Claude Code session:
-/plugin install    # point to this repo's git URL
-
-# Or test locally:
-claude --plugin-dir ~/code/brightsmith
+```
+Raw JSON/CSV/API  →  ⛏️ Bronze  →  ⚒️ Silver  →  🥇 Gold  →  🤖 MCP server
+                      ingest       normalize     data        AI agents query
+                      as-is        + model       products    governed data
+                          └────────── governance at every step ──────────┘
 ```
 
-## Skills (Metallurgy-Themed)
+---
 
-| Skill | Metaphor | What It Does |
-|-------|----------|-------------|
-| `/bs:init SEC EDGAR` | — | Scaffold a new domain project |
-| `/bs:mine raw-ingest-foo` | ⛏️ Mining | Run the Bronze zone pipeline |
-| `/bs:smelt base-foo` | ⚒️ Smelting | Run the Silver zone pipeline |
-| `/bs:cast consumable-foo` | 🥇 Casting | Run the Gold zone pipeline |
-| `/bs:serve` | 🚀 Serving | Start the MCP server |
-| `/bs:assay foo` | 🔬 Assaying | Full DQ audit (rules, chaos monkey, golden datasets, contracts) |
-| `/bs:stamp foo` | 🔏 Stamping | Generate and verify data contracts |
-| `/bs:run foo` | — | Auto-detect zone and run the right pipeline |
-| `/bs:status` | — | Dashboard of project state |
+## The problem
 
-Each zone skill prints a celebration summary on completion with real stats — tables created, DQ rules active, business terms defined, artifacts produced, and links to everything.
+You have a raw data source — an API, a directory of files, a database — and you want AI agents to answer questions about it reliably. Between those two points sits the work nobody budgets for: profiling the data, normalizing identifiers, writing quality rules, documenting business terms, tracking lineage, and versioning contracts so that when an agent quotes a number, the number is right and you can prove where it came from.
+
+Most pipeline frameworks assume you do that work by hand and know the domain upfront. Brightsmith inverts both assumptions: **25 specialized AI agents do the data engineering**, and the framework **discovers the domain from the data itself** — profiling it, interviewing you about what it found, and writing a canonical domain-context document every downstream agent reads. The output is a set of Apache Iceberg tables with executable quality rules, machine-readable contracts, column-level lineage, and an MCP server that serves the data to any AI client with governance metadata attached to every response.
+
+Brightsmith was extracted from a production SEC EDGAR financial pipeline and field-tested by [FutureProof](https://github.com/jcernauske/futureproof-data), an education/career-outcomes product built on 8 federal data sources. Same rigor, any data.
+
+## Status
+
+**Alpha (0.4.x), actively developed.** The core pipeline, governance database, and MCP zone are functional and tested (825 tests, CI-gated lint/type/coverage, plus a wheel-install smoke test that scaffolds and runs a project from scratch on every push). Interfaces may still change between minor versions — see [Roadmap and known limitations](#roadmap-and-known-limitations).
+
+Maintainer: [Jeff Cernauske](https://github.com/jcernauske) · Issues: [GitHub issue tracker](https://github.com/hyena-studios/brightsmith/issues)
+
+## Features
+
+- **Discovers the domain from the data.** An analyst agent profiles your raw tables, a domain-context agent interviews you about what it found, and the resulting `domain-context.md` becomes the single source of domain truth for all downstream agents — no drift, no independent assumptions.
+- **Runs two ways with the same core.** As a Claude Code plugin (agents orchestrate every step through approval gates) or fully headless (`python -m brightsmith.run` — pure Python, no LLM calls, cron/Airflow-ready).
+- **Executes data quality rules against real data.** SQL rules with P0/P1/P2 priorities run against live Iceberg tables via DuckDB; P0 failures block the pipeline. Rules follow a PROPOSED → APPROVED → ACTIVE lifecycle with a human-approval toggle.
+- **Hardens rules adversarially.** A chaos-monkey module injects type-appropriate corruptions into shadow tables across escalating cycles until the rule set catches everything it should.
+- **Writes idempotently.** Every derived row gets a deterministic SHA-256 grain ID; re-running a pipeline with the same data produces zero new rows, at every zone.
+- **Serves data to AI agents with governance attached.** The MCP zone exposes governed tables through read-only, injection-hardened SQL tools; every response carries contract version, DQ status, and lineage so the client can calibrate confidence.
+- **Fails loudly, by policy and by test.** A moved warehouse raises an error naming the exact repair command instead of returning empty results; a meta-test fails CI on any silently swallowed exception in the codebase.
+- **Tracks everything in an Iceberg-backed governance database.** Spec registry, DQ runs, agent activity, contracts, lineage events, CAB decisions — queryable like any other table.
 
 ## Architecture
 
-```
-┌───────────────────────────────────────────────────────────────┐
-│                        Domain Pack                            │
-│    manifest.yaml · sources/*.yaml · BaseIngestor subclass     │
-└─────────────────────┬─────────────────────────────────────────┘
-                      │
-      ┌───────────────▼───────────────┐
-      │        ⛏️ Bronze Zone          │  Ingest as-is, metadata enrichment, dedup
-      │     Iceberg tables (DuckDB)   │
-      └───────────────┬───────────────┘
-                      │
-      ┌───────────────▼───────────────┐
-      │      Domain Discovery         │  @data-analyst EDA → @domain-context synthesis
-      │      + User Interview         │  → governance/domain-context.md
-      └───────────────┬───────────────┘
-                      │
-      ┌───────────────▼───────────────┐
-      │        ⚒️ Silver Zone          │  Normalize, resolve entities, map concepts
-      │     Governed, modeled         │  3-stage data models (conceptual → logical → physical)
-      └───────────────┬───────────────┘
-                      │
-      ┌───────────────▼───────────────┐
-      │        🥇 Gold Zone            │  Data products: ratios, comparisons, aggregations
-      │     Contracted, documented    │  Golden dataset validation
-      └───────────────┬───────────────┘
-                      │
-      ┌───────────────▼───────────────┐
-      │        🤖 MCP Zone             │  Tool-use chat agent, grounding docs, eval sets
-      │     Governed AI consumption   │
-      └───────────────────────────────┘
+```mermaid
+flowchart LR
+  DP[Domain pack<br/>manifest.yaml + BaseIngestor] --> BR
+
+  subgraph Zones [Iceberg warehouse - DuckDB reads, PyIceberg writes]
+    BR[Bronze<br/>raw, deduped] --> SI[Silver<br/>normalized, modeled]
+    SI --> GO[Gold<br/>data products, contracted]
+  end
+
+  GO --> MCP[MCP server<br/>read-only SQL tools]
+  MCP --> CLIENT([AI clients<br/>Claude, any MCP client])
+
+  subgraph Gov [Governance database - Iceberg]
+    DQ[DQ rules + runs]
+    LIN[Lineage events]
+    CON[Contracts]
+    REG[Spec registry]
+  end
+
+  BR -.-> Gov
+  SI -.-> Gov
+  GO -.-> Gov
+  Gov -.->|metadata on every response| MCP
 ```
 
-## Agent Pipeline
+Two runtimes drive the same zone code: the **Claude Code plugin** (25 agents, spec-driven, human approval gates, enforced step-by-step by a pipeline state machine) and the **headless runner** (no agents, no LLM calls — transforms, DQ gates, contract verification, and golden-dataset checks as plain Python with meaningful exit codes).
 
-Brightsmith uses **25 specialized AI agents** orchestrated through a spec-driven workflow. Every piece of code, every governance artifact, every data transformation traces back to a spec.
+## Tech stack
 
-Each agent runs in its own context window with a dedicated persona. A PreToolUse hook enforces that every agent call includes `subagent_type` — it's physically impossible to launch a nameless agent.
+| Layer | Technology |
+|---|---|
+| Table format | Apache Iceberg (PyIceberg ≥ 0.7, local SQLite catalog — no server) |
+| Query engine | DuckDB ≥ 1.0 with the Iceberg extension |
+| Language | Python 3.11+ |
+| AI serving | MCP (Model Context Protocol) SDK, stdio transport |
+| Agent runtime | Claude Code plugin (25 agents, 9 skills, 2 hooks) — optional |
+| Packaging | uv + hatchling |
 
-### Bronze Zone Pipeline
-| Step | Agent | What It Does |
-|------|-------|-------------|
-| 1 | @governance-reviewer | Pre-implementation spec review |
-| 2 | @primary-agent | Ingest raw data via BaseIngestor |
-| 3 | @data-analyst | EDA + domain discovery |
-| 4 | @domain-context | Synthesize domain knowledge + user interview |
-| 5 | @dq-rule-writer | Write DQ rules from EDA evidence |
-| 6 | @dq-engineer | Execute rules, produce scorecard |
-| 7 | @chaos-monkey | 5-cycle adversarial hardening against shadow tables |
-| 8 | @lineage-tracker | OpenLineage capture |
-| 9 | @cde-tagger | CDE mapping |
-| 10 | @doc-generator | Data dictionary + contracts |
-| 11 | @governance-reviewer | Post-implementation completeness check |
-| 12 | @staff-engineer | Final quality gate + data correctness spot-check |
+## Quickstart
 
-### Silver & Gold Zone Pipeline
-Same as Bronze, plus:
-- @data-steward — business term identification and glossary management
-- @semantic-modeler — 3-stage data modeling (conceptual → logical → physical) with human approval gates
-- @entity-resolver — canonical entity mapping across source identifiers
-- @temporal-modeler — bitemporal schema design (valid time + Iceberg transaction time)
+### Option 1 — Claude Code plugin (agent-driven)
 
-### Zone Transitions
-At every zone boundary:
-1. @principal-data-architect — **blocking** architecture review of the completed zone
-2. @insight-manager — strategic analysis recommending data products for the next zone (silver→gold and gold→mcp only)
+```bash
+/plugin install    # point at https://github.com/hyena-studios/brightsmith
 
-### Governance & Quality Agents
-| Agent | Role |
-|-------|------|
-| @adversarial-auditor | Tests whether AI-built artifacts could be hallucinated |
-| @bcbs239-auditor | Regulatory framework assessment (BCBS 239, SOX, GDPR, HIPAA) |
-| @chaos-monkey | Schema-agnostic adversarial DQ testing with After-Action Reports |
-| @pii-scanner | PII detection and sensitivity classification |
-| @policy-engineer | Data access policy definitions (RLS, masking, retention) |
-| @principal-data-architect | Independent full-pipeline architecture review |
-
-### Content & Delivery Agents
-| Agent | Role |
-|-------|------|
-| @content-strategist | Translates technical work into executive/architect/compliance narratives |
-| @mcp-engineer | MCP server exposing governed data as AI-callable tools |
-| @web-designer | Static site for project documentation and results |
-
-## Key Framework Utilities
-
-| Component | Module | Purpose |
-|-----------|--------|---------|
-| Base ingestor | `brightsmith.bronze.base_ingestor` | Abstract ingestor with dedup, metadata, snapshots |
-| Period disambiguator | `brightsmith.infra.period_disambiguator` | Temporal period classification using date-span analysis |
-| Chaos monkey | `brightsmith.infra.chaos_monkey` | Schema-agnostic adversarial testing with type-appropriate corruptions |
-| Integration test harness | `brightsmith.infra.integration_test_harness` | Golden dataset validation against known-correct reference values |
-| Base MCP server | `brightsmith.mcp.base_mcp_server` | MCP zone base class — Anthropic SDK, tool registration, Iceberg queries |
-| Iceberg setup | `brightsmith.infra.iceberg_setup` | Table creation, append, read via PyIceberg + DuckDB |
-| DQ runner | `brightsmith.infra.dq_runner` | Execute SQL rules against Iceberg, threshold evaluation, P0 gating |
-| DQ scorecard | `brightsmith.infra.dq_scorecard` | Markdown scorecards from real execution results |
-| Lineage | `brightsmith.infra.lineage` | OpenLineage event emission to Iceberg |
-| Staging | `brightsmith.infra.staging` | Proposal staging, confidence-based approval gates |
-| Pipeline gate | `brightsmith.infra.pipeline_gate` | State machine tracking every agent step per spec |
-| Promote | `brightsmith.infra.promote` | Idempotent table promotion with grain-based dedup |
-| Grain | `brightsmith.infra.grain` | Deterministic record IDs via `compute_grain_id()` |
-| Contract | `brightsmith.infra.contract` | Data contract generation, verification, diff, lifecycle |
-| Golden dataset | `brightsmith.infra.golden_dataset` | Verify pipeline output against reference values |
-| Verification | `brightsmith.infra.verification` | Correctness validation ("is this number right?") |
-| Glossary validator | `brightsmith.infra.glossary_validator` | Validate 14-field business term completeness |
-| Glossary loader | `brightsmith.infra.glossary_loader` | Three-tier glossary composition (standards → domains → project) |
-| Concept normalizer | `brightsmith.silver.concept_normalization` | Tiered matching (exact → prefix → pattern → heuristic) |
-| Domain loader | `brightsmith.domain_loader` | Manifest parsing, source config, hints resolution |
-| Headless runner | `brightsmith.run` | Full pipeline without AI agents — `--zone`, `--validate-only`, `--dry-run` |
-| Setup CLI | `brightsmith.setup` | `python -m brightsmith.setup init` — scaffold domain projects |
-
-## Domain Discovery → Domain Context
-
-This is the core innovation. In a domain-specific pipeline, every agent knows the vocabulary. In Brightsmith:
-
-```
-@data-analyst                    @domain-context
- ┌──────────────┐                ┌──────────────────────┐
- │ EDA Report   │───────────────▶│ User Interview       │
- │ - profiles   │                │ (5-10 EDA-informed   │
- │ - patterns   │                │  targeted questions)  │
- │ - anomalies  │                │         │             │
- │ - grain      │                │         ▼             │
- │ - taxonomies │                │ domain-context.md    │
- └──────────────┘                │ - vocabulary         │
-                                 │ - entity types       │
-                                 │ - temporal patterns   │
-                                 │ - regulations        │
-                                 │ - PII expectations   │
-                                 │ - mapping guidance   │
-                                 │ - edge cases         │
-                                 │ - unresolved risks   │
-                                 └──────────┬───────────┘
-                                            │
-                    ┌───────────────────────┬┴──────────────────────┐
-                    ▼                       ▼                       ▼
-              @data-steward          @cde-tagger            @dq-rule-writer
-              @entity-resolver       @pii-scanner           @temporal-modeler
-              @insight-manager       @bcbs239-auditor       @doc-generator
-              @content-strategist    @mcp-engineer          @principal-data-architect
-              @adversarial-auditor
+/bs:init My domain description          # scaffold a domain project
+/bs:mine raw-ingest-my-source           # Bronze: ingest
+/bs:smelt base-my-entities              # Silver: normalize + model
+/bs:cast consumable-my-metrics          # Gold: data products
+/bs:serve                               # start the MCP server
+/bs:status                              # project dashboard, anytime
 ```
 
-All 13 downstream agents read the same `governance/domain-context.md`. No agent independently invents domain assumptions. Unanswered interview questions become mandatory DQ rule requirements.
+Each zone command runs the full agent pipeline for that zone — profiling, DQ rule writing and execution, chaos-monkey hardening, lineage capture, documentation, and a final staff-engineer review — and prints a summary with real row counts and artifact links.
 
-## Data Quality
+### Option 2 — Headless (no agents)
 
-### DQ Rule Templates (Gold Zone)
+#### Prerequisites
 
-Every consumable spec must address four mandatory patterns:
+- Python ≥ 3.11
+- ~1 GB free disk for a small project's warehouse (grows with your data)
 
-| Pattern | Priority | What It Catches |
-|---------|----------|-----------------|
-| CONS-GRAIN-UNIQUE | P0 | Duplicate values at the business grain |
-| CONS-IMPOSSIBLE-VALUE | P0 | Domain constraint violations (negative revenue, >100% margins) |
-| CONS-CROSS-TABLE | P1 | Related tables disagree on shared dimensions |
-| CONS-GOLDEN-DATASET | P0 | Pipeline output doesn't match known-correct reference values |
+#### 1. Install and scaffold
 
-Templates at `governance/dq-rule-templates/consumable-patterns.json`.
+```bash
+pip install git+https://github.com/hyena-studios/brightsmith.git
+python -m brightsmith.setup init --name my-project
+cd my-project
+```
 
-### Chaos Monkey Hardening
+#### 2. Describe your data source
 
-Every zone pipeline includes a 5-cycle adversarial hardening loop:
-1. Inject corruptions into shadow copy (escalating rates: 5% → 10%)
-2. Run DQ rules against shadow tables (`--shadow` flag)
-3. Generate After-Action Report (caught vs missed)
-4. Patch rules for any gaps found
-5. Repeat until no new gaps for 2 consecutive cycles
+Edit `domain/manifest.yaml` and `domain/sources/<source>.yaml`, and write an ingestor that extends `BaseIngestor` with two methods — `fetch()` (get the raw data) and `flatten()` (turn it into rows). Working examples live in [`tests/fixtures/consumer/`](tests/fixtures/consumer/) and [`domain/manifest.yaml.example`](domain/manifest.yaml.example).
 
-### Golden Datasets
+#### 3. Run
 
-Every consumable spec requires a golden dataset (`governance/golden-datasets/{spec}-golden.json`) with at least 3 independently verifiable values. @staff-engineer spot-checks actual output against reference data before approving.
+```bash
+python -m brightsmith.run --zone bronze     # ingest into the Iceberg warehouse
+python -m brightsmith.run                   # all registered zones, in order
+python -m brightsmith.run --validate-only   # DQ + contracts, no writes
+python -m brightsmith.run --headless-ready  # readiness diagnostic
+```
 
-## Spec-Driven Development
+Exit codes distinguish DQ failures (1), transform errors (2), contract violations (3), and config errors (4) — scheduler-friendly.
 
-Every change goes through a spec in `docs/specs/`. Specs define:
-- Problem statement and success criteria
-- Technical design (schemas, business logic, algorithms)
-- Agent workflow (which agents run, in what order)
-- DQ rules and governance artifacts to produce
+This exact journey — wheel install, scaffold, ingest, MCP query — runs on every push as [`scripts/consumer_journey_smoke.sh`](scripts/consumer_journey_smoke.sh), so the Quickstart is CI-verified, not aspirational.
 
-Specs have a lifecycle: `DRAFT → ARCH REVIEW → IMPLEMENTATION → TESTING → CODE REVIEW → VERIFICATION → COMPLETE`
+## Configuration
 
-No code gets written without a spec. No spec is marked complete without @staff-engineer's sign-off.
+All settings resolve at call time with this priority: `configure()` arguments → `BRIGHTSMITH_*` environment variables → defaults.
 
-## Governance Artifacts
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `BRIGHTSMITH_PROJECT_ROOT` | no | current directory | Root of the domain project (warehouse, governance, and config paths derive from it) |
+| `BRIGHTSMITH_PROJECT_NAME` | no | `brightsmith` | Catalog name; used in lineage and governance records |
+| `BRIGHTSMITH_REQUIRE_HUMAN_APPROVAL` | no | `true` | Master toggle for all human-in-the-loop gates (see below) |
+| `BRIGHTSMITH_CONFIDENCE_FLOOR` | no | `0.7` | Entity-resolution proposals below this confidence require review |
 
-Every transformation produces governance metadata:
+## Human-in-the-loop
 
-| Artifact | Location | Purpose |
-|----------|----------|---------|
-| Domain context | `governance/domain-context.md` | Canonical domain knowledge |
-| Business glossary | `governance/business-glossary.json` | Approved business term definitions (11 fields per term) |
-| CDE/PII flags | `governance/data-contracts/*.yaml` | Critical Data Element and PII flags on physical columns |
-| DQ rules | `governance/dq-rules/*.json` | SQL-based validation (P0/P1/P2 priority) |
-| DQ rule templates | `governance/dq-rule-templates/` | Mandatory patterns for gold zone |
-| DQ results | `governance/dq-results/` | Timestamped execution results |
-| DQ scorecards | `governance/dq-scorecards/` | Markdown scorecards from real runs |
-| Golden datasets | `governance/golden-datasets/` | Known-correct reference values |
-| Data models | `governance/models/` | Conceptual, logical, physical (Mermaid ER diagrams) |
-| Data dictionary | `governance/data-dictionary.json` | Plain-English field definitions |
-| Data contracts | `governance/data-contracts/` | Schema + SLA + quality guarantees (DRAFT → ACTIVE → DEPRECATED) |
-| Lineage | `governance/lineage/` | OpenLineage events per transformation |
-| Entity registry | `governance/entity-registry.json` | Canonical entity mappings |
-| PII scans | `governance/pii-scans/` | Sensitivity classifications |
-| Access policies | `governance/policies/` | RLS, masking, retention, AI consumption |
-| EDA reports | `governance/eda/` | Statistical profiling + domain discovery |
-| Insight reports | `governance/insights/` | Zone transition analysis + data product recommendations |
-| Chaos manifests | `governance/chaos-manifests/` | Injection records + After-Action Reports |
-| Reviews | `governance/reviews/` | Architecture and governance review reports |
-| Audit trail | `governance/audit-trail/` | Every agent decision, approval, and skip logged |
-| Pipeline state | `governance/pipeline-state/` | Programmatic gate enforcement per spec |
-| Run history | `governance/run-history/` | Headless pipeline execution logs |
-| Approvals | `governance/approvals/` | Plain-English approval documents for human gates |
+`REQUIRE_HUMAN_APPROVAL` is the single global switch. When `true`: business terms, data-model stages, low-confidence entity resolutions, and DQ rules all pause for review, with plain-English approval documents generated at each gate. When `false` (dev/demo mode): everything auto-approves, but the audit trail still records what was auto-approved and every artifact is still produced. Exception: MAJOR schema changes always require human approval through the change-advisory-board agent, regardless of the toggle.
 
-### Governance database maintenance
+## The agent pipeline
 
-The governance artifacts above are backed by an Iceberg-native governance
-database (`src/brightsmith/infra/governance/`), not the JSON/YAML/Markdown
-files directly — those files are dual-written for human readability, but
-every DQ run, contract sync, lineage event, and agent finding also lands in
-its own Iceberg table under `data/governance/iceberg_warehouse/`.
+Every zone runs a 12-step agent pipeline — governance review, ingestion/transform, EDA, domain-context synthesis, DQ rule writing, DQ execution, chaos-monkey hardening, lineage capture, CDE tagging, documentation, a post-implementation completeness check, and a final staff-engineer quality gate. A state machine ([`pipeline_gate.py`](src/brightsmith/infra/pipeline_gate.py)) enforces the order: an agent can't run until its prerequisites completed, and a spec can't be marked complete until every step ran or was explicitly skipped with a documented justification.
 
-**Growth characteristics.** Every governance write goes through the same
-single-record `promote()` path as everything else in the framework: one
-Iceberg snapshot plus one small Parquet data file per event. There is no
-batching — a spec that logs 50 DQ rule results and 20 agent findings during
-implementation produces 70 snapshots and 70 tiny files, cumulatively, forever
-(these tables are append-only by design; nothing deletes old rows). Reads
-(`governance/queries.py`) scan the whole table to Arrow before filtering, the
-same full-materialization pattern W3e fixed for contract verification — so
-governance reads get slower as the table grows, not just larger on disk.
+Zone boundaries add a blocking architecture review, and silver→gold / gold→mcp transitions add a strategic analysis recommending what data products to build next.
 
-**When to care.** This is a non-issue for the size of project the framework
-is built for today: a handful of specs, thousands of governance events,
-weeks-to-months of history reads and writes in well under a second. Start
-paying attention once a single governance table (most likely
-`dq_rule_results` or `agent_activity`, the highest-frequency writers) crosses
-roughly **low tens of thousands of events**, or a project has been running
-for **multiple months** of continuous headless/CI runs. Below that, this
-section is background knowledge, not an action item.
+The full roster and workflow documents:
 
-**Recommended maintenance.** PyIceberg (pinned version, see `pyproject.toml`)
-supports snapshot expiration natively; there is no in-repo tooling for this
-today (deliberately deferred — see `docs/technical-audit-2026-07-02.md` M5),
-so it's a manual, occasional operation:
+- [Bronze pipeline](docs/workflows/bronze-pipeline.md) — including domain discovery
+- [Silver & Gold pipeline](docs/workflows/silver-gold-pipeline.md)
+- [Zone transitions](docs/workflows/zone-transitions.md) · [MCP pipeline](docs/workflows/mcp-pipeline.md) · [Approval gates](docs/workflows/human-approval-gates.md)
+- Agent definitions: [`agents/`](agents/) (25 markdown personas)
+- Full catalog of governance artifacts and paths: [`CLAUDE.md`](CLAUDE.md) (the pipeline's working rules)
+
+## Data quality
+
+- **Rules are SQL against real tables**, never placeholders — executed with `python -m brightsmith.infra.dq_runner run`, results stored in the governance database, scorecards generated from actual runs.
+- **Lifecycle:** rules start PROPOSED, execute only once APPROVED or ACTIVE. With approval required, unapproved rules are skipped with a loud warning naming the approve command; with approval off, they auto-advance at execution time.
+- **Chaos monkey** (`python -m brightsmith.infra.chaos_monkey`) corrupts shadow copies of your tables — type-aware row, distribution, and semantic corruptions — then reruns your rules to find what they miss. The gap report drives rule patches; the loop repeats until two consecutive clean cycles.
+- **Golden datasets** pin known-correct reference values per data product; verification runs in the headless pipeline and blocks completion on mismatch.
+- **Contracts** (`python -m brightsmith.infra.contract`) capture schema, grain, freshness, and quality guarantees per table as YAML, with verify/diff/deprecate lifecycle commands and semver-gated schema changes.
+
+## Governance database maintenance
+
+Every governance event is one Iceberg append — one snapshot plus a small parquet file — and reads scan the full table. This is fine for months of normal use; a long-lived, chatty project (thousands of events) should periodically expire old snapshots:
 
 ```python
 from datetime import UTC, datetime, timedelta
@@ -306,183 +187,79 @@ cutoff = datetime.now(UTC) - timedelta(days=90)
 table.maintenance.expire_snapshots().older_than(cutoff).commit()
 ```
 
-This drops old snapshot *metadata* (and the data files only those snapshots
-referenced) while leaving current data intact — safe to run without
-downtime. It does **not** compact the many small Parquet files accumulated
-by one-record-per-write into fewer, larger ones; PyIceberg does not yet
-expose a `rewrite_data_files`-style compaction procedure at the pinned
-version, so file-count reduction currently requires a Spark/Trino engine
-with Iceberg's maintenance procedures, or is simply not worth doing at the
-scale this framework targets.
+This drops old snapshot metadata safely, without downtime; it does not compact small parquet files (PyIceberg doesn't expose compaction at the pinned version — at this framework's target scale, that's acceptable). `governance/run-history/` JSON files also accumulate one-per-run (gitignored); prune by age when disk matters.
 
-**`governance/run-history/`** (JSON files, one per headless pipeline run) is
-separate from the Iceberg governance DB and grows the same way: one file per
-`python -m brightsmith.run` invocation, no rotation. It's gitignored, so this
-is a disk-usage concern only, not a repo-hygiene one — a project running
-headless pipelines on a schedule (cron/CI) for months should periodically
-prune the oldest files by hand or with a scheduled `find ... -mtime +N
--delete`; no rotation code ships with the framework (L5 — documented
-limitation, not implemented, matching M5's deferral above).
+## Moving or cloning a project
 
-## Human-in-the-Loop
-
-`REQUIRE_HUMAN_APPROVAL` in `src/brightsmith/config.py` is the single global toggle (or set `BRIGHTSMITH_REQUIRE_HUMAN_APPROVAL=false` env var).
-
-When `True`:
-- Business terms require human approval before use in models
-- Data models pause at each stage (conceptual → logical → physical) for review
-- Entity resolution proposals below confidence 0.7 require human review
-- DQ rules require approval before activation
-- Plain-English approval documents are generated at each gate
-
-When `False` (dev/demo mode):
-- All artifacts are still produced, just auto-approved
-- Approval audit trail still records what was auto-approved
-
-## Quick Start
-
-### Option 1: Claude Code Plugin (recommended)
+Iceberg bakes **absolute** paths into four metadata layers. If you move, clone, or containerize a project with a populated warehouse, reads would silently return empty — so Brightsmith refuses instead: any read against a relocated warehouse raises `WarehouseRelocationError` naming the repair command.
 
 ```bash
-# Install the plugin
-/plugin install    # point to git URL
-
-# Scaffold a domain project
-/bs:init SEC EDGAR financial filings
-
-# The setup agent asks for your email, then scaffolds everything.
-# cd into the project, then:
-
-/bs:mine raw-ingest-company-facts    # Bronze zone
-/bs:smelt base-financial-facts       # Silver zone
-/bs:cast consumable-financial-ratios  # Gold zone
-/bs:serve                            # Start MCP server
-
-# Check status anytime:
-/bs:status
-
-# Run DQ audit:
-/bs:assay raw-ingest-company-facts
+python -m brightsmith.infra.relocate --check      # read-only: list stale baked paths
+python -m brightsmith.infra.relocate --apply      # rewrite all four layers to this root (idempotent, atomic)
+python -m brightsmith.infra.relocate --relative   # repo-relative paths, for committing a warehouse to git
 ```
 
-### Option 2: Headless Pipeline
-
-```bash
-pip install git+https://github.com/hyena-studios/brightsmith.git
-
-# Run the full pipeline without AI agents
-python -m brightsmith.run --zone bronze
-python -m brightsmith.run --zone silver
-python -m brightsmith.run --zone gold
-
-# Validate only (no transforms)
-python -m brightsmith.run --validate-only
-
-# Check readiness
-python -m brightsmith.run --headless-ready
-```
-
-## Moving or Cloning a Project
-
-Iceberg writes spec-compliant **absolute** filesystem paths into its metadata, and PyIceberg bakes the project-root prefix into four layers: the SQLite catalog rows, every `*.metadata.json`, every manifest-list `.avro`, and every manifest `.avro`. If you **move**, **clone to a new path**, or **containerize** a project that already has a populated warehouse under `data/`, those baked paths point at the old location.
-
-Brightsmith does **not** let this fail silently. Any read against a relocated warehouse raises `WarehouseRelocationError` naming the exact repair command (never an empty result set). The pipeline runner and pipeline gate surface the same loud failure.
-
-Repair is one command, run from the new project root:
-
-```bash
-# See what's stale (read-only; exits non-zero if any foreign paths are baked in)
-python -m brightsmith.infra.relocate --check
-
-# Rewrite all four metadata layers to this project's absolute root
-python -m brightsmith.infra.relocate --apply
-```
-
-`--apply` is idempotent (re-running is a no-op) and atomic per file. After it runs, reads return the original rows again.
-
-If you want to **commit a warehouse to git** and have it work for anyone who clones the repo, rewrite to repo-root-relative paths instead. These resolve against the current working directory, so run the pipeline from the project root:
-
-```bash
-python -m brightsmith.infra.relocate --relative
-```
-
-`relocate --check` is wired into CI to guard committed example warehouses; it no-ops when `data/` is absent.
-
-### Framework vs Domain Work
-
-If you improve the framework (fix a bug in `dq_runner.py`, add a feature to `BaseIngestor`), push it to brightsmith. If you build domain-specific artifacts (ingestors, governance, specs), those stay in your domain project. Clean separation — brightsmith never gets polluted with domain data.
-
-## What You Provide (Domain Pack)
+## What you provide (domain pack)
 
 | What | Where | Purpose |
-|------|-------|---------|
-| Manifest | `domain/manifest.yaml` | How to acquire your data |
-| Source config | `domain/sources/*.yaml` | Entity IDs, fetch methods, dedup grain |
-| Ingestor | `src/raw/my_ingestor.py` | `fetch()` and `flatten()` (extends `brightsmith.bronze.BaseIngestor`) |
-| Concept mappings | `domain/concept-mappings/*.json` | Taxonomy → business term mappings (optional — discovery mode if absent) |
-| Glossaries | `glossaries/` | Standard/domain term definitions (optional) |
+|---|---|---|
+| Manifest | `domain/manifest.yaml` | Sources, pipeline steps per zone, optional MCP server class |
+| Source config | `domain/sources/*.yaml` | Entity IDs, fetch methods, dedup grain — single- or multi-table |
+| Ingestor | `src/raw/my_ingestor.py` | `fetch()` + `flatten()`, extending `brightsmith.bronze.BaseIngestor` |
+| Concept mappings | `domain/concept-mappings/*.json` | Optional — discovery mode kicks in if absent |
+| Glossaries | `glossaries/` | Optional standard/domain term definitions |
 
-## Stack
+Everything entity-specific lives here or in governance artifacts — never in Python. Adding a new entity is a config change and a re-run, not a code change; the framework treats hardcoded entity data as a governance violation.
 
-- Python 3.11+
-- DuckDB + Iceberg extension
-- Apache Iceberg tables (local SQLite catalog, no server)
-- uv for dependency management
-
-## Project Structure
+## Project structure
 
 ```
 brightsmith/
-├── .claude-plugin/               Claude Code plugin manifest
-│   └── plugin.json
-├── skills/                       Plugin skills (/bs:init, /bs:mine, /bs:smelt, etc.)
-│   ├── init/                     Scaffold new domain projects
-│   ├── mine/                     Bronze zone pipeline
-│   ├── smelt/                    Silver zone pipeline
-│   ├── cast/                     Gold zone pipeline
-│   ├── serve/                    Start MCP server
-│   ├── assay/                    Full DQ audit
-│   ├── stamp/                    Data contract management
-│   ├── run/                      Auto-detect zone and run
-│   └── status/                   Project state dashboard
-├── hooks/                        Plugin hooks
-│   ├── hooks.json                Hook config (SessionStart, PreToolUse)
-│   └── require-subagent-type.sh  Enforces subagent_type on all Agent calls
-├── agents/                       Plugin agents (25 agent definitions)
-├── src/brightsmith/              Framework package (pip-installable)
-│   ├── config.py                 Global config (env var overrides for domain projects)
-│   ├── domain_loader.py          Manifest + source config parsing
-│   ├── setup.py                  Domain project scaffolding CLI
-│   ├── run.py                    Headless pipeline runner
-│   ├── bronze/                    Bronze zone (BaseIngestor)
-│   ├── silver/                    Silver zone (concept normalization)
-│   ├── mcp/                       MCP zone (BaseMCPServer)
-│   └── infra/                    Cross-cutting infrastructure
-│       ├── pipeline_gate.py         State machine + CLI for spec tracking
-│       ├── period_disambiguator.py  Temporal period classification
-│       ├── chaos_monkey/            Adversarial DQ testing
-│       ├── integration_test_harness.py  Golden dataset validation
-│       ├── dq_runner.py             DQ execution engine
-│       ├── dq_scorecard.py          Scorecard generator
-│       ├── iceberg_setup.py         PyIceberg + DuckDB bridge
-│       ├── lineage.py               OpenLineage events
-│       ├── promote.py               Idempotent table promotion
-│       ├── grain.py                 Deterministic record IDs
-│       ├── contract.py              Data contract lifecycle
-│       ├── golden_dataset.py        Reference value verification
-│       ├── verification.py          Correctness validation
-│       ├── glossary_validator.py    Business term completeness
-│       ├── glossary_loader.py       Three-tier glossary composition
-│       └── staging.py               Proposal staging
-├── domain/                       Domain pack (your data source config)
-├── governance/                   All governance artifacts (20+ directories)
-├── docs/
-│   └── specs/                    Spec-driven development
-├── tests/                        Tests by zone + integration
-├── CLAUDE.md                     Master pipeline instructions
-└── pyproject.toml                uv-managed dependencies
+├── src/brightsmith/          Framework package (pip-installable)
+│   ├── bronze/               BaseIngestor — ingest, dedup, metadata
+│   ├── silver/               Concept normalization (tiered matching)
+│   ├── mcp/                  BaseMCPServer — read-only SQL tools, response enrichment
+│   ├── infra/                Pipeline gate, DQ runner, contracts, lineage,
+│   │                         promote/grain, chaos monkey, relocate, governance DB
+│   ├── run.py                Headless pipeline runner
+│   └── setup.py              Project scaffolding CLI
+├── agents/                   25 agent personas (Claude Code plugin)
+├── skills/                   9 slash commands (/bs:init … /bs:status)
+├── hooks/                    Plugin hooks (session setup, agent-type enforcement)
+├── scripts/                  consumer_journey_smoke.sh (CI wheel-install test)
+├── docs/workflows/           Zone pipeline playbooks
+├── docs/specs/               Spec-driven development record
+├── governance/               Shipped templates + your project's artifacts
+└── tests/                    825 tests, by zone + integration + fixtures
 ```
+
+## Testing
+
+```bash
+uv run python -m pytest tests/ -q        # full suite (~2 min)
+uv run ruff check src tests              # lint
+uv run pyright                           # type check
+bash scripts/consumer_journey_smoke.sh   # wheel-install end-to-end smoke (~3 min)
+```
+
+CI runs all four on Python 3.11 and 3.12, plus a warehouse-relocation guard. Two meta-tests enforce codebase policy: no silently swallowed exceptions anywhere in `src/`, and no leaked database connections across the suite.
+
+## Roadmap and known limitations
+
+- **Governance database compaction is manual.** Snapshot expiration is documented (above) but not scheduled automatically; automation is planned.
+- **MCP row-level security is deferred.** The SQL surface is read-only and injection-hardened, but per-user entitlements wait until non-localhost deployment is a real use case.
+- **The agent pipeline requires Claude Code.** Headless mode covers execution and validation, but domain *discovery* (EDA interview, context synthesis) is agent-only today.
+- **Breaking change in unreleased 0.5:** DQ rules without a `status` field now default to `proposed` instead of executing immediately. Migration: add `"status": "active"` to existing rule files or run `python -m brightsmith.infra.dq_runner approve <rule-ids>`.
+- **Multi-table sources are dedup-grain-uniform.** A `tables:` source shares one dedup grain across its tables; per-table grains are planned.
+
+## Contributing
+
+Framework improvements (a fix in `dq_runner.py`, a new `BaseIngestor` capability) belong in this repo. Domain-specific artifacts — ingestors, governance content, specs — stay in your domain project. Development follows a spec-driven workflow: see [`docs/specs/`](docs/specs/) for the format and [`CLAUDE.md`](CLAUDE.md) for the working rules. Run the four test commands above before opening a PR.
 
 ## License
 
-MIT
+Released under the [Apache License 2.0](LICENSE).
+
+## Acknowledgments
+
+Built on [Apache Iceberg](https://iceberg.apache.org/) via [PyIceberg](https://py.iceberg.apache.org/), [DuckDB](https://duckdb.org/), and the [Model Context Protocol](https://modelcontextprotocol.io/). Agent orchestration runs on [Claude Code](https://claude.com/claude-code).
