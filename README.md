@@ -43,6 +43,7 @@ Maintainer: [Jeff Cernauske](https://github.com/jcernauske) · Issues: [GitHub i
 - **Serves data to AI agents with governance attached.** The MCP zone exposes governed tables through read-only, injection-hardened SQL tools; every response carries contract version, DQ status, and lineage so the client can calibrate confidence.
 - **Fails loudly, by policy and by test.** A moved warehouse raises an error naming the exact repair command instead of returning empty results; a meta-test fails CI on any silently swallowed exception in the codebase.
 - **Tracks everything in an Iceberg-backed governance database.** Spec registry, DQ runs, agent activity, contracts, lineage events, CAB decisions — queryable like any other table.
+- **Exports an [Open Semantic Interchange](https://github.com/open-semantic-interchange/OSI) semantic model.** `python -m brightsmith.infra.osi generate` composes contracts, glossary, data models, and domain context into one OSI v1.0 YAML — datasets, relationships, metrics, and AI context consumable by any OSI-aware platform — and `... osi check` fails loudly when it drifts from the governance artifacts. The MCP server serves it as `brightsmith://semantic-model`.
 
 ## Architecture
 
