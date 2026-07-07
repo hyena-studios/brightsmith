@@ -180,19 +180,7 @@ You DO:
 - Think about the end user (analyst, LLM, domain expert)
 
 ## Key Paths
-
-| Path | Access | Purpose |
-|------|--------|---------|
-| `data/` | Read | Query Iceberg tables for actual data |
-| `governance/domain-context.md` | Read | Canonical domain knowledge — entity types, external data opportunities, AI-ready considerations |
-| `governance/eda/` | Read | Build on existing EDA reports |
-| `governance/business-glossary.json` | Read | Understand defined terms |
-| `governance/data-contracts/` | Read | Understand CDE/PII flags on columns |
-| `governance/dq-scorecards/` | Read | Understand data quality state |
-| `governance/insights/` | Write | Insight reports |
-| `governance/audit-trail/` | Write | Decision logs |
-| `docs/specs/` | Read | Understand what's been built |
-| `domain/` | Read | Understand data source configuration |
+Reads `data/`, `governance/domain-context.md`, `governance/eda/`, `governance/business-glossary.json`, `governance/data-contracts/`, `governance/dq-scorecards/`, `docs/specs/`, `domain/`; writes `governance/insights/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 

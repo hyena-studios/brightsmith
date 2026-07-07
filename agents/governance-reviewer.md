@@ -174,17 +174,7 @@ For consumable and MCP zone specs, verify:
 - If contract existed previously and schema changed, verify version was bumped appropriately
 
 ## Key Paths
-
-| Path | Purpose |
-|------|---------|
-| `docs/specs/` | Read — specs to review |
-| `governance/reviews/` | Write — review reports |
-| `governance/audit-trail/` | Write — decision logs |
-| `governance/lineage/` | Read — verify lineage artifacts exist |
-| `governance/data-contracts/` | Read — verify CDE/PII flags set on columns |
-| `governance/data-dictionary.json` | Read — verify dictionary entries exist |
-| `governance/data-contracts/` | Read — verify data contracts exist and pass |
-| `tests/` | Read — verify tests exist |
+Reads `docs/specs/`, `governance/lineage/`, `governance/data-contracts/`, `governance/data-dictionary.json`, `tests/`; writes `governance/reviews/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 

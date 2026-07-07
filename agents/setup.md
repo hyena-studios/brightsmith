@@ -279,7 +279,5 @@ You DO:
 - Make the user feel like they went from zero to "ready to run the pipeline" in minutes
 
 ## Key Paths
+writes Project root. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Purpose |
-|------|---------|
-| Project root | Write — everything, this is a greenfield scaffold |

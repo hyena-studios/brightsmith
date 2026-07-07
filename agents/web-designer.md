@@ -95,11 +95,5 @@ If a VP of Data at a Fortune 500 company opens this site on their phone during a
 4. Leave thinking "this is how data engineering should be done" (2 minutes)
 
 ## Key Paths
+Reads `governance/`, `docs/specs/`, `docs/sessions/`, `README.md`; writes `docs/site/`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Purpose |
-|------|---------|
-| `docs/site/` | Write — all site files |
-| `governance/` | Read — governance artifacts for real data |
-| `docs/specs/` | Read — spec details for methodology page |
-| `docs/sessions/` | Read — session logs for transparency page |
-| `README.md` | Read — project description for landing page |

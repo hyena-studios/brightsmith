@@ -130,11 +130,5 @@ Log all policy decisions to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
+Reads `docs/specs/`, `governance/pii-scans/`, `governance/data-contracts/`; writes `governance/policies/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Purpose |
-|------|---------|
-| `docs/specs/` | Read — understand access requirements from specs |
-| `governance/pii-scans/` | Read — @pii-scanner sensitivity classifications |
-| `governance/data-contracts/` | Read — gold zone access requirements |
-| `governance/policies/` | Write — policy definition files |
-| `governance/audit-trail/` | Write — decision logs |

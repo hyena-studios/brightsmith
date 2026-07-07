@@ -138,17 +138,7 @@ Log all rule decisions to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
-
-| Path | Purpose |
-|------|---------|
-| `governance/domain-context.md` | Read — canonical domain knowledge, edge cases, validity rules |
-| `governance/eda/` | Read — @data-analyst EDA reports (PRIMARY EVIDENCE) |
-| `governance/dq-rules/` | Write — rule definitions (JSON with SQL + thresholds) |
-| `governance/dq-results/` | Read — execution results from validation runs |
-| `governance/dq-scorecards/` | Write — scorecards from real execution |
-| `governance/models/` | Read — logical/physical models for constraint context |
-| `docs/specs/` | Read — spec requirements |
-| `governance/audit-trail/` | Write — decision logs |
+Reads `governance/domain-context.md`, `governance/eda/`, `governance/dq-results/`, `governance/models/`, `docs/specs/`; writes `governance/dq-rules/`, `governance/dq-scorecards/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 

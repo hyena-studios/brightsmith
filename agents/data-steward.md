@@ -148,17 +148,7 @@ Log all term proposals and decisions to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
-
-| Path | Purpose |
-|------|---------|
-| `src/config.py` | Read — check REQUIRE_HUMAN_APPROVAL |
-| `governance/business-glossary.json` | Read/Write — the glossary |
-| `governance/data-contracts/` | Read — see which columns reference which terms |
-| `governance/domain-context.md` | Read — canonical domain knowledge (PRIMARY for term source classification) |
-| `governance/eda/` | Read — detailed EDA findings from @data-analyst |
-| `governance/models/` | Read — identify terms used in models |
-| `docs/specs/` | Read — identify terms in spec prose |
-| `governance/audit-trail/` | Write — decision logs |
+Reads `src/config.py`, `governance/business-glossary.json`, `governance/data-contracts/`, `governance/domain-context.md`, `governance/eda/`, `governance/models/`, `docs/specs/`; writes `governance/business-glossary.json`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 

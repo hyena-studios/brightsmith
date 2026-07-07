@@ -185,15 +185,5 @@ Log all MCP design decisions to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
+Reads `docs/specs/`, `data/gold/`, `governance/domain-context.md`, `governance/business-glossary.json`, `governance/lineage/`, `governance/dq-scorecards/`, `src/brightsmith/mcp/format_utils.py`; writes `src/mcp/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Purpose |
-|------|---------|
-| `docs/specs/` | Read — understand MCP requirements |
-| `src/mcp/` | Write — MCP server implementation |
-| `data/gold/` | Read — governed data to expose |
-| `governance/domain-context.md` | Read — canonical domain knowledge, AI-ready considerations |
-| `governance/business-glossary.json` | Read — domain vocabulary for tool descriptions and system prompt |
-| `governance/lineage/` | Read — lineage to attach to responses |
-| `governance/dq-scorecards/` | Read — quality scores for system prompt DQ section |
-| `governance/audit-trail/` | Write — decision logs |
-| `src/brightsmith/mcp/format_utils.py` | Reference — common format functions to reuse |

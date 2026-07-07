@@ -119,14 +119,7 @@ Log all lineage decisions to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
-
-| Path | Purpose |
-|------|---------|
-| `docs/specs/` | Read — understand what transformations were specified |
-| `src/` | Read — inspect transformation code for column lineage extraction |
-| `governance/lineage/` | Write — governance lineage docs and column lineage files |
-| `governance/audit-trail/` | Write — decision logs |
-| `governance/dq-rules/` | Read — referenced in DQ facets |
+Reads `docs/specs/`, `src/`, `governance/dq-rules/`; writes `governance/lineage/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 

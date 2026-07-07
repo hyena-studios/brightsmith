@@ -112,15 +112,7 @@ Log all analysis to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
-
-| Path | Purpose |
-|------|---------|
-| `docs/specs/` | Read — understand what data to analyze |
-| `data/` | Read — Iceberg tables to analyze |
-| `domain/` | Read — manifest and source configs for context |
-| `governance/eda/` | Write — EDA reports |
-| `governance/audit-trail/` | Write — decision logs |
-| `governance/models/` | Read — logical/physical models for context |
+Reads `docs/specs/`, `data/`, `domain/`, `governance/models/`; writes `governance/eda/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 

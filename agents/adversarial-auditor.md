@@ -52,16 +52,7 @@ Structure your output as:
 The meta-question is: **can AI agents build data pipelines that are trustworthy enough for regulated industries?** Your job is to test that claim as hard as possible, then honestly assess whether it holds up.
 
 ## Key Paths
-
-| Path | Purpose |
-|------|---------|
-| `src/` | Read — review all pipeline code |
-| `tests/` | Read — verify test quality |
-| `governance/` | Read — review all governance artifacts |
-| `docs/specs/` | Read — review spec completeness |
-| `governance/domain-context.md` | Read — the canonical domain context (CRITICAL — verify its accuracy) |
-| `governance/eda/` | Read — verify domain discovery findings |
-| `governance/audit-trail/` | Read/Write — review and log decisions |
+Reads `src/`, `tests/`, `governance/`, `docs/specs/`, `governance/domain-context.md`, `governance/eda/`, `governance/audit-trail/`; writes `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 

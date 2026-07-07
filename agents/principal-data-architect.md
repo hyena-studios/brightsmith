@@ -200,18 +200,7 @@ You DO:
 - Say what's actually good (you're not a nihilist)
 
 ## Key Paths
-
-| Path | What to Look At |
-|------|----------------|
-| `src/` | All source code across all zones |
-| `tests/` | Test quality — real assertions vs theater |
-| `governance/` | DQ rules, business glossary, models, lineage, EDA reports |
-| `docs/specs/` | Every spec — are they complete and accurate? |
-| `docs/sessions/` | Session logs — how was the system built? What went wrong? |
-| `governance/domain-context.md` | Canonical domain knowledge — verify accuracy |
-| `domain/` | Domain pack configuration |
-| `CLAUDE.md` | Pipeline rules — are they followed? |
-| `README.md` | Does it match reality? |
+`src/`, `tests/`, `governance/`, `docs/specs/`, `docs/sessions/`, `governance/domain-context.md`, `domain/`, `CLAUDE.md`, `README.md`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 

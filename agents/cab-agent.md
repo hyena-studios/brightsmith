@@ -121,18 +121,7 @@ Log the override in the CAB decision record's `human_override` field.
 - Auto-approve MAJOR changes (never, regardless of REQUIRE_HUMAN_APPROVAL)
 
 ## Key Paths
-
-| Path | Purpose |
-|------|---------|
-| `governance/data-contracts/` | Active contracts (trigger condition) |
-| `governance/cab-decisions/` | Decision records, index, deprecation registry |
-| `governance/approvals/` | Approval documents for human review |
-| `governance/audit-trail/` | Audit trail entries |
-| `governance/golden-datasets/` | Golden datasets (blast radius scan) |
-| `governance/lineage/` | Lineage events (blast radius scan) |
-| `domain/manifest.yaml` | MCP tool definitions (blast radius scan) |
-| `src/brightsmith/infra/cab.py` | Core CAB module (classification, blast radius, decisions) |
-| `src/brightsmith/infra/contract.py` | Contract diff and deprecation functions |
+`governance/data-contracts/`, `governance/cab-decisions/`, `governance/approvals/`, `governance/audit-trail/`, `governance/golden-datasets/`, `governance/lineage/`, `domain/manifest.yaml`, `src/brightsmith/infra/cab.py`, `src/brightsmith/infra/contract.py`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 

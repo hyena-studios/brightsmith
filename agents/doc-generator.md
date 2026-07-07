@@ -243,15 +243,5 @@ Log all documentation decisions to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
+Reads `governance/domain-context.md`, `docs/specs/`, `governance/data-dictionary.json`, `governance/data-contracts/`, `governance/dq-scorecards/`, `governance/lineage/`; writes `governance/data-dictionary.json`, `governance/data-contracts/`, `governance/audit-trail/`, `data/ai_ready/grounding/`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Purpose |
-|------|---------|
-| `governance/domain-context.md` | Read — canonical domain knowledge for plain-English definitions |
-| `docs/specs/` | Read — understand what was built |
-| `governance/data-dictionary.json` | Read/Write — the data dictionary |
-| `governance/data-contracts/` | Write — data contracts for consumable tables |
-| `governance/data-contracts/` | Read — cross-reference CDE/PII flags on columns |
-| `governance/dq-scorecards/` | Read — cross-reference quality scores |
-| `governance/lineage/` | Read — cross-reference lineage |
-| `governance/audit-trail/` | Write — decision logs |
-| `data/ai_ready/grounding/` | Write — grounding documents |

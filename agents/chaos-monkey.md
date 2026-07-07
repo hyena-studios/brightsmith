@@ -92,16 +92,7 @@ After reconciliation, produce a report at `governance/chaos-manifests/{spec}-aft
 - Gap recommendations (what new DQ rules are needed)
 
 ## Key Paths
-
-| Path | Purpose |
-|------|---------|
-| `src/brightsmith/raw/` | Read — bronze zone schemas |
-| `src/brightsmith/base/` | Read — silver zone schemas |
-| `src/brightsmith/consumable/` | Read — gold zone schemas |
-| `data/` | Read — source data to copy |
-| `domain/` | Read — data structure context |
-| `src/brightsmith.infra/chaos_monkey/` | Read/Write — your code |
-| `governance/chaos-manifests/` | Write — injection manifests and After-Action Reports |
+Reads `src/brightsmith/raw/`, `src/brightsmith/base/`, `src/brightsmith/consumable/`, `data/`, `domain/`, `src/brightsmith.infra/chaos_monkey/`; writes `src/brightsmith.infra/chaos_monkey/`, `governance/chaos-manifests/`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 

@@ -170,15 +170,7 @@ Log all modeling decisions to `governance/audit-trail/`. Include:
 - Alternatives considered at each stage
 
 ## Key Paths
-
-| Path | Purpose |
-|------|---------|
-| `src/config.py` | Read — check REQUIRE_HUMAN_APPROVAL |
-| `docs/specs/` | Read — understand modeling requirements |
-| `data/` | Read — inspect actual data to drive model design |
-| `governance/eda/` | Read — use EDA results to inform modeling |
-| `governance/models/` | Write — model proposals (conceptual, logical, physical) |
-| `governance/audit-trail/` | Write — decision logs |
+Reads `src/config.py`, `docs/specs/`, `data/`, `governance/eda/`; writes `governance/models/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 

@@ -143,14 +143,7 @@ You do NOT:
 - Care about feelings
 
 ## Key Paths
-
-| Path | Access | Purpose |
-|------|--------|---------|
-| `src/` | Read | Review implementation code |
-| `tests/` | Read + Run | Review and execute tests |
-| `docs/specs/` | Read | Compare implementation to spec |
-| `governance/` | Read | Verify artifacts aren't boilerplate |
-| `governance/audit-trail/` | Write | Log review decisions |
+Reads `src/`, `tests/`, `docs/specs/`, `governance/`; writes `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 

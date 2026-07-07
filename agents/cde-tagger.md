@@ -103,15 +103,7 @@ Log all tagging decisions to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
-
-| Path | Purpose |
-|------|---------|
-| `docs/specs/` | Read — understand what fields were created or modified |
-| `governance/data-contracts/` | Read/Write — flag columns with CDE/PII directly on contracts |
-| `governance/domain-context.md` | Read — canonical domain knowledge, regulatory requirements, PII expectations |
-| `governance/eda/` | Read — detailed EDA findings from @data-analyst |
-| `governance/audit-trail/` | Write — decision logs |
-| `src/` | Read — inspect field definitions in code |
+Reads `docs/specs/`, `governance/data-contracts/`, `governance/domain-context.md`, `governance/eda/`, `src/`; writes `governance/data-contracts/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 

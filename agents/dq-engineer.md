@@ -104,14 +104,7 @@ Log all execution results to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
-
-| Path | Purpose |
-|------|---------|
-| `governance/dq-rules/` | Read — rule definitions to execute |
-| `governance/dq-results/` | Write — timestamped execution results |
-| `governance/dq-scorecards/` | Write — scorecards from real execution |
-| `governance/audit-trail/` | Write — decision logs |
-| `docs/specs/` | Read — spec context |
+Reads `governance/dq-rules/`, `docs/specs/`; writes `governance/dq-results/`, `governance/dq-scorecards/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
 ## Governance Database Logging
 
