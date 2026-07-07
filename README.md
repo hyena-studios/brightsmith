@@ -72,7 +72,7 @@ flowchart LR
   Gov -.->|metadata on every response| MCP
 ```
 
-Two runtimes drive the same zone code: the **Claude Code plugin** (25 agents, spec-driven, human approval gates, enforced step-by-step by a pipeline state machine) and the **headless runner** (no agents, no LLM calls — transforms, DQ gates, contract verification, and golden-dataset checks as plain Python with meaningful exit codes).
+Two runtimes drive the same zone code: the **Claude Code plugin** (26 agents, spec-driven, human approval gates, enforced step-by-step by a pipeline state machine) and the **headless runner** (no agents, no LLM calls — transforms, DQ gates, contract verification, and golden-dataset checks as plain Python with meaningful exit codes).
 
 ## Tech stack
 
@@ -82,7 +82,7 @@ Two runtimes drive the same zone code: the **Claude Code plugin** (25 agents, sp
 | Query engine | DuckDB ≥ 1.0 with the Iceberg extension |
 | Language | Python 3.11+ |
 | AI serving | MCP (Model Context Protocol) SDK, stdio transport |
-| Agent runtime | Claude Code plugin (25 agents, 9 skills, 2 hooks) — optional |
+| Agent runtime | Claude Code plugin (26 agents, 9 skills, 2 hooks) — optional |
 | Packaging | uv + hatchling |
 
 ## Quickstart
@@ -160,7 +160,7 @@ The full roster and workflow documents:
 - [Bronze pipeline](docs/workflows/bronze-pipeline.md) — including domain discovery
 - [Silver & Gold pipeline](docs/workflows/silver-gold-pipeline.md)
 - [Zone transitions](docs/workflows/zone-transitions.md) · [MCP pipeline](docs/workflows/mcp-pipeline.md) · [Approval gates](docs/workflows/human-approval-gates.md)
-- Agent definitions: [`agents/`](agents/) (25 markdown personas)
+- Agent definitions: [`agents/`](agents/) (26 markdown personas)
 - Full catalog of governance artifacts and paths: [`CLAUDE.md`](CLAUDE.md) (the pipeline's working rules)
 
 ## Data quality
@@ -224,7 +224,7 @@ brightsmith/
 │   │                         promote/grain, chaos monkey, relocate, governance DB
 │   ├── run.py                Headless pipeline runner
 │   └── setup.py              Project scaffolding CLI
-├── agents/                   25 agent personas (Claude Code plugin)
+├── agents/                   26 agent personas (Claude Code plugin)
 ├── skills/                   9 slash commands (/bs:init … /bs:status)
 ├── hooks/                    Plugin hooks (session setup, agent-type enforcement)
 ├── scripts/                  consumer_journey_smoke.sh (CI wheel-install test)

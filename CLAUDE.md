@@ -40,7 +40,7 @@ Brightsmith is a domain-agnostic AI agent data pipeline framework that transform
 - CAB module: `src/brightsmith/infra/cab.py` (classification, blast radius, decision records CLI)
 - Specs: `docs/specs/`
 - Tests: `tests/` (organized by zone)
-- Agent definitions: `.claude/agents/`
+- Agent definitions: `agents/` (26 markdown personas; consolidated here — not `.claude/agents/`)
 
 ## Workflow References (Read On-Demand)
 
@@ -63,6 +63,7 @@ Before starting spec work, read the workflow document for the relevant zone:
 - @staff-engineer can send work back to any agent for fixes
 - Test theater (tests that don't validate real behavior) is a rejection
 - DQ has three agents with distinct roles: @data-analyst (profiles data, produces EDA reports), @dq-rule-writer (writes rules from EDA evidence), @dq-engineer (executes rules, produces scorecards). No agent does another's job.
+- @document-extractor is a PRE-bronze agent for document sources (PDFs, scans, spreadsheets): it turns source documents into structured, per-document row artifacts in `data/extracted/` that a thin `BaseIngestor` then loads. It NEVER writes to Iceberg (the idempotent promote/dedup stays with the framework) and NEVER defines the grain (that lives in `domain/sources/*.yaml`). Extraction is non-deterministic and runs once per document under review; the framework's load is deterministic/idempotent and re-runs over everything. Documents that fail their configured control-total self-check are quarantined and flagged, never emitted. Only used by domains whose sources are documents — API/JSON/CSV domains skip it.
 - DQ rules follow a lifecycle: `PROPOSED → APPROVED → ACTIVE`. Rules must be executed against real Iceberg data via `python -m brightsmith.infra.dq_runner run`. P0 failures block spec completion.
 - DQ rule approval respects `REQUIRE_HUMAN_APPROVAL` — when False, proposed rules auto-advance to approved
 - DQ scorecards must be generated from real execution results (`python -m brightsmith.infra.dq_runner scorecard`), not test results
