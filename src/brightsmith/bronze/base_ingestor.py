@@ -145,6 +145,8 @@ class BaseIngestor(ABC):
         method: str = "api",
         warehouse_path: Path | None = None,
         catalog_path: Path | None = None,
+        spec_reference: str | None = None,
+        agent_id: str | None = None,
         **kwargs,
     ) -> dict:
         """Generic ingest pipeline: fetch -> flatten -> dedup -> write.
@@ -157,6 +159,10 @@ class BaseIngestor(ABC):
             method: fetch method name. Defaults to "api".
             warehouse_path: Iceberg warehouse path override.
             catalog_path: Iceberg catalog path override.
+            spec_reference: Spec file path for lineage attribution (e.g.
+                "docs/specs/raw-ingest-statements.md"). Defaults to unattributed.
+            agent_id: Agent identifier for lineage attribution (e.g.
+                "@document-extractor"). Defaults to unattributed.
             **kwargs: passed through to fetch() (e.g., cache_dir, user_agent).
 
         Returns:
@@ -234,7 +240,7 @@ class BaseIngestor(ABC):
             print(f"Dedup summary: {total_new} new facts ingested, {total_skipped} duplicates skipped")
 
         # Auto-emit runtime lineage event
-        self._emit_lineage(table, results, total_new, total_skipped)
+        self._emit_lineage(table, results, total_new, total_skipped, spec_reference, agent_id)
 
         return results
 
@@ -244,6 +250,8 @@ class BaseIngestor(ABC):
         results: dict,
         total_new: int,
         total_skipped: int,
+        spec_reference: str | None = None,
+        agent_id: str | None = None,
     ) -> None:
         """Emit a runtime lineage event after ingest completes.
 
@@ -263,6 +271,8 @@ class BaseIngestor(ABC):
                 input_tables=[source_url],
                 output_table=self.source.full_table_name,
                 producer="BaseIngestor",
+                spec_reference=spec_reference,
+                agent_id=agent_id,
             )
 
             # Get latest snapshot ID

@@ -43,8 +43,8 @@ mappings = [
     ColumnMapping(
         target_field="record_id",
         input_fields=[
-            {"namespace": "project", "name": "raw.facts", "field": "entity_id"},
-            {"namespace": "project", "name": "raw.facts", "field": "metric"},
+            {"namespace": "project", "name": "bronze.facts", "field": "entity_id"},
+            {"namespace": "project", "name": "bronze.facts", "field": "metric"},
         ],
         transformation_type="DERIVED",
         transformation_description="SHA-256 hash of (entity_id, metric)",
@@ -52,7 +52,7 @@ mappings = [
     ColumnMapping(
         target_field="revenue",
         input_fields=[
-            {"namespace": "project", "name": "raw.facts", "field": "val"},
+            {"namespace": "project", "name": "bronze.facts", "field": "val"},
         ],
         transformation_type="DIRECT",
     ),

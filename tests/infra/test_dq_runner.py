@@ -145,6 +145,30 @@ class TestExtractTableRefs:
         assert ("gold", "revenue_2024") in refs
         assert ("silver", "entity_mappings") in refs
 
+    def test_skips_namespace_table_inside_string_literal(self):
+        """A namespace.table token inside a single-quoted string literal is
+        string DATA (e.g. a provenance/value_source tag), not a table ref, and
+        must not be registered/rewritten."""
+        sql = (
+            "SELECT COUNT(*) FROM silver.networth_position "
+            "WHERE value_source = 'bronze.holdings.market_value'"
+        )
+        refs = _extract_table_refs(sql)
+        assert ("silver", "networth_position") in refs
+        assert ("bronze", "holdings") not in refs
+
+    def test_finds_real_ref_alongside_literal(self):
+        """A real bronze.holdings FROM/JOIN ref is still found even when the same
+        namespace.table text also appears inside a string literal."""
+        sql = (
+            "SELECT COUNT(*) FROM silver.networth_position n "
+            "JOIN bronze.holdings h ON h.security_name = n.security_name "
+            "WHERE n.value_source = 'bronze.holdings.market_value'"
+        )
+        refs = _extract_table_refs(sql)
+        assert ("silver", "networth_position") in refs
+        assert ("bronze", "holdings") in refs
+
 
 # ---------------------------------------------------------------------------
 # SQL rewriting
@@ -169,6 +193,37 @@ class TestRewriteSql:
         sql = "SELECT * FROM gold.revenue_2024"
         result = _rewrite_sql(sql, [("gold", "revenue_2024")])
         assert result == "SELECT * FROM gold_revenue_2024"
+
+    def test_preserves_namespace_table_inside_string_literal(self):
+        """The FROM ref is rewritten to a view name but the identical text inside
+        a string literal is left verbatim (the bug this guards: an unconditional
+        str.replace corrupted the literal, spuriously failing the rule)."""
+        sql = (
+            "SELECT COUNT(*) FROM silver.networth_position "
+            "WHERE value_source = 'bronze.holdings.market_value'"
+        )
+        result = _rewrite_sql(sql, [("silver", "networth_position")])
+        assert "FROM silver_networth_position" in result
+        assert "'bronze.holdings.market_value'" in result
+
+    def test_rewrites_real_ref_but_not_literal(self):
+        sql = (
+            "SELECT COUNT(*) FROM silver.networth_position n "
+            "JOIN bronze.holdings h ON h.security_name = n.security_name "
+            "WHERE n.value_source = 'bronze.holdings.market_value'"
+        )
+        result = _rewrite_sql(sql, [("silver", "networth_position"), ("bronze", "holdings")])
+        assert "JOIN bronze_holdings h" in result
+        assert "FROM silver_networth_position n" in result
+        assert "'bronze.holdings.market_value'" in result
+
+    def test_does_not_corrupt_longer_table_name(self):
+        """Word-boundary safety: rewriting silver.foo must not corrupt a longer
+        silver.foo_bar reference (the old substring replace would)."""
+        sql = "SELECT * FROM silver.foo JOIN silver.foo_bar ON true"
+        result = _rewrite_sql(sql, [("silver", "foo"), ("silver", "foo_bar")])
+        assert "FROM silver_foo " in result
+        assert "JOIN silver_foo_bar " in result
 
 
 # ---------------------------------------------------------------------------
@@ -1027,3 +1082,86 @@ class TestCLINoSpec:
         assert "Updated README badges" in proc.stdout, (
             f"Expected 'Updated README badges' in output; got:\n{proc.stdout}"
         )
+
+
+# ---------------------------------------------------------------------------
+# spec_registry status carry-forward — _write_governance_results must not
+# clobber a status a human/agent already wrote directly to spec_registry
+# (e.g. @staff-engineer's COMPLETE). Same _last_known_status() carry-forward
+# doctrine as the governance-sync fix (test_governance_sync_migration.py) and
+# the pipeline-gate fix (test_pipeline_gate_validation.py).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def gov_project(tmp_path):
+    """Isolate config at a tmp project + governance warehouse, then restore.
+
+    ``configure`` mutates the process-global config, so we snapshot and restore
+    it to avoid leaking into other tests.
+    """
+    import brightsmith.config as config
+    from brightsmith.infra.iceberg_setup import reset_catalog_cache
+
+    original = config.get_config()
+    config.configure(project_root=tmp_path)
+    config.DQ_RULES_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        yield tmp_path
+    finally:
+        config._CONFIG = original
+        reset_catalog_cache()
+
+
+def _write_active_rule(rules_dir, spec):
+    """A single trivial, always-passing, unconditionally-active rule with no
+    table dependency -- only the registry side effect matters here."""
+    (rules_dir / f"{spec}.json").write_text(json.dumps({
+        "spec": spec,
+        "tables": [],
+        "rules": [{
+            "rule_id": "CF-001",
+            "category": "Validity",
+            "priority": "P2",
+            "description": "Trivial always-pass rule (no table dependency)",
+            "sql": "SELECT 0",
+            "threshold": "result = 0",
+            "status": "active",
+        }],
+    }))
+
+
+class TestSpecRegistryStatusCarryForward:
+    """Regression for the reported clobber bug: dq_runner's
+    ``_write_governance_results`` used to hardcode ``status="IN_PROGRESS"`` on
+    every DQ run, reverting any staff-authored terminal status back to
+    IN_PROGRESS on the very next `dq_runner run`."""
+
+    def test_dq_run_does_not_clobber_staff_engineer_complete_status(self, gov_project):
+        import brightsmith.config as config
+        from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+
+        write_spec_registry(
+            spec_name="dq-clobber-1", zone="gold", status="COMPLETE",
+            output_tables=["gold.t"], updated_by="@staff-engineer",
+        )
+        _write_active_rule(config.DQ_RULES_DIR, "dq-clobber-1")
+
+        run_rules(spec="dq-clobber-1")
+
+        specs = {s["spec_name"]: s for s in get_current_specs()}
+        assert specs["dq-clobber-1"]["status"] == "COMPLETE"
+
+    def test_dq_run_on_brand_new_spec_still_defaults_to_in_progress(self, gov_project):
+        """The genuine case: a spec with no prior registry row at all still
+        defaults sensibly to IN_PROGRESS after its first DQ run -- carry-forward
+        must not break normal spec creation."""
+        import brightsmith.config as config
+        from brightsmith.infra.governance_db import get_current_specs
+
+        _write_active_rule(config.DQ_RULES_DIR, "dq-fresh-1")
+
+        run_rules(spec="dq-fresh-1")
+
+        specs = {s["spec_name"]: s for s in get_current_specs()}
+        assert specs["dq-fresh-1"]["status"] == "IN_PROGRESS"

@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "DQ rule patterns for concept normalization quality. @dq-rule-writer must evaluate each pattern when a base zone spec includes concept normalization.",
+  "description": "DQ rule patterns for concept normalization quality. @dq-rule-writer must evaluate each pattern when a silver zone spec includes concept normalization.",
   "patterns": [
     {
       "pattern_id": "NORM-CONFIDENCE-RANGE",

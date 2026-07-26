@@ -139,6 +139,78 @@ def test_sync_pipeline_state_writes_events_and_registry(gov_project):
     assert counts["spec_registry"] == 1
 
 
+def _write_pipeline_state_no_status(spec: str) -> None:
+    """A pipeline-state file with no top-level 'status' key — the real shape
+    every pipeline-state JSON has, since pipeline_gate.py never writes one."""
+    ps_dir = config.PIPELINE_STATE_DIR
+    ps_dir.mkdir(parents=True, exist_ok=True)
+    (ps_dir / f"{spec}-pipeline.json").write_text(json.dumps({
+        "spec": spec,
+        "zone": "gold",
+        "output_tables": ["gold.t"],
+        "steps": {
+            "staff-engineer": {"status": "COMPLETED", "agent": "@staff-engineer",
+                               "completed_at": "2026-07-20T00:00:00+00:00"},
+        },
+        "skipped_steps": {},
+        "approvals": {},
+    }))
+
+
+def test_sync_carries_forward_prior_completion_when_state_has_no_status(gov_project):
+    """A pipeline-state file with no top-level status must not clobber a
+    COMPLETE status @staff-engineer already wrote directly to spec_registry."""
+    from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+
+    write_spec_registry(
+        spec_name="myspec", zone="gold", status="COMPLETE",
+        output_tables=["gold.t"], updated_by="@staff-engineer",
+    )
+    _write_pipeline_state_no_status("myspec")
+
+    sync_from_files()
+
+    specs = {s["spec_name"]: s for s in get_current_specs()}
+    assert specs["myspec"]["status"] == "COMPLETE"
+
+
+def test_sync_heals_on_rerun_instead_of_re_clobbering(gov_project):
+    """Re-running sync after the fix must keep restoring the true status, not
+    get stuck on the IN_PROGRESS row a prior (unfixed) sync wrote.
+
+    Simulates the exact failure mode from the bug report: a legitimate
+    COMPLETE write, then repeated syncs of a status-less state file. Each
+    sync's own row must be invisible to the next sync's status lookup.
+    """
+    from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+
+    write_spec_registry(
+        spec_name="myspec", zone="gold", status="COMPLETE",
+        output_tables=["gold.t"], updated_by="@staff-engineer",
+    )
+    _write_pipeline_state_no_status("myspec")
+
+    sync_from_files()
+    sync_from_files()
+    sync_from_files()
+
+    specs = {s["spec_name"]: s for s in get_current_specs()}
+    assert specs["myspec"]["status"] == "COMPLETE"
+
+
+def test_sync_defaults_brand_new_spec_to_in_progress(gov_project):
+    """A spec with no prior spec_registry row at all (never touched by
+    pipeline_gate.init() or any agent) still defaults sensibly to IN_PROGRESS."""
+    from brightsmith.infra.governance_db import get_current_specs
+
+    _write_pipeline_state_no_status("neverseen")
+
+    sync_from_files()
+
+    specs = {s["spec_name"]: s for s in get_current_specs()}
+    assert specs["neverseen"]["status"] == "IN_PROGRESS"
+
+
 # --- migrate_files_to_iceberg ---------------------------------------------
 
 

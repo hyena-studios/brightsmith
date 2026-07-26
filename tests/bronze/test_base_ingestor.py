@@ -13,9 +13,11 @@ import pytest
 from pyiceberg.schema import Schema
 from pyiceberg.types import DateType, IntegerType, NestedField, StringType, TimestamptzType
 
+import brightsmith.config as config
 from brightsmith.bronze.base_ingestor import BaseIngestor
 from brightsmith.domain_loader import DomainHints, DomainManifest, SourceConfig
 from brightsmith.infra.iceberg_setup import get_catalog, read_with_duckdb
+from brightsmith.infra.lineage import query_lineage_events
 
 # --- Test Ingestor (minimal concrete implementation) ---
 
@@ -229,6 +231,60 @@ class TestIngestPipeline:
         )
 
         assert results[1]["rows"] == 0
+
+
+# --- Lineage attribution ---
+
+
+@pytest.fixture
+def gov_warehouse(tmp_path, monkeypatch):
+    """Point the governance warehouse/catalog at tmp (matches
+    test_lineage_roundtrip.py's convention) so lineage events land somewhere
+    isolated and queryable."""
+    monkeypatch.setattr(config, "GOVERNANCE_WAREHOUSE", tmp_path / "gov-wh")
+    monkeypatch.setattr(config, "CATALOG_PATH", tmp_path / "catalog.db")
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    return tmp_path
+
+
+class TestLineageAttribution:
+    """Tests that ingest() threads spec_reference/agent_id into the lineage event."""
+
+    def test_ingest_threads_spec_reference_and_agent_id(self, tmp_workspace, gov_warehouse):
+        test_data = {1: [{"id": 1, "name": "alpha", "value": "100"}]}
+        source = _make_source_config(entities={1: "Entity A"})
+        manifest = _make_manifest(source)
+        ingestor = SimpleIngestor(source, manifest, test_data)
+
+        ingestor.ingest(
+            warehouse_path=tmp_workspace["warehouse"],
+            catalog_path=tmp_workspace["catalog"],
+            spec_reference="docs/specs/raw-ingest-statements.md",
+            agent_id="@document-extractor",
+        )
+
+        events = query_lineage_events("bronze.test_data", event_type="START")
+        assert len(events) == 1
+        assert events[0]["spec_reference"] == "docs/specs/raw-ingest-statements.md"
+        assert events[0]["agent_id"] == "@document-extractor"
+
+    def test_ingest_without_attribution_defaults_to_none(self, tmp_workspace, gov_warehouse):
+        """Existing callers that don't pass spec_reference/agent_id keep the
+        current NULL behavior."""
+        test_data = {1: [{"id": 1, "name": "alpha", "value": "100"}]}
+        source = _make_source_config(entities={1: "Entity A"})
+        manifest = _make_manifest(source)
+        ingestor = SimpleIngestor(source, manifest, test_data)
+
+        ingestor.ingest(
+            warehouse_path=tmp_workspace["warehouse"],
+            catalog_path=tmp_workspace["catalog"],
+        )
+
+        events = query_lineage_events("bronze.test_data", event_type="START")
+        assert len(events) == 1
+        assert events[0]["spec_reference"] is None
+        assert events[0]["agent_id"] is None
 
 
 # --- Dedup ---

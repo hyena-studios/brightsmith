@@ -494,3 +494,38 @@ print("FINDING_OK")
     q = run_py(tmp_path, query)
     assert q.returncode == 0, q.stderr
     assert "FINDING_OK" in q.stdout
+
+
+# ---------------------------------------------------------------------------
+# Scenario — a draft source-zone contract blocks the zone transition
+# ---------------------------------------------------------------------------
+
+
+def test_check_transition_blocks_on_draft_source_contract(tmp_path):
+    """A draft data contract on a source-zone table must block the zone transition;
+    stamping it active must clear that specific issue. Guards the contract-status
+    precondition in ``check_zone_transition``.
+    """
+    spec = "contract-gate-spec"
+    assert run_gate(tmp_path, "init", spec, "--zone", "bronze").returncode == 0
+
+    contracts = tmp_path / "governance" / "data-contracts"
+    contracts.mkdir(parents=True, exist_ok=True)
+    contract_path = contracts / "foo.yaml"
+
+    def write_contract(status: str) -> None:
+        contract_path.write_text(
+            "metadata:\n"
+            "  name: foo\n"
+            f"  status: {status}\n"
+            "schema:\n"
+            "  table: bronze.foo\n"
+        )
+
+    write_contract("draft")
+    draft = run_gate(tmp_path, "check-transition", "bronze", "silver")
+    assert "contract for bronze.foo is 'draft'" in draft.stdout, draft.stdout
+
+    write_contract("active")
+    active = run_gate(tmp_path, "check-transition", "bronze", "silver")
+    assert "contract for bronze.foo" not in active.stdout, active.stdout

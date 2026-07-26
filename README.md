@@ -93,9 +93,9 @@ Two runtimes drive the same zone code: the **Claude Code plugin** (26 agents, sp
 /plugin install    # point at https://github.com/hyena-studios/brightsmith
 
 /bs:init My domain description          # scaffold a domain project
-/bs:mine raw-ingest-my-source           # Bronze: ingest
-/bs:smelt base-my-entities              # Silver: normalize + model
-/bs:cast consumable-my-metrics          # Gold: data products
+/bs:mine bronze-ingest-my-source        # Bronze: ingest
+/bs:smelt silver-my-entities            # Silver: normalize + model
+/bs:cast gold-my-metrics                # Gold: data products
 /bs:serve                               # start the MCP server
 /bs:status                              # project dashboard, anytime
 ```
@@ -206,7 +206,7 @@ python -m brightsmith.infra.relocate --relative   # repo-relative paths, for com
 |---|---|---|
 | Manifest | `domain/manifest.yaml` | Sources, pipeline steps per zone, optional MCP server class |
 | Source config | `domain/sources/*.yaml` | Entity IDs, fetch methods, dedup grain — single- or multi-table |
-| Ingestor | `src/raw/my_ingestor.py` | `fetch()` + `flatten()`, extending `brightsmith.bronze.BaseIngestor` |
+| Ingestor | `src/bronze/my_ingestor.py` | `fetch()` + `flatten()`, extending `brightsmith.bronze.BaseIngestor` |
 | Concept mappings | `domain/concept-mappings/*.json` | Optional — discovery mode kicks in if absent |
 | Glossaries | `glossaries/` | Optional standard/domain term definitions |
 

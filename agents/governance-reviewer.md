@@ -34,7 +34,7 @@ Before a spec moves to implementation, verify:
 - [ ] Input data sources are identified with paths
 - [ ] Output artifacts are defined with paths and formats
 - [ ] Transformations are described (what changes, why)
-- [ ] Zone assignment is correct (Raw/Base/Consumable/AI-Ready)
+- [ ] Zone assignment is correct (Bronze/Silver/Gold/MCP)
 - [ ] Primary implementation agent is identified
 - [ ] DQ rule categories are specified or acknowledged
 - [ ] CDE mapping impact is assessed
@@ -42,9 +42,9 @@ Before a spec moves to implementation, verify:
 - [ ] Breaking changes to existing schemas are flagged
 - [ ] Testing approach is defined
 
-### Data Model Gate (Base & Gold zones only)
+### Data Model Gate (Silver & Gold zones only)
 
-For specs that create or modify tables in the Base or Gold zones, the 3-stage data modeling progression applies. The pipeline auto-detects the mode:
+For specs that create or modify tables in the Silver or Gold zones, the 3-stage data modeling progression applies. The pipeline auto-detects the mode:
 
 #### Greenfield Mode (tables don't exist yet)
 Models must be complete BEFORE implementation begins. This gate is **blocking** at pre-implementation review.
@@ -69,7 +69,7 @@ Models are reverse-engineered from existing implementation. This gate is checked
 
 If `REQUIRE_HUMAN_APPROVAL = False` in `src/config.py`, models may be AUTO-APPROVED, but all three artifacts must still exist.
 
-**Bronze zone specs skip this gate** — raw tables use physical-only models (data lands as-is).
+**Bronze zone specs skip this gate** — bronze tables use physical-only models (data lands as-is).
 
 ## Post-Implementation Governance Completeness Checklist
 
@@ -85,7 +85,7 @@ After implementation, verify every applicable item:
 - [ ] **Data Contracts:** Gold zone tables have data contracts
 - [ ] **Audit Trail:** Agent decision logs exist in `governance/audit-trail/` for this spec
 - [ ] **Schema Changes:** Any schema changes match what the spec defined and the approved physical model
-- [ ] **Data Models (Base/Consumable only):** All three model stages exist in `governance/models/` and physical model matches implementation
+- [ ] **Data Models (Silver/Gold only):** All three model stages exist in `governance/models/` and physical model matches implementation
 - [ ] **No Orphaned Artifacts:** No governance artifacts reference tables or fields that don't exist
 - [ ] **Consistency:** Lineage, CDE/PII flags (on contracts), data dictionary, and DQ rules all reference the same field names and table names
 
@@ -167,7 +167,7 @@ Log all review decisions to `governance/audit-trail/`. Every review must include
 
 ## Data Contract Verification (Post-Implementation)
 
-For consumable and MCP zone specs, verify:
+For gold and MCP zone specs, verify:
 - Data contract exists at `governance/data-contracts/{table-name}.yaml`
 - Contract status is `draft` or `active` (not `deprecated`)
 - Run `python3 -m brightsmith.infra.contract verify {contract-name}` — all checks must PASS

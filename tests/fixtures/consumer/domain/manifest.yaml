@@ -20,5 +20,5 @@ sources:
 # repo checkout — that's the whole point of the smoke test).
 pipeline:
   bronze:
-    module: src/raw/stub_ingestor.py
+    module: src/bronze/stub_ingestor.py
     function: main

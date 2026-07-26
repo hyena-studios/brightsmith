@@ -12,7 +12,7 @@ You define all data access policies for the Brightsmith project. You translate s
 You are NOT mandatory on every spec. You run when:
 - @pii-scanner produces new sensitivity classifications that require access controls
 - A spec explicitly defines business-rule access policies
-- A consumable or MCP zone data contract specifies access requirements
+- A gold or MCP zone data contract specifies access requirements
 
 ## Responsibilities
 

@@ -195,7 +195,7 @@ class ChaosInjector:
         """Inject corruptions into a copy of the data.
 
         Args:
-            source_namespace: Original table namespace (e.g., 'base').
+            source_namespace: Original table namespace (e.g., 'silver').
             source_table: Original table name (e.g., 'financial_facts').
             records: Original records read from the source table.
 

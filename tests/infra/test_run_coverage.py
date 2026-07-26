@@ -95,8 +95,8 @@ def test_parse_step_string_with_and_without_function():
     assert _parse_step_string("pkg.mod") == _ZoneStep(module="pkg.mod", function="main", file_path=False)
 
 
-def test_register_zone_normalizes_alias():
-    register_zone("raw", "pkg.mod:main")
+def test_register_zone_stores_name_verbatim():
+    register_zone("bronze", "pkg.mod:main")
     assert "bronze" in run_mod._ZONE_REGISTRY
     assert run_mod._ZONE_REGISTRY["bronze"][0].module == "pkg.mod"
 
@@ -489,8 +489,8 @@ def test_run_dq_for_zone_partitions_by_zone_and_flags_p0_failures():
     assert failed2 == 0
 
 
-def test_rule_matches_zone_via_sql_and_alias():
-    rule = {"sql": "SELECT * FROM raw.foo", "tables": []}
+def test_rule_matches_zone_via_sql():
+    rule = {"sql": "SELECT * FROM bronze.foo", "tables": []}
     assert _rule_matches_zone(rule, "bronze") is True
     assert _rule_matches_zone(rule, "silver") is False
 
@@ -572,8 +572,10 @@ def test_dq_rules_execute_exactly_once_across_multi_zone_pipeline(tmp_path, rest
 # ---------------------------------------------------------------------------
 
 
-def test_contract_matches_zone_alias_and_malformed():
-    assert _contract_matches_zone({"table": "raw.foo"}, "bronze") is True
+def test_contract_matches_zone_medallion_and_malformed():
+    assert _contract_matches_zone({"table": "bronze.foo"}, "bronze") is True
+    # Legacy alias namespaces are no longer resolved to a medallion zone.
+    assert _contract_matches_zone({"table": "raw.foo"}, "bronze") is False
     assert _contract_matches_zone({"table": "no-dot"}, "bronze") is False
     assert _contract_matches_zone({}, "bronze") is False
 

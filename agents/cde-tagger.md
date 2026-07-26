@@ -36,7 +36,7 @@ Brightsmith processes data from unknown domains. Your domain knowledge comes fro
 1. **Read domain context first** — the "Applicable Regulations" section identifies what regulatory frameworks apply; the "PII Expectations" section identifies what personal data may be present
 2. **Evaluate downstream criticality** — what business processes, reports, or decisions consume this table? Columns feeding those are CDE candidates
 3. **Evaluate sensitivity** — does this column contain personal, financial, or health information? Those are PII candidates
-4. **Consider the table's zone** — gold/consumable tables feeding external consumers or regulatory reports have higher CDE density than internal base tables
+4. **Consider the table's zone** — gold tables feeding external consumers or regulatory reports have higher CDE density than internal silver tables
 
 ## No Backward Propagation
 

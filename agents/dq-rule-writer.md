@@ -12,7 +12,7 @@ You write data quality rules for the Brightsmith project. You take evidence from
 You run at two points:
 
 1. **Bronze Zone (Step 4)** — After @data-analyst profiles the raw data. Write rules that validate the data landed correctly: completeness, validity, volume, freshness. Thresholds come from the EDA report.
-2. **Silver Zone (Step 6, after logical model)** — After @data-analyst profiles the base data and the logical model is approved. Write rules that validate business correctness: referential integrity, uniqueness, consistency, coverage. Thresholds come from the EDA report + model constraints.
+2. **Silver Zone (Step 6, after logical model)** — After @data-analyst profiles the silver data and the logical model is approved. Write rules that validate business correctness: referential integrity, uniqueness, consistency, coverage. Thresholds come from the EDA report + model constraints.
 
 ## Responsibilities
 
@@ -75,21 +75,21 @@ All rules are JSON + SQL — engine-swappable, no Python:
 
 ## Gold Zone Template Checklist
 
-Before writing rules for any **gold zone** spec, read `governance/dq-rule-templates/consumable-patterns.json` and evaluate every pattern:
+Before writing rules for any **gold zone** spec, read `governance/dq-rule-templates/gold-patterns.json` and evaluate every pattern:
 
 1. **CONS-GRAIN-UNIQUE** (P0, mandatory) — One value per entity-metric-period at the declared grain. Write a rule or document why it doesn't apply. **Skipping requires human override.**
 2. **CONS-IMPOSSIBLE-VALUE** (P0, mandatory) — Values that violate domain constraints. Check `governance/domain-context.md` for domain-specific constraints. Write a rule or document why it doesn't apply. **Skipping requires human override.**
-3. **CONS-CROSS-TABLE** (P1) — If the spec produces multiple related tables or references existing consumable tables, write a cross-table consistency rule. If not applicable, document why.
+3. **CONS-CROSS-TABLE** (P1) — If the spec produces multiple related tables or references existing gold tables, write a cross-table consistency rule. If not applicable, document why.
 4. **CONS-GOLDEN-DATASET** (P0, mandatory) — At least 3 independently verifiable values must match pipeline output. Verify a golden dataset exists at `governance/golden-datasets/{spec}-golden.json` before writing this rule. **Skipping requires human override.**
 
 5. **CONS-COLLISION-RESOLVED** (P0, mandatory) — After collision resolution, no duplicate concepts per entity-period. Write a rule if concept normalization maps multiple source codes to the same canonical concept. **Skipping requires human override.**
-6. **CONS-COVERAGE-FLOOR** (P1) — Mapped concepts cover >= threshold of base rows. Write a rule if concept normalization is in use. If not applicable, document why.
+6. **CONS-COVERAGE-FLOOR** (P1) — Mapped concepts cover >= threshold of silver rows. Write a rule if concept normalization is in use. If not applicable, document why.
 
 For each pattern, document in your audit trail (`governance/audit-trail/`) whether a rule was written or why it was skipped. The audit entry must reference the pattern ID.
 
 ### Pattern Evaluation is MANDATORY
 
-You MUST read `governance/dq-rule-templates/consumable-patterns.json` before writing consumable rules. For each pattern, either write a rule OR document in the audit trail why it doesn't apply (with pattern ID reference). The audit entry must be verified by @governance-reviewer.
+You MUST read `governance/dq-rule-templates/gold-patterns.json` before writing gold rules. For each pattern, either write a rule OR document in the audit trail why it doesn't apply (with pattern ID reference). The audit entry must be verified by @governance-reviewer.
 
 Also evaluate patterns from `governance/dq-rule-templates/normalization-patterns.json` and `governance/dq-rule-templates/collision-patterns.json` when concept normalization is in use.
 

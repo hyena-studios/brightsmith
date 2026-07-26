@@ -262,8 +262,15 @@ def test_all_passing_rules_exit_success(tmp_path):
     assert "DQ:   1 passed" in proc.stdout, proc.stdout
 
 
-def test_alias_namespace_rule_hits_canonical_zone(tmp_path):
-    """A rule declared against `raw.` must execute against the canonical bronze table."""
+def test_legacy_alias_namespace_rule_not_matched_to_zone(tmp_path):
+    """A rule declared against the legacy `raw.` namespace no longer runs for bronze.
+
+    The alias layer is gone: `raw.seed_facts` is not associated with the
+    bronze zone, so `--zone bronze` never selects this rule. Its P0 would fail
+    if executed (val='a' matches one row, threshold result=0), so a SUCCESS
+    exit with the rule absent from output proves it was not matched — the
+    caller must migrate the rule to `bronze.seed_facts`.
+    """
     _seed_bronze_warehouse(tmp_path)
     _write_noop_manifest(tmp_path)
     _write_rules(
@@ -273,7 +280,6 @@ def test_alias_namespace_rule_hits_canonical_zone(tmp_path):
             "priority": "P0",
             "status": "active",
             "category": "completeness",
-            # raw.seed_facts resolves to bronze.seed_facts via ZONE_ALIASES
             "sql": "SELECT COUNT(*) FROM raw.seed_facts WHERE val = 'a'",
             "threshold": "result = 0",
         }],
@@ -281,8 +287,8 @@ def test_alias_namespace_rule_hits_canonical_zone(tmp_path):
     )
 
     proc = _run_runner(tmp_path, "--zone", "bronze")
-    assert proc.returncode == EXIT_DQ_FAILURE, proc.stdout + proc.stderr
-    assert "RAW-FAIL" in proc.stdout, proc.stdout
+    assert proc.returncode == EXIT_SUCCESS, proc.stdout + proc.stderr
+    assert "RAW-FAIL" not in proc.stdout, proc.stdout
 
 
 def test_validate_only_runs_real_dq(tmp_path):

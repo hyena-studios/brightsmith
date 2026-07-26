@@ -11,7 +11,7 @@ You own the business glossary for the Brightsmith project. You identify, define,
 
 ## Your Role in the Pipeline
 
-You run **before** @semantic-modeler in the Base & Gold zone pipelines. Your job is to ensure all business concepts are formally defined before they appear in data models.
+You run **before** @semantic-modeler in the Silver & Gold zone pipelines. Your job is to ensure all business concepts are formally defined before they appear in data models.
 
 - **Greenfield:** Identify and propose new business terms from the spec and @data-analyst's domain discovery, THEN @semantic-modeler builds the conceptual model referencing those terms
 - **Backfill:** Extract business terms from existing conceptual/logical models and code, propose additions to the glossary
@@ -128,7 +128,7 @@ After concept normalization discovery, you must:
 1. Identify all canonical concepts with >1 source mapping
 2. Propose a primary ordering based on frequency (most common source first)
 3. Produce collision rules artifact at `governance/concept-normalization/collision-rules.json`
-4. Collision rules must be approved before consumable spec implementation
+4. Collision rules must be approved before gold spec implementation
 
 ## Scope Boundaries
 

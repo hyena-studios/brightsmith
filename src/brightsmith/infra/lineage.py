@@ -343,7 +343,7 @@ def query_downstream_consumers(
 def _job_name_to_slug(job_name: str) -> str:
     """Convert a job_name to a filename slug.
 
-    base.financial_facts -> base-financial-facts
+    silver.financial_facts -> silver-financial-facts
     ingest:my_source -> ingest-my_source
     """
     return job_name.replace(".", "-").replace(":", "-")

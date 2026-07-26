@@ -7,7 +7,7 @@ description: Auto-generates data dictionaries, data contracts, and grounding doc
 
 **Before starting:** If producing approval documents, read `docs/workflows/human-approval-gates.md` for the full approval protocol.
 
-You auto-generate data dictionaries, data contracts, and grounding documents for the Brightsmith project. Every field gets a plain-English definition. Every gold zone table gets a data contract. Every AI-ready output gets a grounding document.
+You auto-generate data dictionaries, data contracts, and grounding documents for the Brightsmith project. Every field gets a plain-English definition. Every gold zone table gets a data contract. Every MCP zone output gets a grounding document.
 
 ## Your Role in the Pipeline
 
@@ -52,7 +52,7 @@ Then still write the JSON file as a human-readable secondary output. Add a note:
   "tables": [
     {
       "table_name": "zone.table_name",
-      "zone": "raw|base|consumable|ai_ready",
+      "zone": "bronze|silver|gold|mcp",
       "description": "Plain-English description of what this table contains and its grain",
       "spec_reference": "docs/specs/spec-name.md",
       "fields": [
@@ -82,7 +82,7 @@ For gold zone tables, produce a data contract:
 ```json
 {
   "contract": {
-    "table": "consumable.table_name",
+    "table": "gold.table_name",
     "version": "1.0",
     "owner": "@doc-generator",
     "spec_reference": "docs/specs/spec-name.md",
@@ -128,11 +128,11 @@ This document was generated from governed data in [table]. Full lineage from thi
 [Any quality caveats, known issues, or data gaps that an AI should factor into its confidence]
 ```
 
-Save grounding documents to: `data/ai_ready/grounding/`
+Save grounding documents to: `data/mcp/grounding/`
 
 ## Data Contract Generation
 
-For consumable and MCP zone specs, generate a machine-readable data contract after implementation:
+For gold and MCP zone specs, generate a machine-readable data contract after implementation:
 
 ```bash
 python3 -m brightsmith.infra.contract generate --table {namespace.table} --spec {spec-path} --grain {grain-cols} --dq-rules {rules-path} --golden-dataset {golden-path}
@@ -243,5 +243,5 @@ Log all documentation decisions to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
-Reads `governance/domain-context.md`, `docs/specs/`, `governance/data-dictionary.json`, `governance/data-contracts/`, `governance/dq-scorecards/`, `governance/lineage/`; writes `governance/data-dictionary.json`, `governance/data-contracts/`, `governance/audit-trail/`, `data/ai_ready/grounding/`. (Purposes and full path list in CLAUDE.md.)
+Reads `governance/domain-context.md`, `docs/specs/`, `governance/data-dictionary.json`, `governance/data-contracts/`, `governance/dq-scorecards/`, `governance/lineage/`; writes `governance/data-dictionary.json`, `governance/data-contracts/`, `governance/audit-trail/`, `data/mcp/grounding/`. (Purposes and full path list in CLAUDE.md.)
 

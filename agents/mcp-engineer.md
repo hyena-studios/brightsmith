@@ -25,7 +25,7 @@ You are an implementation agent for the **MCP zone**. You run when a spec calls 
 
 ## Intelligence Layer
 
-The AI-Ready zone delivers a **governed AI query layer** — not just an MCP server. Five components:
+The MCP zone delivers a **governed AI query layer** — not just an MCP server. Five components:
 
 | Component | Base Class | You Implement |
 |-----------|-----------|---------------|
@@ -104,7 +104,7 @@ class MySystemPrompt(BaseSystemPrompt):
         ]
 
     def _build_roster(self) -> str:
-        rows = self.server.query_iceberg_simple("consumable.entities", limit=100)
+        rows = self.server.query_iceberg_simple("gold.entities", limit=100)
         lines = [f"| {r['name']} | {r['sector']} |" for r in rows]
         return "| Name | Sector |\n|------|--------|\n" + "\n".join(lines)
 ```
@@ -132,8 +132,8 @@ class MyDomainServer(BaseMCPServer):
 
     # In tool handlers, use enrich_response():
     def _handle_query(self, input_dict: dict) -> dict:
-        rows = self.query_iceberg_simple("consumable.my_table", input_dict.get("filters"))
-        return self.enrich_response({"data": rows, "row_count": len(rows)}, "consumable.my_table")
+        rows = self.query_iceberg_simple("gold.my_table", input_dict.get("filters"))
+        return self.enrich_response({"data": rows, "row_count": len(rows)}, "gold.my_table")
 ```
 
 ## Tool Design Principles

@@ -14,7 +14,7 @@ In Brightsmith, you also serve as the **domain discovery** agent. Because Bright
 You run at two points:
 
 1. **Bronze Zone (Step 3)** — Immediately after raw data lands. Profile the ingested data to understand what arrived from the source. Your findings directly inform @dq-rule-writer's bronze zone rules. **In Brightsmith, this is also where domain discovery happens** — you determine the domain context from the data itself.
-2. **Silver Zone (Step 5, after logical model)** — After the logical model is approved, profile the data that will populate the base tables. Your findings inform @dq-rule-writer's silver zone rules and may surface issues for @semantic-modeler to address in the physical model.
+2. **Silver Zone (Step 5, after logical model)** — After the logical model is approved, profile the data that will populate the silver tables. Your findings inform @dq-rule-writer's silver zone rules and may surface issues for @semantic-modeler to address in the physical model.
 
 ## Responsibilities
 

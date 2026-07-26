@@ -2,26 +2,23 @@
 
 from __future__ import annotations
 
-ZONE_ALIASES = {
-    "raw": "bronze",
-    "base": "silver",
-    "consumable": "gold",
-    "ai_ready": "mcp",
-}
 CANONICAL_ZONES = {"bronze", "silver", "gold", "mcp"}
 
 
 def normalize_zone(zone: str | None) -> str:
-    """Return the canonical medallion zone name."""
-    if not zone:
-        return ""
-    return ZONE_ALIASES.get(zone, zone)
+    """Return the zone name as a string (empty for falsy input).
+
+    Brightsmith uses the physical medallion namespaces
+    (bronze/silver/gold/mcp) everywhere; this is a null-safe accessor, not a
+    translation layer. Any non-empty name is returned verbatim.
+    """
+    return zone or ""
 
 
 def normalize_table_name(table_name: str | None) -> str:
-    """Normalize the namespace portion of a namespace.table reference."""
-    if not table_name or "." not in table_name:
-        return table_name or ""
-    namespace, name = table_name.split(".", 1)
-    return f"{normalize_zone(namespace)}.{name}"
+    """Return a ``namespace.table`` reference as a string (empty for falsy input).
 
+    No namespace translation is performed — the physical medallion namespace
+    is the only namespace.
+    """
+    return table_name or ""

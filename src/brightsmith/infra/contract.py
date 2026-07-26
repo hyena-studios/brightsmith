@@ -60,9 +60,13 @@ _TYPE_MAP = {
     "double": "double",
     "string": "string",
     "date": "date",
-    "time": "time",
-    "timestamp": "timestamp",
+    # Order matters: _iceberg_type_to_str does a substring match in dict order,
+    # and "time" is a substring of "timestamp"/"timestamptz" (as is "timestamp"
+    # of "timestamptz"). List the most specific names first so a TimestampType
+    # is not misread as "time".
     "timestamptz": "timestamptz",
+    "timestamp": "timestamp",
+    "time": "time",
     "binary": "binary",
     "decimal": "decimal",
     "uuid": "uuid",

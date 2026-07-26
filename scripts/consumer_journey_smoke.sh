@@ -109,9 +109,9 @@ echo "[5/7] Installing fixture domain pack (tests/fixtures/consumer/)..."
 FIXTURE_DIR="$REPO_ROOT/tests/fixtures/consumer"
 rm -rf "$PROJECT_DIR/domain"
 cp -R "$FIXTURE_DIR/domain" "$PROJECT_DIR/domain"
-mkdir -p "$PROJECT_DIR/src/raw"
-cp "$FIXTURE_DIR/src/raw/stub_ingestor.py" "$PROJECT_DIR/src/raw/stub_ingestor.py"
-echo "  fixture installed at: $PROJECT_DIR/domain, $PROJECT_DIR/src/raw/stub_ingestor.py"
+mkdir -p "$PROJECT_DIR/src/bronze"
+cp "$FIXTURE_DIR/src/bronze/stub_ingestor.py" "$PROJECT_DIR/src/bronze/stub_ingestor.py"
+echo "  fixture installed at: $PROJECT_DIR/domain, $PROJECT_DIR/src/bronze/stub_ingestor.py"
 
 # ---------------------------------------------------------------------------
 # 6. Run the headless pipeline from the scaffolded project root

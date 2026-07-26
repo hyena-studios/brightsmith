@@ -242,6 +242,87 @@ def test_zone_specific_gold_dq_rules_file_malformed_json(tmp_path, restore_confi
     assert any("could not be read as JSON" in i for i in issues)
 
 
+def test_zone_specific_gold_multi_table_dq_rules_pass_via_top_level_spec_tag(tmp_path, restore_config):
+    """A multi-table spec files rules per-table (no governance/dq-rules/<spec>.json)
+    but the file's TOP-LEVEL "spec" key names self.spec — the real convention
+    (e.g. finances' governance/dq-rules/gold-portfolio-exposure.json tags "spec"
+    once at the file level, never per rule). That must satisfy the check."""
+    restore_config.configure(project_root=tmp_path)
+    _seed_warehouse(tmp_path, zone="gold")
+    gate = _gold_gate(tmp_path)
+    dq_dir = tmp_path / "governance" / "dq-rules"
+    dq_dir.mkdir(parents=True)
+    (dq_dir / "gold-some-table.json").write_text(json.dumps({
+        "spec": gate.spec,
+        "rules": [{"rule_id": "R1", "priority": "P1", "sql": "SELECT 1",
+                   "threshold": "result = 1"}],
+    }))
+    _write_golden_dataset(tmp_path, gate.spec)
+    _write_physical_model(tmp_path, gate.spec)
+
+    valid, issues = gate.validate()
+    assert not any("DQ rules file missing" in i for i in issues), issues
+
+
+def test_zone_specific_gold_multi_table_dq_rules_pass_via_rule_level_spec_tag(tmp_path, restore_config):
+    """A rule-level "spec" tag (no top-level "spec" key) must also satisfy the
+    check — the fallback accepts either convention."""
+    restore_config.configure(project_root=tmp_path)
+    _seed_warehouse(tmp_path, zone="gold")
+    gate = _gold_gate(tmp_path)
+    dq_dir = tmp_path / "governance" / "dq-rules"
+    dq_dir.mkdir(parents=True)
+    (dq_dir / "gold-some-table.json").write_text(json.dumps({
+        "rules": [{"rule_id": "R1", "priority": "P1", "sql": "SELECT 1",
+                   "threshold": "result = 1", "spec": gate.spec}],
+    }))
+    _write_golden_dataset(tmp_path, gate.spec)
+    _write_physical_model(tmp_path, gate.spec)
+
+    valid, issues = gate.validate()
+    assert not any("DQ rules file missing" in i for i in issues), issues
+
+
+def test_zone_specific_gold_no_dq_rules_anywhere_still_fails(tmp_path, restore_config):
+    """The per-table fallback must not turn into a no-op: an unrelated rules
+    file that doesn't tag this spec (at rule level) still leaves the spec
+    without DQ rules."""
+    restore_config.configure(project_root=tmp_path)
+    _seed_warehouse(tmp_path, zone="gold")
+    gate = _gold_gate(tmp_path)
+    dq_dir = tmp_path / "governance" / "dq-rules"
+    dq_dir.mkdir(parents=True)
+    (dq_dir / "unrelated-spec.json").write_text(json.dumps({
+        "rules": [{"rule_id": "R1", "priority": "P1", "sql": "SELECT 1",
+                   "threshold": "result = 1", "spec": "some-other-spec"}],
+    }))
+    _write_golden_dataset(tmp_path, gate.spec)
+    _write_physical_model(tmp_path, gate.spec)
+
+    valid, issues = gate.validate()
+    assert any("DQ rules file missing" in i for i in issues)
+
+
+def test_zone_specific_gold_unrelated_top_level_spec_still_fails(tmp_path, restore_config):
+    """Same as above but tagged at the top level: an unrelated file's
+    top-level "spec" must not false-positive for this spec."""
+    restore_config.configure(project_root=tmp_path)
+    _seed_warehouse(tmp_path, zone="gold")
+    gate = _gold_gate(tmp_path)
+    dq_dir = tmp_path / "governance" / "dq-rules"
+    dq_dir.mkdir(parents=True)
+    (dq_dir / "unrelated-spec.json").write_text(json.dumps({
+        "spec": "some-other-spec",
+        "rules": [{"rule_id": "R1", "priority": "P1", "sql": "SELECT 1",
+                   "threshold": "result = 1"}],
+    }))
+    _write_golden_dataset(tmp_path, gate.spec)
+    _write_physical_model(tmp_path, gate.spec)
+
+    valid, issues = gate.validate()
+    assert any("DQ rules file missing" in i for i in issues)
+
+
 def test_zone_specific_gold_requires_golden_dataset(tmp_path, restore_config):
     restore_config.configure(project_root=tmp_path)
     _seed_warehouse(tmp_path, zone="gold")
@@ -901,3 +982,68 @@ def test_complete_step_with_output_records_hash(tmp_path, restore_config):
     step = gate._state["steps"]["governance-reviewer-pre"]
     assert step["output"] == "governance/eda/report.md"
     assert step["output_hash"].startswith("sha256:")
+
+
+# ---------------------------------------------------------------------------
+# spec_registry status carry-forward — init() and _emit_governance_event()
+# must not clobber a status a human/agent already wrote directly to
+# spec_registry (e.g. @staff-engineer's COMPLETE). Both now look up the
+# spec's latest registry status via the same _last_known_status() the
+# governance sync fix introduced, defaulting to IN_PROGRESS only when no
+# prior row exists.
+# ---------------------------------------------------------------------------
+
+
+def test_init_carries_forward_existing_registry_status(tmp_path, restore_config):
+    """Re-initializing a spec that already has a COMPLETE row (written
+    directly, not via the gate) must not reset it to IN_PROGRESS."""
+    restore_config.configure(project_root=tmp_path)
+    from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+    from brightsmith.infra.pipeline_gate import PipelineGate
+
+    write_spec_registry(
+        spec_name="init-carry", zone="gold", status="COMPLETE",
+        output_tables=["gold.t"], updated_by="@staff-engineer",
+    )
+
+    gate = PipelineGate("init-carry", state_dir=tmp_path)
+    gate.init(zone="gold")
+
+    specs = {s["spec_name"]: s for s in get_current_specs()}
+    assert specs["init-carry"]["status"] == "COMPLETE"
+
+
+def test_init_brand_new_spec_still_defaults_to_in_progress(tmp_path, restore_config):
+    """The genuine case: a spec with no prior registry row at all still
+    defaults to IN_PROGRESS — carry-forward must not break normal spec
+    creation."""
+    restore_config.configure(project_root=tmp_path)
+    from brightsmith.infra.governance_db import get_current_specs
+    from brightsmith.infra.pipeline_gate import PipelineGate
+
+    gate = PipelineGate("init-fresh", state_dir=tmp_path)
+    gate.init(zone="bronze")
+
+    specs = {s["spec_name"]: s for s in get_current_specs()}
+    assert specs["init-fresh"]["status"] == "IN_PROGRESS"
+
+
+def test_complete_step_does_not_clobber_staff_engineer_complete_status(tmp_path, restore_config):
+    """Regression for the reported clobber bug: @staff-engineer writes
+    COMPLETE directly to spec_registry, then a later gate-emitted step event
+    (e.g. a follow-up completed the next day) must not reset it to
+    IN_PROGRESS. Builds pipeline state directly (bypassing init()) so this
+    isolates the _emit_governance_event fix specifically."""
+    restore_config.configure(project_root=tmp_path)
+    from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+
+    write_spec_registry(
+        spec_name="clobber-1", zone="gold", status="COMPLETE",
+        output_tables=["gold.t"], updated_by="@staff-engineer",
+    )
+
+    gate = _gold_gate(tmp_path, spec="clobber-1")
+    gate.complete_step("staff-engineer", output="")
+
+    specs = {s["spec_name"]: s for s in get_current_specs()}
+    assert specs["clobber-1"]["status"] == "COMPLETE"

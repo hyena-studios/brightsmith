@@ -359,7 +359,7 @@ def compute_blast_radius(
 def _next_decision_id(table_name: str, cab_dir: Path | None = None) -> str:
     """Generate a decision ID from timestamp and table name."""
     timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    # Normalize table name: consumable.company_financials → company-financials
+    # Normalize table name: gold.company_financials → company-financials
     table_short = table_name.split(".")[-1].replace("_", "-")
     return f"cab-{timestamp}-{table_short}"
 

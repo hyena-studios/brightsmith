@@ -85,9 +85,9 @@ def test_write_spec_registry(gov_env):
 
     write_spec_registry(
         spec_name="test-spec",
-        zone="raw",
+        zone="bronze",
         status="IN_PROGRESS",
-        output_tables=["raw.test_table"],
+        output_tables=["bronze.test_table"],
         updated_by="@test",
         dq_score_pct=95.0,
         dq_rules_total=20,
@@ -1332,18 +1332,18 @@ def test_iceberg_write_failures_are_not_swallowed(gov_env, monkeypatch):
         dq_runner_mod.run_rules(spec="missing-rules")
 
 
-def test_aliases_normalize_before_persistence(gov_env):
-    """Deprecated zone aliases persist as canonical names."""
+def test_medallion_names_persist_unchanged(gov_env):
+    """Medallion zone and table names persist verbatim — no alias translation."""
     from brightsmith.infra.governance_db import get_contracts, get_current_specs, sync_contract, write_spec_registry
 
-    write_spec_registry("alias-spec", "raw", "IN_PROGRESS", ["raw.table"], "@test")
+    write_spec_registry("medallion-spec", "bronze", "IN_PROGRESS", ["bronze.table"], "@test")
     sync_contract(
         {
-            "metadata": {"name": "alias-contract", "version": "1.0.0", "status": "active"},
-            "schema": {"table": "consumable.metrics", "namespace": "consumable", "columns": [{"name": "id"}]},
+            "metadata": {"name": "gold-contract", "version": "1.0.0", "status": "active"},
+            "schema": {"table": "gold.metrics", "namespace": "gold", "columns": [{"name": "id"}]},
             "quality": {},
         },
-        "governance/data-contracts/alias-contract.yaml",
+        "governance/data-contracts/gold-contract.yaml",
     )
 
     assert get_current_specs()[0]["zone"] == "bronze"

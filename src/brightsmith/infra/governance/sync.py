@@ -13,6 +13,7 @@ from brightsmith.infra.governance.model_writers import (
     write_policy,
 )
 from brightsmith.infra.governance.parsers import _parse_mermaid_erdiagram
+from brightsmith.infra.governance.queries import _query_table
 from brightsmith.infra.governance.writers import (
     sync_contract,
     sync_glossary_term,
@@ -25,6 +26,26 @@ from brightsmith.infra.governance.writers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _last_known_status(spec_name: str) -> str | None:
+    """Look up the spec's most recent status, ignoring rows sync itself wrote.
+
+    The pipeline-state JSON schema never persists a top-level status field, so
+    a sync run has nothing authoritative to read when a state file carries
+    none. Defaulting blindly to IN_PROGRESS overwrites a terminal status (e.g.
+    COMPLETE) a human/agent wrote directly via write_spec_registry. Excluding
+    sync-authored rows from the lookup means a re-sync always finds that true
+    status instead of reading back its own earlier default — so once fixed,
+    sync heals rather than re-clobbering on every run.
+    """
+    rows = _query_table("spec_registry", """
+        SELECT status FROM arrow_table
+        WHERE spec_name = $1 AND updated_by != 'sync'
+        ORDER BY updated_at DESC
+        LIMIT 1
+    """, [spec_name])
+    return rows[0]["status"] if rows else None
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +202,7 @@ def _sync_pipeline_state() -> dict:
                 # Spec registry from pipeline state
                 completed = sum(1 for s in steps.values() if s.get("status") == "COMPLETED")
                 total_steps = len(steps)
-                spec_status = data.get("status", "IN_PROGRESS")
+                spec_status = data.get("status") or _last_known_status(spec) or "IN_PROGRESS"
                 output_tables = data.get("output_tables", [])
 
                 result = write_spec_registry(
@@ -322,7 +343,7 @@ def _enrich_spec_registry() -> dict:
 
                 result = write_spec_registry(
                     spec_name=spec, zone=zone,
-                    status=data.get("status", "IN_PROGRESS"),
+                    status=data.get("status") or _last_known_status(spec) or "IN_PROGRESS",
                     output_tables=output_tables, updated_by="sync",
                     pipeline_steps_total=len(steps),
                     pipeline_steps_completed=completed,

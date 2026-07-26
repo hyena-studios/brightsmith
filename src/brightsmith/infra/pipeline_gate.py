@@ -251,10 +251,10 @@ class PipelineGate:
     justifications, and approval decisions. Persists to a JSON state file.
 
     Usage:
-        gate = PipelineGate("raw-sec-edgar-ingest")
+        gate = PipelineGate("bronze-sec-edgar-ingest")
 
         gate.check_prerequisites("data-analyst")
-        gate.complete_step("data-analyst", output="governance/eda/raw-sec-edgar-eda.md")
+        gate.complete_step("data-analyst", output="governance/eda/bronze-sec-edgar-eda.md")
 
         gate.skip_step("pii-scanner",
                        reason="domain-context.md PII section: no PII expected",
@@ -334,12 +334,13 @@ class PipelineGate:
         }
         self._save()
 
+        from brightsmith.infra.governance.sync import _last_known_status
         from brightsmith.infra.governance_db import write_spec_registry
 
         write_spec_registry(
             spec_name=self.spec,
             zone=zone,
-            status="IN_PROGRESS",
+            status=_last_known_status(self.spec) or "IN_PROGRESS",
             output_tables=[],
             updated_by="pipeline-gate",
             pipeline_steps_total=len(steps),
@@ -353,6 +354,7 @@ class PipelineGate:
         self, step_name: str, event_type: str, **kwargs,
     ) -> None:
         """Emit a pipeline event to Iceberg governance tables."""
+        from brightsmith.infra.governance.sync import _last_known_status
         from brightsmith.infra.governance_db import write_pipeline_event, write_spec_registry
 
         steps = self._state.get("steps", {})
@@ -371,11 +373,17 @@ class PipelineGate:
             notes=kwargs.get("notes"),
         )
 
+        # The pipeline-state JSON never persists a top-level status field, so
+        # self._state.get("status") is always None here — the registry's own
+        # latest status (e.g. a staff-engineer-authored COMPLETE) is the only
+        # place a terminal status can come from. Carry it forward instead of
+        # hardcoding IN_PROGRESS, or every gate event would clobber it back.
         completed = sum(1 for s in steps.values() if s.get("status") in ("COMPLETED", "SKIPPED"))
+        status = self._state.get("status") or _last_known_status(self.spec) or "IN_PROGRESS"
         write_spec_registry(
             spec_name=self.spec,
             zone=self._state.get("zone", ""),
-            status=self._state.get("status", "IN_PROGRESS"),
+            status=status,
             output_tables=self._state.get("output_tables", []),
             updated_by=agent_id or "pipeline-gate",
             pipeline_step_current=step_name,
@@ -640,14 +648,19 @@ class PipelineGate:
 
         issues: list[str] = []
 
-        # Consumable and AI-Ready zones: DQ rules file must exist with >= 1 rule
+        # Consumable and AI-Ready zones: DQ rules file must exist with >= 1 rule.
+        # Fast path: exact governance/dq-rules/<spec>.json. Multi-table specs
+        # file rules per-table instead (every rule still tagged "spec": self.spec),
+        # so fall back to scanning all rules files for a matching tag before
+        # concluding the spec has no rules at all.
         if zone in ("gold", "mcp"):
             dq_file = DQ_RULES_DIR / f"{self.spec}.json"
             if not dq_file.exists():
-                issues.append(
-                    f"DQ rules file missing for {zone} spec: {dq_file}. "
-                    f"@dq-rule-writer must produce rules before completion."
-                )
+                if not self._has_dq_rules_tagged_for_spec(DQ_RULES_DIR):
+                    issues.append(
+                        f"DQ rules file missing for {zone} spec: {dq_file}. "
+                        f"@dq-rule-writer must produce rules before completion."
+                    )
             else:
                 import json as _json
                 try:
@@ -723,6 +736,29 @@ class PipelineGate:
         issues.extend(self._validate_warehouse_population(zone))
 
         return issues
+
+    def _has_dq_rules_tagged_for_spec(self, dq_rules_dir: Path) -> bool:
+        """Whether any file under dq_rules_dir carries >= 1 rule tagged for this spec.
+
+        Multi-table specs file DQ rules per-table rather than under the spec's
+        own filename, so the fast filename check alone false-fails them. The
+        real convention tags the file's top-level "spec" key; a per-rule
+        "spec" tag is also accepted for files that tag at the rule level.
+        """
+        import json as _json
+
+        if not dq_rules_dir.exists():
+            return False
+        for path in dq_rules_dir.glob("*.json"):
+            try:
+                data = _json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            if data.get("spec") == self.spec:
+                return True
+            if any(rule.get("spec") == self.spec for rule in data.get("rules", [])):
+                return True
+        return False
 
     def _validate_warehouse_population(self, zone: Zone) -> list[str]:
         """Verify that the pipeline has written tables to the persistent warehouse.
@@ -854,7 +890,7 @@ class PipelineGate:
                     f"{from_zone}→{to_zone} transition"
                 )
 
-            # insight-manager required at base→consumable and consumable→ai_ready
+            # insight-manager required at silver→gold and gold→mcp
             if from_zone in ("silver", "gold"):
                 im = steps.get("insight-manager", {})
                 if im.get("status") != "COMPLETED" and "insight-manager" not in skipped:
@@ -862,6 +898,22 @@ class PipelineGate:
                         f"[{gate.spec}] @insight-manager report not completed for "
                         f"{from_zone}→{to_zone} transition"
                     )
+
+        # Every data contract on a source-zone table must be 'active' — a draft contract
+        # means the data product it governs is not yet stamped, so the next zone must not
+        # build on it. (deprecated is a deliberate retirement state and does not block.)
+        from brightsmith.infra.contract import list_contracts
+
+        for contract in list_contracts():
+            table = str(contract.get("table", ""))
+            if not table.startswith(f"{from_zone}."):
+                continue
+            status = contract.get("status", "?")
+            if status != "active":
+                issues.append(
+                    f"[{contract.get('name', table)}] contract for {table} is "
+                    f"'{status}', must be 'active' before {from_zone}→{to_zone} transition"
+                )
 
         return (len(issues) == 0, issues)
 

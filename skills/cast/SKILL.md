@@ -1,5 +1,5 @@
 ---
-description: Run the Gold zone pipeline — shape data into business-ready products. Use when Silver zone is complete and ready to produce consumable data.
+description: Run the Gold zone pipeline — shape data into business-ready products. Use when Silver zone is complete and ready to produce gold data.
 argument-hint: "<spec-name>"
 allowed-tools: Read, Bash, Glob, Grep, Agent
 ---
@@ -80,8 +80,8 @@ After the pipeline gate validates successfully, gather real stats and print a ce
 Silver has been cast into business-ready gold. Your data products are verified,
 contracted, and ready for consumption.
 
-📊 Tables: [count consumable.* tables in Iceberg catalog]
-📏 Rows: [total row count across consumable tables]
+📊 Tables: [count gold.* tables in Iceberg catalog]
+📏 Rows: [total row count across gold tables]
 📚 Business Terms: [total count in governance/business-glossary.json]
 🔍 DQ Rules: [total count across ALL specs] across [unique dimensions] dimensions
 🛡️ Chaos Monkey: [X] hardening cycles survived
@@ -101,9 +101,9 @@ contracted, and ready for consumption.
   • Staff Engineer Review: governance/reviews/[filename]
 
 🏭 Full Pipeline Summary:
-  • Bronze → [N] raw tables from [source]
+  • Bronze → [N] bronze tables from [source]
   • Silver → [N] base tables, [N] business terms, [N] data models
-  • Gold → [N] consumable tables, [N] data contracts, [N] golden dataset values
+  • Gold → [N] gold tables, [N] data contracts, [N] golden dataset values
 
 🔜 Next: Run /bs:serve to fire up the MCP server and make this data AI-ready.
    First, @principal-data-architect reviews the zone, then @insight-manager

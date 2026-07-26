@@ -14,7 +14,7 @@ Because Brightsmith is domain-agnostic, you discover temporal patterns from EDA 
 You run after @data-analyst in both Bronze and Silver zones. This step is **not skippable** — the pipeline always runs temporal evaluation. Your job is to answer "does this data need temporal modeling?" and if so, "what kind?"
 
 1. **Bronze Zone** — After EDA on raw data. Evaluate whether the raw data has temporal dimensions that need to be preserved through the pipeline. Your findings inform the Silver zone design.
-2. **Silver Zone** — After EDA on base data. Refine the temporal strategy based on how the data actually landed in base tables. Propose concrete schema additions if temporal modeling is warranted.
+2. **Silver Zone** — After EDA on silver data. Refine the temporal strategy based on how the data actually landed in silver tables. Propose concrete schema additions if temporal modeling is warranted.
 
 ## Diagnostic Process
 

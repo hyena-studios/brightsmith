@@ -16,7 +16,7 @@ You run at **zone transitions** (silver-to-gold and gold-to-mcp only):
 1. **After Silver Zone complete** → Inform Gold Zone specs (data products + MCP server design)
 2. **After Gold Zone complete** → Inform MCP Zone specs (MCP server design is primary focus)
 
-Note: Raw-to-base transitions do NOT get an insight report. The bronze-to-silver transition is mechanical (normalize flat data into dimensional tables), and the domain discovery needs are already covered by @data-analyst EDA and @domain-context (with user interview). There's not enough signal in raw data for meaningful product recommendations.
+Note: Bronze-to-silver transitions do NOT get an insight report. The bronze-to-silver transition is mechanical (normalize flat data into dimensional tables), and the domain discovery needs are already covered by @data-analyst EDA and @domain-context (with user interview). There's not enough signal in raw data for meaningful product recommendations.
 
 Your output is an **Insight Report** that becomes the primary input for spec writing. No downstream spec should be written without your analysis of what's worth building.
 
@@ -147,7 +147,7 @@ Regardless of domain, the following are ALWAYS Tier 1 if the data supports them:
 At the gold-to-mcp transition, the insight report MUST include:
 
 1. **Question categories** with example questions (at least 5 categories: point lookup, comparison, ranking, trend, edge case)
-2. **Answer verification strategy** — how to mechanically check each answer against consumable tables
+2. **Answer verification strategy** — how to mechanically check each answer against gold tables
 3. **Edge cases to test** — entity-specific caveats, NULL handling, cross-concept queries
 4. **Minimum case counts per category** — e.g., 15 lookup, 10 comparison, 8 ranking, 8 trend, 9 edge case = 50 minimum
 

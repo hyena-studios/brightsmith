@@ -1,15 +1,15 @@
 {
   "version": "1.0",
-  "description": "Mandatory DQ rule patterns for consumable zone specs. @dq-rule-writer must evaluate each pattern and either write a rule or document why it was skipped.",
+  "description": "Mandatory DQ rule patterns for gold zone specs. @dq-rule-writer must evaluate each pattern and either write a rule or document why it was skipped.",
   "patterns": [
     {
       "pattern_id": "CONS-GRAIN-UNIQUE",
       "dimension": "Uniqueness",
       "priority": "P0",
-      "description": "One value per entity-metric-period at the declared grain. If a consumable table has a defined grain (e.g., one annual revenue per company-year), there must be exactly one row per grain combination.",
+      "description": "One value per entity-metric-period at the declared grain. If a gold table has a defined grain (e.g., one annual revenue per company-year), there must be exactly one row per grain combination.",
       "sql_template": "SELECT {grain_columns}, COUNT(*) as cnt FROM {table} GROUP BY {grain_columns} HAVING cnt > 1",
       "threshold": "result_count = 0",
-      "when": "Always — every consumable table has a declared grain",
+      "when": "Always — every gold table has a declared grain",
       "mandatory": true,
       "skip_requires": "human_override"
     },
@@ -28,10 +28,10 @@
       "pattern_id": "CONS-CROSS-TABLE",
       "dimension": "Consistency",
       "priority": "P1",
-      "description": "Related tables agree on shared dimensions. If two consumable tables share an entity or time dimension, their values for shared attributes must agree.",
+      "description": "Related tables agree on shared dimensions. If two gold tables share an entity or time dimension, their values for shared attributes must agree.",
       "sql_template": "SELECT COUNT(*) FROM {table_a} a JOIN {table_b} b ON {join_condition} WHERE {disagreement_condition}",
       "threshold": "result = 0",
-      "when": "When the spec produces multiple related tables or references existing consumable tables",
+      "when": "When the spec produces multiple related tables or references existing gold tables",
       "mandatory": false,
       "skip_requires": "documented_rationale"
     },
@@ -42,7 +42,7 @@
       "description": "Known-correct values match pipeline output. At least 3 independently verifiable values from authoritative sources must match the pipeline output within tolerance.",
       "sql_template": "SELECT COUNT(*) FROM {table} WHERE {entity_condition} AND {metric_condition} AND {period_condition} AND ABS({value_col} - {expected_value}) > {tolerance}",
       "threshold": "result = 0",
-      "when": "Always — every consumable spec must have a golden dataset before @staff-engineer review",
+      "when": "Always — every gold spec must have a golden dataset before @staff-engineer review",
       "mandatory": true,
       "skip_requires": "human_override"
     },
@@ -61,7 +61,7 @@
       "pattern_id": "CONS-COVERAGE-FLOOR",
       "dimension": "Coverage",
       "priority": "P1",
-      "description": "Mapped concepts cover >= threshold of base rows. If concept normalization is in use, a minimum percentage of source records should map to a canonical concept.",
+      "description": "Mapped concepts cover >= threshold of silver rows. If concept normalization is in use, a minimum percentage of source records should map to a canonical concept.",
       "sql_template": "SELECT CAST(COUNT(*) FILTER (WHERE canonical_concept IS NOT NULL) AS DOUBLE) * 100.0 / COUNT(*) FROM {table}",
       "threshold": "result >= {coverage_pct}",
       "when": "When concept normalization is in use",

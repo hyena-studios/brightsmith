@@ -5,7 +5,7 @@ Deliberately has no network dependency: ``fetch`` returns inline data so the
 smoke test only exercises the framework's own code (BaseIngestor -> Iceberg
 -> BaseMCPServer), not an external API. This module is loaded by
 ``brightsmith.run`` via the file-path branch of ``_import_step_module`` (the
-manifest declares it as ``src/raw/stub_ingestor.py``, resolved against the
+manifest declares it as ``src/bronze/stub_ingestor.py``, resolved against the
 scaffolded project's root) — exactly the shape a real multi-source domain
 pack uses (H5.2).
 """

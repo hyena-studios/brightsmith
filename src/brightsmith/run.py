@@ -231,9 +231,7 @@ def register_zone(zone: str, module_path: str) -> None:
     """Register a zone's transformation module (single-step, dotted path).
 
     Args:
-        zone: Zone name (bronze, silver, gold, or mcp).  Alias names
-              (raw/base/consumable/ai_ready) are also accepted and normalized
-              to the canonical name before storage.
+        zone: Zone name (bronze, silver, gold, or mcp).
         module_path: Dotted module path with function (e.g., "bronze.run_ingest:main").
     """
     from brightsmith.infra.governance.serializers import normalize_zone
@@ -319,9 +317,7 @@ def _load_nested_zone_registry(zones_block: dict, normalize_zone) -> None:
 def _load_zone_registry() -> None:
     """Load zone registrations from domain manifest if not already registered.
 
-    Zone names are normalized to canonical medallion names (bronze/silver/gold/mcp)
-    at this boundary so that manifests using legacy aliases (raw/base/consumable/
-    ai_ready) continue to work transparently.
+    Zone names are the physical medallion names (bronze/silver/gold/mcp).
 
     Supports both the flat shape (``pipeline: {zone: {module, function}}``)
     and the nested shape (``pipeline: {zones: {zone: [steps]}}``, H5.2). If
@@ -435,24 +431,19 @@ def _preflight_relocation(zones: list[str]) -> None:
     if not Path(CATALOG_PATH).exists():
         return  # fresh project — nothing baked in yet
 
-    from brightsmith.infra.governance.serializers import ZONE_ALIASES
-
     catalog = get_catalog(WAREHOUSE_PATH, CATALOG_PATH)
     namespaces = {ns[0] for ns in catalog.list_namespaces()}
     for zone in zones:
-        # zone plus any alias namespace that canonicalizes to it (raw→bronze, …)
-        aliases = {ns for ns, canon in ZONE_ALIASES.items() if canon == zone}
-        for candidate in {zone, *aliases}:
-            if candidate not in namespaces:
-                continue
-            for ident in catalog.list_tables(candidate):
-                try:
-                    catalog.load_table(ident)
-                except WarehouseRelocationError:
-                    raise
-                except Exception:
-                    # Not a relocation problem — leave it for zone execution.
-                    pass
+        if zone not in namespaces:
+            continue
+        for ident in catalog.list_tables(zone):
+            try:
+                catalog.load_table(ident)
+            except WarehouseRelocationError:
+                raise
+            except Exception:
+                # Not a relocation problem — leave it for zone execution.
+                pass
 
 
 def run_pipeline(
@@ -639,15 +630,13 @@ def _run_dq_for_zone(zone: str) -> tuple[bool, int, int, list[str]]:
 
 
 def _rule_matches_zone(rule: dict, zone: str) -> bool:
-    """Check if a DQ rule applies to a canonical zone.
+    """Check if a DQ rule applies to a zone.
 
-    Matches on namespace, normalizing aliases via ``ZONE_ALIASES`` so a rule
-    declared against ``raw.foo`` matches the canonical ``bronze`` zone and vice
-    versa. Considers both the rule's declared ``tables`` and the table
-    references parsed from its SQL.
+    Matches on the physical medallion namespace (bronze/silver/gold/mcp),
+    considering both the rule's declared ``tables`` and the table references
+    parsed from its SQL.
     """
     from brightsmith.infra.dq_runner import _extract_table_refs
-    from brightsmith.infra.governance.serializers import ZONE_ALIASES
 
     namespaces: set[str] = set()
     for table in rule.get("tables", []):
@@ -657,7 +646,7 @@ def _rule_matches_zone(rule: dict, zone: str) -> bool:
     if isinstance(sql, str):
         for ns, _tbl in _extract_table_refs(sql):
             namespaces.add(ns)
-    return any(ZONE_ALIASES.get(ns, ns) == zone for ns in namespaces)
+    return any(ns == zone for ns in namespaces)
 
 
 def _check_contracts_for_zone(zone: str) -> bool:
@@ -687,14 +676,12 @@ def _check_contracts_for_zone(zone: str) -> bool:
 
 
 def _contract_matches_zone(contract: dict, zone: str) -> bool:
-    """Check if a contract's table belongs to a canonical zone (alias-aware)."""
-    from brightsmith.infra.governance.serializers import ZONE_ALIASES
-
+    """Check if a contract's table belongs to a medallion zone."""
     table = contract.get("table", "")
     if not isinstance(table, str) or "." not in table:
         return False
     ns = table.split(".", 1)[0]
-    return ZONE_ALIASES.get(ns, ns) == zone
+    return ns == zone
 
 
 def _verify_contracts_for_zone(zone: str) -> tuple[int, int]:
@@ -705,9 +692,8 @@ def _verify_contracts_for_zone(zone: str) -> tuple[int, int]:
     If ``list_contracts``/``verify_contract`` raise, the exception propagates
     (consistent with the ``_check_contracts_for_zone`` pre-check).
 
-    Uses alias-aware matching via ``_contract_matches_zone`` so contracts
-    declared under legacy namespaces (e.g. ``raw.``, ``consumable.``) are
-    correctly associated with their canonical zones.
+    Uses ``_contract_matches_zone`` to associate each contract with its
+    medallion zone by namespace prefix.
     """
     from brightsmith.infra.contract import list_contracts, verify_contract
     contracts = list_contracts()

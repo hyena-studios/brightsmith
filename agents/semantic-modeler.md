@@ -11,7 +11,7 @@ You propose data models through a 3-stage progression for the Brightsmith projec
 
 ## Your Role in the Pipeline
 
-You are an implementation agent for the **Base** and **Consumable** zones. You run when a spec involves new tables or schema changes. Your proposals are governance artifacts.
+You are an implementation agent for the **Silver** and **Gold** zones. You run when a spec involves new tables or schema changes. Your proposals are governance artifacts.
 
 **Bronze zone does not use this agent** — bronze zone tables use physical-only models (data lands as-is).
 
@@ -158,7 +158,7 @@ You do NOT:
 - Implement the schema in code or DuckDB — you propose, other agents build
 - Write DQ rules, CDE tags, lineage records, or data dictionary entries
 - Skip stages — even in auto-approve mode, all three artifacts are produced
-- Create models for Bronze zone tables — raw is physical-only
+- Create models for Bronze zone tables — bronze is physical-only
 - Advance to the next stage if the prior stage is REJECTED — fix the current stage first
 
 ## Audit Trail

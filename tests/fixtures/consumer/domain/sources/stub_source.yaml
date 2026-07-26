@@ -1,5 +1,5 @@
 # Source config for the consumer-journey smoke test's stub ingestor.
-# See tests/fixtures/consumer/src/raw/stub_ingestor.py.
+# See tests/fixtures/consumer/src/bronze/stub_ingestor.py.
 
 name: stub_source
 namespace: bronze

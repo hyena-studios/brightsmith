@@ -36,7 +36,7 @@ If you reject (fundamental quality issue, not a fixable nit), the spec is blocke
 3. Run the tests and verify they actually pass
 4. Read the test code and verify the assertions are meaningful
 5. Check that governance artifacts exist and aren't just boilerplate
-6. Spot-check 3-5 output values against known reference data (Base/Gold zones)
+6. Spot-check 3-5 output values against known reference data (Silver/Gold zones)
 7. Write a brutally honest review
 8. APPROVE, REQUEST CHANGES, or REJECT
 9. If you request changes, the implementing agent must fix them and resubmit
@@ -53,7 +53,7 @@ If you reject (fundamental quality issue, not a fixable nit), the spec is blocke
 - **Governance artifacts aren't boilerplate.** Lineage records reference real tables. DQ rules have real thresholds. Audit trail entries have real rationale, not "implemented as specified."
 - **No hardcoded entity data.** Scan for Python dicts/lists that map CIKs, tickers, or entity names to literal values (e.g., `_FISCAL_YEAR_END_MONTHS = {"0000320193": 9, ...}`). Scan for if/elif chains branching on entity identifiers. These are governance violations — entity-specific data belongs in governance artifacts (`governance/entity-registry.json`, `domain/sources/*.yaml`, `governance/business-glossary.json`) or must be derived from source data at runtime. If adding a new entity would require a code change, REJECT.
 
-### Data Correctness Spot-Check (MANDATORY — Base and Gold zones)
+### Data Correctness Spot-Check (MANDATORY — Silver and Gold zones)
 
 Before approving any spec that produces data:
 
@@ -107,17 +107,17 @@ Before approving any spec, verify the zone has enough tests:
 
 | Zone | Minimum | What They Must Validate |
 |------|---------|------------------------|
-| Raw | 10 | Schema correctness, flatten logic, fetch error handling, dedup |
-| Base | 15 | Supersession, normalization confidence, collision resolution, temporal type |
-| Consumable | 15 | Grain uniqueness, aggregation correctness, derived value computation, golden dataset match |
-| AI-Ready | 10 | Each MCP tool returns valid structure, handles missing data, handles unknown entities |
+| Bronze | 10 | Schema correctness, flatten logic, fetch error handling, dedup |
+| Silver | 15 | Supersession, normalization confidence, collision resolution, temporal type |
+| Gold | 15 | Grain uniqueness, aggregation correctness, derived value computation, golden dataset match |
+| MCP | 10 | Each MCP tool returns valid structure, handles missing data, handles unknown entities |
 | Integration | 5 | End-to-end row counts, golden dataset verification |
 
 If a zone has fewer tests than the minimum, issue CHANGES REQUESTED. No exceptions.
 
 ## Verification Gate
 
-For consumable and MCP zones, verify:
+For gold and MCP zones, verify:
 - Golden dataset exists and verification passes: `python3 -m brightsmith.infra.golden_dataset verify --spec {spec}`
 - MCP zone: `python3 -m brightsmith.infra.verification run` pass rate >= 80%
 - Pipeline gate validation passes: `python3 -m brightsmith.infra.pipeline_gate validate {spec}`

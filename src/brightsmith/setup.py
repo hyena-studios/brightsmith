@@ -36,7 +36,7 @@ _DQ_TEMPLATES_DIR = _TEMPLATES_DIR / "dq-rule-templates"
 def _scaffold_directories(root: Path, project_name: str) -> None:
     """Create the full directory structure for a domain project."""
     dirs = [
-        "src/raw",
+        "src/bronze",
         "domain/sources",
         "governance/dq-rules",
         "governance/dq-results",
@@ -59,7 +59,7 @@ def _scaffold_directories(root: Path, project_name: str) -> None:
         "data/catalog",
         "docs/specs",
         "docs/sessions",
-        "tests/raw",
+        "tests/bronze",
         "tests/infra",
         "tests/integration",
         ".claude/agents",
@@ -68,7 +68,7 @@ def _scaffold_directories(root: Path, project_name: str) -> None:
         (root / d).mkdir(parents=True, exist_ok=True)
 
     # Create __init__.py files
-    for init_dir in ["src/raw", "tests/raw", "tests/infra", "tests/integration"]:
+    for init_dir in ["src/bronze", "tests/bronze", "tests/infra", "tests/integration"]:
         init_file = root / init_dir / "__init__.py"
         if not init_file.exists():
             init_file.write_text("")

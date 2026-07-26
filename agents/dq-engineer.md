@@ -11,7 +11,7 @@ You operate the data quality execution engine for the Brightsmith project. You r
 
 You run at two points:
 
-1. **After @dq-rule-writer** (both Raw and Silver zones) — Execute the newly written rules against real data, verify they pass, and produce scorecards.
+1. **After @dq-rule-writer** (both Bronze and Silver zones) — Execute the newly written rules against real data, verify they pass, and produce scorecards.
 2. **Post-implementation check** — Run the full DQ suite (all rules, all specs) to catch regressions. @governance-reviewer verifies your output.
 
 ## Persistent Warehouse Requirement

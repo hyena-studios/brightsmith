@@ -29,7 +29,7 @@ from typing import Any
 import duckdb
 
 from brightsmith import config
-from brightsmith.infra.governance.serializers import ZONE_ALIASES, normalize_table_name
+from brightsmith.infra.governance.serializers import normalize_table_name
 from brightsmith.infra.iceberg_setup import get_catalog
 
 logger = logging.getLogger(__name__)
@@ -202,10 +202,8 @@ def evaluate_threshold(raw_result: Any, threshold_expr: str) -> tuple[bool, str]
 # SQL execution
 # ---------------------------------------------------------------------------
 
-# Known Iceberg namespaces in the project (zones).
-# Canonical names: bronze, silver, gold, mcp.
-# Aliases accepted at boundaries: raw→bronze, base→silver, consumable→gold, ai_ready→mcp.
-_KNOWN_NAMESPACES = {"bronze", "silver", "gold", "mcp", "raw", "base", "consumable", "ai_ready"}
+# Known Iceberg namespaces in the project (the medallion zones).
+_KNOWN_NAMESPACES = {"bronze", "silver", "gold", "mcp"}
 
 # Matches namespace.table references in SQL (e.g., bronze.financial_facts,
 # gold.revenue_2024). Namespaces are known-lowercase words (validated against
@@ -215,33 +213,73 @@ _KNOWN_NAMESPACES = {"bronze", "silver", "gold", "mcp", "raw", "base", "consumab
 # e.g. "revenue_2024", silently leaving the view unregistered).
 _TABLE_REF_RE = re.compile(r"\b([a-z][a-z0-9_]*)\.([a-z][a-z0-9_]*)\b")
 
+# A single-quoted SQL string literal, where a doubled '' escapes an inner quote.
+# Used to isolate literal text so table-ref detection/rewriting never touches a
+# namespace.table pattern that is really part of a string value (e.g. the literal
+# 'bronze.holdings.market_value' in a `value_source = '...'` comparison).
+_STRING_LITERAL_RE = re.compile(r"'(?:[^']|'')*'")
+
+
+def _split_sql_literals(sql: str) -> list[tuple[str, bool]]:
+    """Split SQL into (segment, is_string_literal) parts.
+
+    Callers process only the non-literal (code) segments, so a namespace.table
+    token appearing inside a single-quoted string literal is left untouched.
+    """
+    parts: list[tuple[str, bool]] = []
+    last = 0
+    for m in _STRING_LITERAL_RE.finditer(sql):
+        if m.start() > last:
+            parts.append((sql[last:m.start()], False))
+        parts.append((m.group(), True))
+        last = m.end()
+    if last < len(sql):
+        parts.append((sql[last:], False))
+    return parts
+
 
 def _extract_table_refs(sql: str) -> list[tuple[str, str]]:
     """Extract (namespace, table) pairs from SQL text.
 
     Only matches references where the namespace is a known Iceberg zone
-    (canonical: bronze/silver/gold/mcp; aliases: raw/base/consumable/ai_ready).
-    This avoids false positives from alias.column references like r.cik or m.status.
+    (bronze/silver/gold/mcp). This avoids false positives from SQL
+    table-alias.column references like r.cik or m.status, and from
+    namespace.table tokens inside string literals (e.g. a provenance value
+    'bronze.holdings.market_value') which are string data, not table refs.
     """
     refs = []
     seen = set()
-    for ns, tbl in _TABLE_REF_RE.findall(sql):
-        if ns not in _KNOWN_NAMESPACES:
+    for segment, is_literal in _split_sql_literals(sql):
+        if is_literal:
             continue
-        key = (ns, tbl)
-        if key not in seen:
-            seen.add(key)
-            refs.append(key)
+        for ns, tbl in _TABLE_REF_RE.findall(segment):
+            if ns not in _KNOWN_NAMESPACES:
+                continue
+            key = (ns, tbl)
+            if key not in seen:
+                seen.add(key)
+                refs.append(key)
     return refs
 
 
 def _rewrite_sql(sql: str, table_refs: list[tuple[str, str]]) -> str:
-    """Rewrite SQL to replace namespace.table with namespace_table view names."""
-    rewritten = sql
-    for ns, tbl in table_refs:
-        view_name = f"{ns}_{tbl}"
-        rewritten = rewritten.replace(f"{ns}.{tbl}", view_name)
-    return rewritten
+    """Rewrite SQL to replace namespace.table with namespace_table view names.
+
+    The rewrite is confined to non-literal segments (string literals are copied
+    verbatim, so a value like 'bronze.holdings.market_value' is preserved) and is
+    word-boundary-anchored via ``_TABLE_REF_RE`` (so ``silver.foo`` never corrupts
+    a longer ``silver.foo_bar`` reference).
+    """
+    wanted = {(ns, tbl) for ns, tbl in table_refs}
+
+    def _sub(m: re.Match) -> str:
+        ns, tbl = m.group(1), m.group(2)
+        return f"{ns}_{tbl}" if (ns, tbl) in wanted else m.group(0)
+
+    out = []
+    for segment, is_literal in _split_sql_literals(sql):
+        out.append(segment if is_literal else _TABLE_REF_RE.sub(_sub, segment))
+    return "".join(out)
 
 
 def execute_sql_rule(rule: dict, con: duckdb.DuckDBPyConnection) -> dict:
@@ -321,8 +359,7 @@ def _register_iceberg_views(
     views = []
     for ns, tbl in table_refs:
         view_name = f"{ns}_{tbl}"
-        canonical_ns = ZONE_ALIASES.get(ns, ns)
-        catalog_ns = f"shadow_{canonical_ns}" if shadow else canonical_ns
+        catalog_ns = f"shadow_{ns}" if shadow else ns
         try:
             iceberg_table = catalog.load_table(f"{catalog_ns}.{tbl}")
             metadata_path = iceberg_table.metadata_location
@@ -511,6 +548,7 @@ def _get_rule_priority(rule_id: str, rules: list[dict]) -> str:
 
 def _write_governance_results(run_result: dict, rules: list[dict]) -> None:
     """Write DQ run and rule results to Iceberg governance tables."""
+    from brightsmith.infra.governance.sync import _last_known_status
     from brightsmith.infra.governance_db import write_dq_rule_results, write_dq_run, write_spec_registry
 
     spec = run_result.get("spec") or "all"
@@ -560,10 +598,15 @@ def _write_governance_results(run_result: dict, rules: list[dict]) -> None:
     write_dq_rule_results(run_id, spec, enriched_results)
 
     if spec != "all":
+        # The registry's own latest status (e.g. a staff-engineer-authored
+        # COMPLETE) is the only place a terminal status can come from — carry
+        # it forward instead of hardcoding IN_PROGRESS, or every DQ run would
+        # clobber it back.
+        status = _last_known_status(spec) or "IN_PROGRESS"
         write_spec_registry(
             spec_name=spec,
             zone="",
-            status="IN_PROGRESS",
+            status=status,
             output_tables=sorted(tables),
             updated_by="@dq-engineer",
             dq_score_pct=score,

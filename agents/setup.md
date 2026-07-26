@@ -34,7 +34,7 @@ Everything else, infer or default:
 ```
 {project-name}/
 ├── src/
-│   └── raw/
+│   └── bronze/
 │       ├── __init__.py
 │       └── {source}_ingestor.py    Concrete BaseIngestor subclass (skeleton)
 ├── domain/
@@ -61,15 +61,15 @@ Everything else, infer or default:
 │   ├── standards/
 │   └── domains/
 ├── data/                           Gitignored
-│   ├── raw/
+│   ├── bronze/
 │   │   └── iceberg_warehouse/
 │   └── catalog/
 ├── docs/
 │   ├── specs/
-│   │   └── raw-ingest-{source}.md  First spec (drafted by you)
+│   │   └── bronze-ingest-{source}.md  First spec (drafted by you)
 │   └── sessions/
 ├── tests/
-│   ├── raw/
+│   ├── bronze/
 │   │   └── test_{source}_ingestor.py  Skeleton test
 │   └── infra/
 ├── .claude/
@@ -130,7 +130,7 @@ from pyiceberg.types import (
     TimestampType,
 )
 
-from brightsmith.raw.base_ingestor import BaseIngestor
+from brightsmith.bronze.base_ingestor import BaseIngestor
 
 
 class {SourceName}Ingestor(BaseIngestor):
@@ -163,13 +163,13 @@ class {SourceName}Ingestor(BaseIngestor):
 
 ### First Spec
 
-Draft `docs/specs/raw-ingest-{source}.md` as the first spec:
+Draft `docs/specs/bronze-ingest-{source}.md` as the first spec:
 
 ```markdown
-# Spec: raw-ingest-{source}
+# Spec: bronze-ingest-{source}
 
 **Status:** DRAFT
-**Zone:** Raw
+**Zone:** Bronze
 **Primary Agent:** @primary-agent
 **Created:** {date}
 
@@ -177,7 +177,7 @@ Draft `docs/specs/raw-ingest-{source}.md` as the first spec:
 Ingest {source description} into the bronze zone as the first step in the Brightsmith pipeline.
 
 ## Success Criteria
-- [ ] Raw data lands in Iceberg table `raw.{source_table}`
+- [ ] Source data lands in Iceberg table `bronze.{source_table}`
 - [ ] Dedup prevents duplicate records on subsequent runs
 - [ ] Metadata fields populated (ingested_at, source_url, source_method, load_date)
 - [ ] @data-analyst EDA report produced
@@ -192,20 +192,20 @@ Ingest {source description} into the bronze zone as the first step in the Bright
 
 ## Technical Design
 
-### Iceberg Table: raw.{source_table}
+### Iceberg Table: bronze.{source_table}
 - **Grain:** One row per {TBD — data analyst will determine}
 - **Dedup grain:** [{fields}]
 
 ### Ingestor
 - **Class:** {SourceName}Ingestor (extends BaseIngestor)
-- **Location:** src/raw/{source}_ingestor.py
+- **Location:** src/bronze/{source}_ingestor.py
 
 ## Agent Workflow
 1. @governance-reviewer — Pre-implementation review
 2. @primary-agent — Implement ingestor (fetch, flatten, get_schema)
 3. @data-analyst — EDA + domain discovery
 4. @domain-context — Synthesize domain knowledge
-5. @dq-rule-writer — Write raw DQ rules from EDA
+5. @dq-rule-writer — Write bronze DQ rules from EDA
 6. @dq-engineer — Execute rules, produce scorecard
 7. @lineage-tracker — OpenLineage capture
 8. @cde-tagger — Initial CDE mapping
@@ -217,12 +217,12 @@ Ingest {source description} into the bronze zone as the first step in the Bright
 To be written by @dq-rule-writer based on @data-analyst EDA findings.
 
 ## Governance Artifacts
-- [ ] EDA report: `governance/eda/raw-{source}-eda.md`
+- [ ] EDA report: `governance/eda/bronze-{source}-eda.md`
 - [ ] Domain context: `governance/domain-context.md`
-- [ ] DQ rules: `governance/dq-rules/raw-ingest-{source}.json`
-- [ ] DQ scorecard: `governance/dq-scorecards/raw-ingest-{source}-scorecard.md`
-- [ ] Lineage: `governance/lineage/raw-ingest-{source}-{timestamp}.json`
-- [ ] Data dictionary entries for all raw table fields
+- [ ] DQ rules: `governance/dq-rules/bronze-ingest-{source}.json`
+- [ ] DQ scorecard: `governance/dq-scorecards/bronze-ingest-{source}-scorecard.md`
+- [ ] Lineage: `governance/lineage/bronze-ingest-{source}-{timestamp}.json`
+- [ ] Data dictionary entries for all bronze table fields
 ```
 
 ### .gitignore

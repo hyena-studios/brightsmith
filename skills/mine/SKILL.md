@@ -71,8 +71,8 @@ After the pipeline gate validates successfully, gather real stats and print a ce
 
 Congratulations! You've mined raw ore from the source and forged it into bronze.
 
-📊 Tables: [count raw.* tables in Iceberg catalog]
-📏 Rows: [total row count across raw tables]
+📊 Tables: [count bronze.* tables in Iceberg catalog]
+📏 Rows: [total row count across bronze tables]
 🔍 DQ Rules: [count rules in governance/dq-rules/ for this spec] across [count unique dimensions] dimensions
 🛡️ Chaos Monkey: [X] hardening cycles survived
 📖 Domain Context: governance/domain-context.md
