@@ -211,6 +211,79 @@ def test_sync_defaults_brand_new_spec_to_in_progress(gov_project):
     assert specs["neverseen"]["status"] == "IN_PROGRESS"
 
 
+def _write_pipeline_state_no_zone_or_tables(spec: str) -> None:
+    """A pipeline-state file missing both 'zone' and 'output_tables' keys --
+    the same defaulted shape a stale/legacy state file or a blank re-sync
+    would produce."""
+    ps_dir = config.PIPELINE_STATE_DIR
+    ps_dir.mkdir(parents=True, exist_ok=True)
+    (ps_dir / f"{spec}-pipeline.json").write_text(json.dumps({
+        "spec": spec,
+        "steps": {
+            "staff-engineer": {"status": "COMPLETED", "agent": "@staff-engineer",
+                               "completed_at": "2026-07-20T00:00:00+00:00"},
+        },
+        "skipped_steps": {},
+        "approvals": {},
+    }))
+
+
+def test_sync_carries_forward_zone_and_output_tables_when_state_has_neither(gov_project):
+    """A pipeline-state file with no 'zone'/'output_tables' keys must not blank
+    a real zone and output_tables an agent already wrote directly to
+    spec_registry (the reported bug: DQ runs blanking both fields)."""
+    from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+
+    write_spec_registry(
+        spec_name="zt-carry", zone="gold", status="COMPLETE",
+        output_tables=["gold.portfolio_exposure"], updated_by="@staff-engineer",
+    )
+    _write_pipeline_state_no_zone_or_tables("zt-carry")
+
+    sync_from_files()
+
+    specs = {s["spec_name"]: s for s in get_current_specs()}
+    assert specs["zt-carry"]["zone"] == "gold"
+    assert json.loads(specs["zt-carry"]["output_tables"]) == ["gold.portfolio_exposure"]
+
+
+def test_sync_heals_zone_and_output_tables_on_rerun_instead_of_re_clobbering(gov_project):
+    """Re-running sync repeatedly after the fix must keep restoring the true
+    zone/output_tables, not get stuck on an earlier (unfixed) sync's blank
+    row -- mirrors test_sync_heals_on_rerun_instead_of_re_clobbering for
+    status."""
+    from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+
+    write_spec_registry(
+        spec_name="zt-heal", zone="gold", status="COMPLETE",
+        output_tables=["gold.portfolio_exposure"], updated_by="@staff-engineer",
+    )
+    _write_pipeline_state_no_zone_or_tables("zt-heal")
+
+    sync_from_files()
+    sync_from_files()
+    sync_from_files()
+
+    specs = {s["spec_name"]: s for s in get_current_specs()}
+    assert specs["zt-heal"]["zone"] == "gold"
+    assert json.loads(specs["zt-heal"]["output_tables"]) == ["gold.portfolio_exposure"]
+
+
+def test_sync_defaults_brand_new_spec_zone_and_output_tables_to_empty(gov_project):
+    """The genuine case: a spec with no prior spec_registry row at all still
+    defaults zone/output_tables sensibly to empty -- carry-forward must not
+    break normal spec creation."""
+    from brightsmith.infra.governance_db import get_current_specs
+
+    _write_pipeline_state_no_zone_or_tables("zt-fresh")
+
+    sync_from_files()
+
+    specs = {s["spec_name"]: s for s in get_current_specs()}
+    assert specs["zt-fresh"]["zone"] == ""
+    assert json.loads(specs["zt-fresh"]["output_tables"]) == []
+
+
 # --- migrate_files_to_iceberg ---------------------------------------------
 
 

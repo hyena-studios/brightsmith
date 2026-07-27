@@ -548,7 +548,7 @@ def _get_rule_priority(rule_id: str, rules: list[dict]) -> str:
 
 def _write_governance_results(run_result: dict, rules: list[dict]) -> None:
     """Write DQ run and rule results to Iceberg governance tables."""
-    from brightsmith.infra.governance.sync import _last_known_status
+    from brightsmith.infra.governance.sync import _last_known_status, _last_known_value
     from brightsmith.infra.governance_db import write_dq_rule_results, write_dq_run, write_spec_registry
 
     spec = run_result.get("spec") or "all"
@@ -601,13 +601,19 @@ def _write_governance_results(run_result: dict, rules: list[dict]) -> None:
         # The registry's own latest status (e.g. a staff-engineer-authored
         # COMPLETE) is the only place a terminal status can come from — carry
         # it forward instead of hardcoding IN_PROGRESS, or every DQ run would
-        # clobber it back.
+        # clobber it back. dq_runner never has a zone signal of its own at
+        # all (rule files carry no zone), so zone always carries forward.
+        # output_tables comes from the rules' own "tables" metadata when
+        # present and non-empty; otherwise carry forward too rather than
+        # wiping a known table list to [].
         status = _last_known_status(spec) or "IN_PROGRESS"
+        zone = _last_known_value(spec, "zone") or ""
+        output_tables = sorted(tables) or _last_known_value(spec, "output_tables") or []
         write_spec_registry(
             spec_name=spec,
-            zone="",
+            zone=zone,
             status=status,
-            output_tables=sorted(tables),
+            output_tables=output_tables,
             updated_by="@dq-engineer",
             dq_score_pct=score,
             dq_rules_total=total,

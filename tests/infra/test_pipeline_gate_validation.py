@@ -1047,3 +1047,69 @@ def test_complete_step_does_not_clobber_staff_engineer_complete_status(tmp_path,
 
     specs = {s["spec_name"]: s for s in get_current_specs()}
     assert specs["clobber-1"]["status"] == "COMPLETE"
+
+
+# ---------------------------------------------------------------------------
+# spec_registry zone/output_tables carry-forward — init() and
+# _emit_governance_event() must not blank a zone/output_tables a human/agent
+# already wrote directly to spec_registry. output_tables in particular is
+# NEVER persisted into the pipeline-state JSON (nothing writes that key into
+# self._state), so every gate event used to emit output_tables=[] unconditionally.
+# ---------------------------------------------------------------------------
+
+
+def test_init_carries_forward_existing_output_tables(tmp_path, restore_config):
+    """Re-initializing a spec that already has known output_tables (written
+    directly, not via the gate) must not reset the list to []."""
+    restore_config.configure(project_root=tmp_path)
+    from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+    from brightsmith.infra.pipeline_gate import PipelineGate
+
+    write_spec_registry(
+        spec_name="init-carry-tables", zone="gold", status="COMPLETE",
+        output_tables=["gold.t"], updated_by="@staff-engineer",
+    )
+
+    gate = PipelineGate("init-carry-tables", state_dir=tmp_path)
+    gate.init(zone="gold")
+
+    specs = {s["spec_name"]: s for s in get_current_specs()}
+    assert json.loads(specs["init-carry-tables"]["output_tables"]) == ["gold.t"]
+
+
+def test_init_brand_new_spec_output_tables_defaults_to_empty(tmp_path, restore_config):
+    """The genuine case: a spec with no prior registry row at all still
+    defaults output_tables to [] — carry-forward must not break normal spec
+    creation."""
+    restore_config.configure(project_root=tmp_path)
+    from brightsmith.infra.governance_db import get_current_specs
+    from brightsmith.infra.pipeline_gate import PipelineGate
+
+    gate = PipelineGate("init-fresh-tables", state_dir=tmp_path)
+    gate.init(zone="bronze")
+
+    specs = {s["spec_name"]: s for s in get_current_specs()}
+    assert json.loads(specs["init-fresh-tables"]["output_tables"]) == []
+
+
+def test_complete_step_does_not_clobber_zone_and_output_tables(tmp_path, restore_config):
+    """Regression for the reported clobber bug: a gate-emitted step event
+    used to always write zone/output_tables straight from the pipeline-state
+    dict, which never carries output_tables and may lack zone on older state
+    files -- wiping out real values a human/agent already wrote directly to
+    spec_registry."""
+    restore_config.configure(project_root=tmp_path)
+    from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+
+    write_spec_registry(
+        spec_name="clobber-zt", zone="gold", status="COMPLETE",
+        output_tables=["gold.portfolio_exposure"], updated_by="@staff-engineer",
+    )
+
+    gate = _gold_gate(tmp_path, spec="clobber-zt")
+    del gate._state["zone"]  # simulate a state file that predates zone tracking
+    gate.complete_step("staff-engineer", output="")
+
+    specs = {s["spec_name"]: s for s in get_current_specs()}
+    assert specs["clobber-zt"]["zone"] == "gold"
+    assert json.loads(specs["clobber-zt"]["output_tables"]) == ["gold.portfolio_exposure"]

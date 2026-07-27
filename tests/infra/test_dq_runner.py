@@ -1165,3 +1165,72 @@ class TestSpecRegistryStatusCarryForward:
 
         specs = {s["spec_name"]: s for s in get_current_specs()}
         assert specs["dq-fresh-1"]["status"] == "IN_PROGRESS"
+
+
+class TestSpecRegistryZoneAndOutputTablesCarryForward:
+    """Regression for the reported clobber bug: dq_runner's
+    ``_write_governance_results`` hardcoded ``zone=""`` on every DQ run (it has
+    no zone signal of its own at all), and wrote ``output_tables`` from the DQ
+    rules' own "tables" metadata with no fallback -- blanking both fields on
+    any spec whose rule file declares no tables. Live-observed twice against
+    the finances domain project."""
+
+    def test_dq_run_does_not_clobber_zone_and_output_tables(self, gov_project):
+        import brightsmith.config as config
+        from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+
+        write_spec_registry(
+            spec_name="dq-clobber-zt", zone="gold", status="COMPLETE",
+            output_tables=["gold.portfolio_exposure"], updated_by="@staff-engineer",
+        )
+        _write_active_rule(config.DQ_RULES_DIR, "dq-clobber-zt")
+
+        run_rules(spec="dq-clobber-zt")
+
+        specs = {s["spec_name"]: s for s in get_current_specs()}
+        assert specs["dq-clobber-zt"]["zone"] == "gold"
+        assert json.loads(specs["dq-clobber-zt"]["output_tables"]) == ["gold.portfolio_exposure"]
+
+    def test_dq_run_on_brand_new_spec_zone_and_output_tables_default_to_empty(self, gov_project):
+        """The genuine case: a spec with no prior registry row at all still
+        defaults zone/output_tables sensibly to empty -- carry-forward must
+        not break normal spec creation."""
+        import brightsmith.config as config
+        from brightsmith.infra.governance_db import get_current_specs
+
+        _write_active_rule(config.DQ_RULES_DIR, "dq-fresh-zt")
+
+        run_rules(spec="dq-fresh-zt")
+
+        specs = {s["spec_name"]: s for s in get_current_specs()}
+        assert specs["dq-fresh-zt"]["zone"] == ""
+        assert json.loads(specs["dq-fresh-zt"]["output_tables"]) == []
+
+    def test_dq_run_uses_real_table_list_from_rule_when_present(self, gov_project):
+        """A rule file that DOES declare tables still drives output_tables as
+        before -- carry-forward is a fallback, not a override of real signal."""
+        import brightsmith.config as config
+        from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+
+        write_spec_registry(
+            spec_name="dq-real-tables", zone="gold", status="COMPLETE",
+            output_tables=["gold.stale"], updated_by="@staff-engineer",
+        )
+        (config.DQ_RULES_DIR / "dq-real-tables.json").write_text(json.dumps({
+            "spec": "dq-real-tables",
+            "tables": ["gold.portfolio_exposure"],
+            "rules": [{
+                "rule_id": "CF-002",
+                "category": "Validity",
+                "priority": "P2",
+                "description": "Trivial always-pass rule with a real table",
+                "sql": "SELECT 0",
+                "threshold": "result = 0",
+                "status": "active",
+            }],
+        }))
+
+        run_rules(spec="dq-real-tables")
+
+        specs = {s["spec_name"]: s for s in get_current_specs()}
+        assert json.loads(specs["dq-real-tables"]["output_tables"]) == ["gold.portfolio_exposure"]

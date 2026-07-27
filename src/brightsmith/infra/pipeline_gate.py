@@ -334,14 +334,20 @@ class PipelineGate:
         }
         self._save()
 
-        from brightsmith.infra.governance.sync import _last_known_status
+        from brightsmith.infra.governance.sync import _last_known_status, _last_known_value
         from brightsmith.infra.governance_db import write_spec_registry
 
+        # zone is the real value the caller just supplied -- init() is the
+        # authoritative place a spec's zone gets set, never a guess. But the
+        # pipeline-state JSON has no slot for output_tables (nothing ever
+        # writes one into self._state), so a re-init of an existing spec
+        # (e.g. a MINOR-change restart) must carry the known table list
+        # forward instead of wiping it back to [].
         write_spec_registry(
             spec_name=self.spec,
             zone=zone,
             status=_last_known_status(self.spec) or "IN_PROGRESS",
-            output_tables=[],
+            output_tables=_last_known_value(self.spec, "output_tables") or [],
             updated_by="pipeline-gate",
             pipeline_steps_total=len(steps),
             pipeline_steps_completed=0,
@@ -354,7 +360,7 @@ class PipelineGate:
         self, step_name: str, event_type: str, **kwargs,
     ) -> None:
         """Emit a pipeline event to Iceberg governance tables."""
-        from brightsmith.infra.governance.sync import _last_known_status
+        from brightsmith.infra.governance.sync import _last_known_status, _last_known_value
         from brightsmith.infra.governance_db import write_pipeline_event, write_spec_registry
 
         steps = self._state.get("steps", {})
@@ -380,11 +386,18 @@ class PipelineGate:
         # hardcoding IN_PROGRESS, or every gate event would clobber it back.
         completed = sum(1 for s in steps.values() if s.get("status") in ("COMPLETED", "SKIPPED"))
         status = self._state.get("status") or _last_known_status(self.spec) or "IN_PROGRESS"
+        # Same reasoning as status above: self._state carries a real "zone"
+        # only when init() set one (older state files may predate that), and
+        # never carries "output_tables" at all -- nothing ever writes that key
+        # into the state dict. Carry both forward from the registry instead of
+        # emitting the empty default on every single step event.
+        zone = self._state.get("zone", "") or _last_known_value(self.spec, "zone") or ""
+        output_tables = self._state.get("output_tables", []) or _last_known_value(self.spec, "output_tables") or []
         write_spec_registry(
             spec_name=self.spec,
-            zone=self._state.get("zone", ""),
+            zone=zone,
             status=status,
-            output_tables=self._state.get("output_tables", []),
+            output_tables=output_tables,
             updated_by=agent_id or "pipeline-gate",
             pipeline_step_current=step_name,
             pipeline_steps_total=len(steps),

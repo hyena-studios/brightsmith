@@ -48,6 +48,34 @@ def _last_known_status(spec_name: str) -> str | None:
     return rows[0]["status"] if rows else None
 
 
+def _last_known_value(spec_name: str, field: str) -> str | list[str] | None:
+    """Look up the spec's most recent non-empty ``zone`` or ``output_tables``.
+
+    Deliberately a different doctrine from ``_last_known_status`` above. A
+    guessed status (``IN_PROGRESS``) is itself a plausible real status, so the
+    only way to tell a guess from the truth is by writer identity (exclude
+    rows sync wrote). A guessed zone/output_tables, by contrast, is *always*
+    written as the empty value (``""`` / ``[]``) at every clobber site this
+    project has -- no writer ever has a legitimate reason to overwrite a known
+    zone or known table list with nothing. So the safe rule here is simpler
+    and writer-agnostic: find the latest row where the field isn't empty, no
+    matter who wrote it. A writer with a genuine new non-empty value is never
+    routed through this helper at all -- callers only fall back to it when
+    their own write has nothing to say, so a real update still wins outright.
+    """
+    empty_literal = "[]" if field == "output_tables" else ""
+    rows = _query_table("spec_registry", f"""
+        SELECT {field} FROM arrow_table
+        WHERE spec_name = $1 AND {field} != $2
+        ORDER BY updated_at DESC
+        LIMIT 1
+    """, [spec_name, empty_literal])
+    if not rows:
+        return None
+    value = rows[0][field]
+    return json.loads(value) if field == "output_tables" else value
+
+
 # ---------------------------------------------------------------------------
 # Sync: backfill from existing file artifacts
 #
@@ -203,7 +231,8 @@ def _sync_pipeline_state() -> dict:
                 completed = sum(1 for s in steps.values() if s.get("status") == "COMPLETED")
                 total_steps = len(steps)
                 spec_status = data.get("status") or _last_known_status(spec) or "IN_PROGRESS"
-                output_tables = data.get("output_tables", [])
+                zone = zone or _last_known_value(spec, "zone") or ""
+                output_tables = data.get("output_tables", []) or _last_known_value(spec, "output_tables") or []
 
                 result = write_spec_registry(
                     spec_name=spec, zone=zone, status=spec_status,
@@ -288,8 +317,8 @@ def _enrich_spec_registry() -> dict:
             try:
                 data = json.loads(path.read_text())
                 spec = data.get("spec", path.stem.replace("-pipeline", ""))
-                zone = data.get("zone", "")
-                output_tables = data.get("output_tables", [])
+                zone = data.get("zone", "") or _last_known_value(spec, "zone") or ""
+                output_tables = data.get("output_tables", []) or _last_known_value(spec, "output_tables") or []
 
                 # DQ scores from latest results file
                 dq_kwargs: dict = {}
