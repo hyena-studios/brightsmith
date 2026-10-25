@@ -1,9 +1,24 @@
 [project]
 name = "brightsmith"
-version = "0.4.0"
+version = "0.5.0"
 description = "AI agent data pipeline framework — Bronze to MCP with full governance"
 readme = "README.md"
 requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Jeff Cernauske" },
+]
+keywords = ["data-engineering", "data-governance", "iceberg", "mcp", "ai-agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
 dependencies = [
     "duckdb>=1.0",
     "fastavro>=1.9",
@@ -17,6 +32,12 @@ dependencies = [
     "pytz>=2026.1.post1",
     "pyyaml>=6.0.3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/hyena-studios/brightsmith"
+Documentation = "https://github.com/hyena-studios/brightsmith#readme"
+Changelog = "https://github.com/hyena-studios/brightsmith/blob/main/CHANGELOG.md"
+Issues = "https://github.com/hyena-studios/brightsmith/issues"
 
 [build-system]
 requires = ["hatchling"]

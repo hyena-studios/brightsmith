@@ -29,7 +29,7 @@ if [ "$1" = "-c" ]; then
   [ "${STUB_IMPORT_OK:-0}" = "1" ] && exit 0 || exit 1
 elif [ "$1" = "-m" ] && [ "$2" = "pip" ]; then
   if [ "${STUB_INSTALL_OK:-0}" = "1" ]; then
-    echo "Successfully installed brightsmith-0.4.0"
+    echo "Successfully installed brightsmith-0.5.0"
     exit 0
   fi
   if [ "${STUB_PEP668:-0}" = "1" ]; then
