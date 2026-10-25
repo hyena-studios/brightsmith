@@ -4,7 +4,7 @@
 # Copy this to domain/sources/my_source.yaml and customize.
 
 name: my_source
-namespace: raw
+namespace: bronze
 table: my_source_data
 
 # Entity IDs to fetch (key: id, value: label)

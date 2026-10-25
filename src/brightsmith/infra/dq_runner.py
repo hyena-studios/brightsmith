@@ -16,20 +16,39 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import duckdb
 
-from brightsmith.config import CATALOG_PATH, DQ_RESULTS_DIR, DQ_RULES_DIR, WAREHOUSE_PATH
-from brightsmith.infra.governance.serializers import ZONE_ALIASES, normalize_table_name
+from brightsmith import config
+from brightsmith.infra.governance.serializers import normalize_table_name
 from brightsmith.infra.iceberg_setup import get_catalog
 
-_COMPAT_DQ_RESULTS_DIR = DQ_RESULTS_DIR
+logger = logging.getLogger(__name__)
+
+# Legacy module-level names. These stay assignable module attributes so existing
+# tests (and domain packs) can patch them directly. Left at the _UNSET sentinel,
+# they resolve from the live brightsmith.config at call time — so config.configure()
+# takes effect even though this module was imported earlier (audit finding A3).
+_UNSET = object()
+DQ_RULES_DIR = _UNSET
+DQ_RESULTS_DIR = _UNSET
+WAREHOUSE_PATH = _UNSET
+CATALOG_PATH = _UNSET
+
+
+def _cfg(name):
+    """Resolve a config path: a patched module-level value wins, else live config."""
+    val = globals()[name]
+    return getattr(config, name) if val is _UNSET else val
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +66,7 @@ def load_rules(spec: str | None = None) -> list[dict]:
         List of rule dicts, each augmented with 'spec' and 'tables' from the file.
     """
     rules = []
-    for path in sorted(DQ_RULES_DIR.glob("*.json")):
+    for path in sorted(_cfg("DQ_RULES_DIR").glob("*.json")):
         data = json.loads(path.read_text())
         file_spec = data.get("spec", path.stem)
         if spec and file_spec != spec:
@@ -56,9 +75,60 @@ def load_rules(spec: str | None = None) -> list[dict]:
         for rule in data.get("rules", []):
             rule.setdefault("spec", file_spec)
             rule.setdefault("tables", tables)
-            rule.setdefault("status", "active")
+            # BREAKING (audit finding M3/W5, CHANGELOG 0.5.0): a rule
+            # that omits `status` used to default to "active" and bypass the
+            # PROPOSED -> APPROVED -> ACTIVE lifecycle entirely. It now
+            # defaults to "proposed" like any freshly-authored rule — see
+            # _gate_rule_lifecycle for what that means for execution.
+            rule.setdefault("status", "proposed")
             rules.append(rule)
     return rules
+
+
+def _gate_rule_lifecycle(rules: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Partition rules into (executable, skipped) per the DQ rule lifecycle
+    (PROPOSED -> APPROVED -> ACTIVE, audit finding M3/W5).
+
+    APPROVED and ACTIVE rules always execute. PROPOSED rules — including
+    status-less rules, which now default to "proposed" (see ``load_rules``)
+    instead of silently defaulting to "active" — execute only when
+    ``brightsmith.config.REQUIRE_HUMAN_APPROVAL`` is False, in which case
+    they auto-advance to approved for the purposes of THIS run (matching
+    CLAUDE.md's documented toggle semantics: "DQ rule approval respects
+    REQUIRE_HUMAN_APPROVAL — when False, proposed rules auto-advance to
+    approved"). The auto-advance is execution-time only; it does not rewrite
+    the rules file. A durable status change still goes through
+    ``approve_rules``/the ``approve`` CLI, so ``dq_runner status`` continues
+    to show the rule's real on-disk lifecycle state.
+
+    When REQUIRE_HUMAN_APPROVAL is True, PROPOSED (and status-less) rules do
+    NOT execute — they land in the second, skipped list instead.
+
+    Returns:
+        (executable_rules, skipped_rules)
+    """
+    executable: list[dict] = []
+    skipped: list[dict] = []
+    for rule in rules:
+        status = str(rule.get("status", "proposed")).lower()
+        auto_advance = status == "proposed" and not config.REQUIRE_HUMAN_APPROVAL
+        if status in ("approved", "active") or auto_advance:
+            executable.append(rule)
+        else:
+            skipped.append(rule)
+    return executable, skipped
+
+
+def _warn_skipped_proposed_rules(skipped: list[dict]) -> None:
+    """Log ONE loud warning naming every rule the lifecycle gate skipped,
+    plus the exact command to approve them — never a silent no-op."""
+    rule_ids = [r.get("rule_id", "?") for r in skipped]
+    logger.warning(
+        "DQ rule lifecycle: %d rule(s) NOT executed — PROPOSED and "
+        "REQUIRE_HUMAN_APPROVAL is True (M3/W5). Skipped: %s. Approve with: "
+        "python -m brightsmith.infra.dq_runner approve %s",
+        len(rule_ids), ", ".join(rule_ids), " ".join(rule_ids),
+    )
 
 
 def _save_rules_file(path: Path, data: dict) -> None:
@@ -85,7 +155,7 @@ _THRESHOLD_RE = re.compile(
 )
 
 
-def evaluate_threshold(raw_result: object, threshold_expr: str) -> tuple[bool, str]:
+def evaluate_threshold(raw_result: Any, threshold_expr: str) -> tuple[bool, str]:
     """Evaluate a threshold expression against a query result.
 
     Args:
@@ -132,39 +202,84 @@ def evaluate_threshold(raw_result: object, threshold_expr: str) -> tuple[bool, s
 # SQL execution
 # ---------------------------------------------------------------------------
 
-# Known Iceberg namespaces in the project (zones)
-_KNOWN_NAMESPACES = {"bronze", "silver", "gold", "mcp", "raw", "base", "consumable", "ai_ready"}
+# Known Iceberg namespaces in the project (the medallion zones).
+_KNOWN_NAMESPACES = {"bronze", "silver", "gold", "mcp"}
 
-# Matches namespace.table references in SQL (e.g., base.financial_facts)
-_TABLE_REF_RE = re.compile(r"\b([a-z_]+)\.([a-z_]+)\b")
+# Matches namespace.table references in SQL (e.g., bronze.financial_facts,
+# gold.revenue_2024). Namespaces are known-lowercase words (validated against
+# _KNOWN_NAMESPACES below); table names may contain digits, so the table half
+# allows [a-z0-9_] with a leading letter (audit finding M4/T6a — the previous
+# `[a-z_]+` pattern couldn't match a table name with a digit in it at all,
+# e.g. "revenue_2024", silently leaving the view unregistered).
+_TABLE_REF_RE = re.compile(r"\b([a-z][a-z0-9_]*)\.([a-z][a-z0-9_]*)\b")
+
+# A single-quoted SQL string literal, where a doubled '' escapes an inner quote.
+# Used to isolate literal text so table-ref detection/rewriting never touches a
+# namespace.table pattern that is really part of a string value (e.g. the literal
+# 'bronze.holdings.market_value' in a `value_source = '...'` comparison).
+_STRING_LITERAL_RE = re.compile(r"'(?:[^']|'')*'")
+
+
+def _split_sql_literals(sql: str) -> list[tuple[str, bool]]:
+    """Split SQL into (segment, is_string_literal) parts.
+
+    Callers process only the non-literal (code) segments, so a namespace.table
+    token appearing inside a single-quoted string literal is left untouched.
+    """
+    parts: list[tuple[str, bool]] = []
+    last = 0
+    for m in _STRING_LITERAL_RE.finditer(sql):
+        if m.start() > last:
+            parts.append((sql[last:m.start()], False))
+        parts.append((m.group(), True))
+        last = m.end()
+    if last < len(sql):
+        parts.append((sql[last:], False))
+    return parts
 
 
 def _extract_table_refs(sql: str) -> list[tuple[str, str]]:
     """Extract (namespace, table) pairs from SQL text.
 
-    Only matches references where the namespace is a known Iceberg namespace
-    (raw, base, consumable, ai_ready). This avoids false positives from
-    alias.column references like r.cik or m.status.
+    Only matches references where the namespace is a known Iceberg zone
+    (bronze/silver/gold/mcp). This avoids false positives from SQL
+    table-alias.column references like r.cik or m.status, and from
+    namespace.table tokens inside string literals (e.g. a provenance value
+    'bronze.holdings.market_value') which are string data, not table refs.
     """
     refs = []
     seen = set()
-    for ns, tbl in _TABLE_REF_RE.findall(sql):
-        if ns not in _KNOWN_NAMESPACES:
+    for segment, is_literal in _split_sql_literals(sql):
+        if is_literal:
             continue
-        key = (ns, tbl)
-        if key not in seen:
-            seen.add(key)
-            refs.append(key)
+        for ns, tbl in _TABLE_REF_RE.findall(segment):
+            if ns not in _KNOWN_NAMESPACES:
+                continue
+            key = (ns, tbl)
+            if key not in seen:
+                seen.add(key)
+                refs.append(key)
     return refs
 
 
 def _rewrite_sql(sql: str, table_refs: list[tuple[str, str]]) -> str:
-    """Rewrite SQL to replace namespace.table with namespace_table view names."""
-    rewritten = sql
-    for ns, tbl in table_refs:
-        view_name = f"{ns}_{tbl}"
-        rewritten = rewritten.replace(f"{ns}.{tbl}", view_name)
-    return rewritten
+    """Rewrite SQL to replace namespace.table with namespace_table view names.
+
+    The rewrite is confined to non-literal segments (string literals are copied
+    verbatim, so a value like 'bronze.holdings.market_value' is preserved) and is
+    word-boundary-anchored via ``_TABLE_REF_RE`` (so ``silver.foo`` never corrupts
+    a longer ``silver.foo_bar`` reference).
+    """
+    wanted = {(ns, tbl) for ns, tbl in table_refs}
+
+    def _sub(m: re.Match) -> str:
+        ns, tbl = m.group(1), m.group(2)
+        return f"{ns}_{tbl}" if (ns, tbl) in wanted else m.group(0)
+
+    out = []
+    for segment, is_literal in _split_sql_literals(sql):
+        out.append(segment if is_literal else _TABLE_REF_RE.sub(_sub, segment))
+    return "".join(out)
 
 
 def execute_sql_rule(rule: dict, con: duckdb.DuckDBPyConnection) -> dict:
@@ -198,6 +313,7 @@ def execute_sql_rule(rule: dict, con: duckdb.DuckDBPyConnection) -> dict:
             "rule_id": rule_id,
             "spec": rule.get("spec"),
             "category": rule.get("category"),
+            "priority": rule.get("priority", "P3"),
             "passed": passed,
             "raw_value": raw_value,
             "threshold": threshold,
@@ -205,23 +321,28 @@ def execute_sql_rule(rule: dict, con: duckdb.DuckDBPyConnection) -> dict:
             "violations": 0 if passed else (raw_value if isinstance(raw_value, int) else None),
             "execution_time_ms": elapsed,
             "error": None,
-            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "executed_at": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
-        elapsed = int((time.monotonic() - start) * 1000)
-        return {
-            "rule_id": rule_id,
-            "spec": rule.get("spec"),
-            "category": rule.get("category"),
-            "passed": False,
-            "raw_value": None,
-            "threshold": threshold,
-            "detail": None,
-            "violations": None,
-            "execution_time_ms": elapsed,
-            "error": str(e),
-            "executed_at": datetime.now(timezone.utc).isoformat(),
-        }
+        return _errored_result(rule, str(e), int((time.monotonic() - start) * 1000))
+
+
+def _errored_result(rule: dict, error: str, elapsed_ms: int = 0) -> dict:
+    """An errored rule is a FAILED rule (decision D3), with the cause recorded."""
+    return {
+        "rule_id": rule["rule_id"],
+        "spec": rule.get("spec"),
+        "category": rule.get("category"),
+        "priority": rule.get("priority", "P3"),
+        "passed": False,
+        "raw_value": None,
+        "threshold": rule["threshold"],
+        "detail": None,
+        "violations": None,
+        "execution_time_ms": elapsed_ms,
+        "error": error,
+        "executed_at": datetime.now(UTC).isoformat(),
+    }
 
 
 def _register_iceberg_views(
@@ -244,8 +365,7 @@ def _register_iceberg_views(
     views = []
     for ns, tbl in table_refs:
         view_name = f"{ns}_{tbl}"
-        canonical_ns = ZONE_ALIASES.get(ns, ns)
-        catalog_ns = f"shadow_{canonical_ns}" if shadow else canonical_ns
+        catalog_ns = f"shadow_{ns}" if shadow else ns
         try:
             iceberg_table = catalog.load_table(f"{catalog_ns}.{tbl}")
             metadata_path = iceberg_table.metadata_location
@@ -300,8 +420,11 @@ def validate_after_write(
         rules = load_rules(spec=spec)
         rule_priorities = {r["rule_id"]: r.get("priority", "P3") for r in rules}
         for r in result["results"]:
-            if not r["passed"] and not r.get("error") and rule_priorities.get(r["rule_id"]) == "P0":
-                # Only real failures, not errors from missing tables
+            if not r["passed"] and rule_priorities.get(r["rule_id"]) == "P0":
+                # Both real failures AND errors block: a P0 rule that cannot execute
+                # (e.g. missing table, broken SQL) is not a pass.  The operator must
+                # either fix the root cause or use the `acknowledge` CLI to explicitly
+                # clear the error with documented justification.
                 p0_failures.append(r)
         if p0_failures:
             raise DQValidationError(p0_failures, result)
@@ -319,6 +442,7 @@ def run_rules(
     priority: str | None = None,
     catalog=None,
     shadow: bool = False,
+    rule_filter: Callable[[dict], bool] | None = None,
 ) -> dict:
     """Execute DQ rules against real Iceberg data.
 
@@ -327,17 +451,22 @@ def run_rules(
         priority: Filter to this priority level only (e.g., "P0").
         catalog: PyIceberg catalog. If None, loads from default paths.
         shadow: If True, resolve tables from shadow_ namespace (chaos monkey).
+        rule_filter: Optional predicate applied after status/priority
+            filtering. Only rules for which it returns True are executed
+            (and therefore only they appear in the returned results and get
+            written to governance). Used by ``run.py``'s ``_run_dq_for_zone``
+            (audit finding M2/W4) so a single ``run_rules()`` invocation can
+            be scoped to one zone's rules instead of the caller discarding
+            non-matching results from a run of EVERY rule — a 4-zone
+            pipeline no longer executes every rule 4x.
 
     Returns:
         Run result dict with run_id, summary stats, and per-rule results.
     """
     if catalog is None:
-        catalog = get_catalog(WAREHOUSE_PATH, CATALOG_PATH)
+        catalog = get_catalog(_cfg("WAREHOUSE_PATH"), _cfg("CATALOG_PATH"))
 
     rules = load_rules(spec=spec)
-
-    # Filter by status — only APPROVED and ACTIVE rules execute
-    rules = [r for r in rules if r.get("status", "active").lower() in ("approved", "active")]
 
     # Filter by priority if specified
     if priority:
@@ -345,6 +474,21 @@ def run_rules(
 
     # Filter to SQL-based rules only (skip implementation-only rules)
     sql_rules = [r for r in rules if "sql" in r]
+
+    # Optional caller-supplied predicate (e.g. "only rules touching this
+    # zone") — applied before the lifecycle gate so a per-zone call only
+    # executes, auto-advances, and warns about rules actually in its scope.
+    if rule_filter is not None:
+        sql_rules = [r for r in sql_rules if rule_filter(r)]
+
+    # DQ rule lifecycle gate (PROPOSED -> APPROVED -> ACTIVE, audit finding
+    # M3/W5): only APPROVED/ACTIVE rules execute unconditionally; PROPOSED
+    # rules (including status-less rules — see load_rules) execute only when
+    # REQUIRE_HUMAN_APPROVAL is False. Anything skipped is reported loudly —
+    # never a silent no-op.
+    sql_rules, skipped_rules = _gate_rule_lifecycle(sql_rules)
+    if skipped_rules:
+        _warn_skipped_proposed_rules(skipped_rules)
 
     # Collect all table references across all rules
     all_table_refs = []
@@ -354,38 +498,46 @@ def run_rules(
             if ref not in all_table_refs:
                 all_table_refs.append(ref)
 
-    # Create DuckDB connection with iceberg extension for iceberg_scan()
-    # Tables that can't be loaded (e.g., in test environments) are skipped —
-    # rules referencing them will get individual SQL errors instead of crashing
+    # Create DuckDB connection with iceberg extension for iceberg_scan().
+    # A table that can't be loaded fails every rule that references it, with the
+    # load error as the rule's error — not a generic "view does not exist" from
+    # DuckDB that hides why (2026-09-08 audit Phase 0 item 8).
     con = duckdb.connect()
-    con.install_extension("iceberg")
-    con.load_extension("iceberg")
-    for ref in all_table_refs:
-        try:
-            _register_iceberg_views(con, [ref], catalog, shadow=shadow)
-        except RuntimeError:
-            pass  # Rule will fail with a SQL error when it references this table
+    try:
+        con.install_extension("iceberg")
+        con.load_extension("iceberg")
+        unloadable: dict[tuple[str, str], str] = {}
+        for ref in all_table_refs:
+            try:
+                _register_iceberg_views(con, [ref], catalog, shadow=shadow)
+            except RuntimeError as e:
+                unloadable[ref] = str(e)
 
-    # Execute each rule
-    results = []
-    for rule in sql_rules:
-        # Rewrite SQL to use view names
-        table_refs = _extract_table_refs(rule["sql"])
-        rewritten_sql = _rewrite_sql(rule["sql"], table_refs)
-        rule_copy = {**rule, "sql": rewritten_sql}
-        result = execute_sql_rule(rule_copy, con)
-        results.append(result)
-
-    con.close()
+        # Execute each rule
+        results = []
+        for rule in sql_rules:
+            table_refs = _extract_table_refs(rule["sql"])
+            missing = [unloadable[ref] for ref in table_refs if ref in unloadable]
+            if missing:
+                results.append(_errored_result(rule, "; ".join(missing)))
+                continue
+            # Rewrite SQL to use view names
+            rewritten_sql = _rewrite_sql(rule["sql"], table_refs)
+            rule_copy = {**rule, "sql": rewritten_sql}
+            result = execute_sql_rule(rule_copy, con)
+            results.append(result)
+    finally:
+        con.close()
 
     # Build run summary
     run_id = str(uuid.uuid4())[:8]
-    p0_results = [r for r in results if _get_rule_priority(r["rule_id"], sql_rules) == "P0"]
+    p0_results = [r for r in results if r["priority"] == "P0"]
 
     run_result = {
         "run_id": run_id,
         "spec": spec,
-        "executed_at": datetime.now(timezone.utc).isoformat(),
+        "mode": "shadow" if shadow else "real",
+        "executed_at": datetime.now(UTC).isoformat(),
         "rules_total": len(results),
         "rules_passed": sum(1 for r in results if r["passed"]),
         "rules_failed": sum(1 for r in results if not r["passed"]),
@@ -399,22 +551,15 @@ def run_rules(
     return run_result
 
 
-def _get_rule_priority(rule_id: str, rules: list[dict]) -> str:
-    """Look up a rule's priority from the rules list."""
-    for r in rules:
-        if r["rule_id"] == rule_id:
-            return r.get("priority", "P3")
-    return "P3"
-
-
 def _write_governance_results(run_result: dict, rules: list[dict]) -> None:
     """Write DQ run and rule results to Iceberg governance tables."""
-    from brightsmith.infra.governance_db import write_dq_run, write_dq_rule_results, write_spec_registry
+    from brightsmith.infra.governance.sync import _last_known_status, _last_known_value
+    from brightsmith.infra.governance_db import write_dq_rule_results, write_dq_run, write_spec_registry
 
     spec = run_result.get("spec") or "all"
     run_id = run_result["run_id"]
     executed_at_str = run_result.get("executed_at", "")
-    executed_at = datetime.fromisoformat(executed_at_str) if executed_at_str else datetime.now(timezone.utc)
+    executed_at = datetime.fromisoformat(executed_at_str) if executed_at_str else datetime.now(UTC)
 
     tables = set()
     for rule in rules:
@@ -427,13 +572,13 @@ def _write_governance_results(run_result: dict, rules: list[dict]) -> None:
     errored = run_result.get("rules_errored", 0)
     score = (passed / total * 100) if total > 0 else 0.0
 
-    p0_results = [r for r in run_result.get("results", []) if _get_rule_priority(r["rule_id"], rules) == "P0"]
-    p1_results = [r for r in run_result.get("results", []) if _get_rule_priority(r["rule_id"], rules) == "P1"]
+    mode = run_result.get("mode", "real")
+    p0_results = [r for r in run_result.get("results", []) if r.get("priority") == "P0"]
+    p1_results = [r for r in run_result.get("results", []) if r.get("priority") == "P1"]
 
     enriched_results = []
     for result in run_result.get("results", []):
         enriched = {**result}
-        enriched["priority"] = _get_rule_priority(result["rule_id"], rules)
         rule_def = next((rule for rule in rules if rule["rule_id"] == result["rule_id"]), {})
         enriched.setdefault("description", rule_def.get("description", ""))
         enriched_results.append(enriched)
@@ -454,15 +599,29 @@ def _write_governance_results(run_result: dict, rules: list[dict]) -> None:
         p1_total=len(p1_results),
         p1_failed=sum(1 for r in p1_results if not r.get("passed")),
         duration_ms=sum(r.get("execution_time_ms", 0) for r in run_result.get("results", [])),
+        mode=mode,
     )
-    write_dq_rule_results(run_id, spec, enriched_results)
+    write_dq_rule_results(run_id, spec, enriched_results, mode=mode)
 
-    if spec != "all":
+    # A shadow (chaos) run measures the rules against corrupted copies; it says
+    # nothing about the real tables, so it must never move the spec's score.
+    if spec != "all" and mode == "real":
+        # The registry's own latest status (e.g. a staff-engineer-authored
+        # COMPLETE) is the only place a terminal status can come from — carry
+        # it forward instead of hardcoding IN_PROGRESS, or every DQ run would
+        # clobber it back. dq_runner never has a zone signal of its own at
+        # all (rule files carry no zone), so zone always carries forward.
+        # output_tables comes from the rules' own "tables" metadata when
+        # present and non-empty; otherwise carry forward too rather than
+        # wiping a known table list to [].
+        status = _last_known_status(spec) or "IN_PROGRESS"
+        zone = _last_known_value(spec, "zone") or ""
+        output_tables = sorted(tables) or _last_known_value(spec, "output_tables") or []
         write_spec_registry(
             spec_name=spec,
-            zone="",
-            status="IN_PROGRESS",
-            output_tables=sorted(tables),
+            zone=zone,
+            status=status,
+            output_tables=output_tables,
             updated_by="@dq-engineer",
             dq_score_pct=score,
             dq_rules_total=total,
@@ -485,7 +644,7 @@ def approve_rules(rule_ids: list[str]) -> list[dict]:
     results = []
     for rule_id in rule_ids:
         found = False
-        for path in DQ_RULES_DIR.glob("*.json"):
+        for path in _cfg("DQ_RULES_DIR").glob("*.json"):
             data = _load_rules_file(path)
             for rule in data.get("rules", []):
                 if rule["rule_id"] == rule_id:
@@ -494,7 +653,7 @@ def approve_rules(rule_ids: list[str]) -> list[dict]:
                     if old_status == "proposed":
                         rule["status"] = "approved"
                         rule["approved_by"] = "human"
-                        rule["approved_at"] = datetime.now(timezone.utc).isoformat()
+                        rule["approved_at"] = datetime.now(UTC).isoformat()
                         _save_rules_file(path, data)
                         results.append({"rule_id": rule_id, "status": "approved", "previous": old_status})
                     else:
@@ -513,7 +672,12 @@ def approve_rules(rule_ids: list[str]) -> list[dict]:
 
 
 def get_latest_results(spec: str | None = None) -> dict | None:
-    """Get the most recent DQ results for a spec from Iceberg."""
+    """Get the most recent DQ results for a spec from Iceberg.
+
+    ``spec`` must be a non-empty string.  Pass ``None`` (or omit it) only when
+    you mean "no specific spec" — for an all-specs aggregate use
+    :func:`get_all_latest_results` instead.
+    """
     if not spec:
         return None
 
@@ -535,6 +699,21 @@ def get_latest_results(spec: str | None = None) -> dict | None:
     }
 
 
+def get_all_latest_results() -> list[dict]:
+    """Get the most recent DQ results for every known spec.
+
+    Iterates specs discovered from DQ rules files and returns one result dict
+    per spec that has at least one recorded run.  Specs with no runs are
+    silently skipped.  Results are returned in alphabetical spec order.
+    """
+    out = []
+    for spec in _get_all_specs():
+        r = get_latest_results(spec)
+        if r is not None:
+            out.append(r)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Acknowledgment
 # ---------------------------------------------------------------------------
@@ -549,7 +728,7 @@ def acknowledge_failures(spec: str, run_id: str, reason: str) -> dict:
         "spec": spec,
         "run_id": run_id,
         "acknowledged_by": "human",
-        "acknowledged_at": datetime.now(timezone.utc).isoformat(),
+        "acknowledged_at": datetime.now(UTC).isoformat(),
         "reason": reason,
     }
 
@@ -592,23 +771,37 @@ def _print_status(spec: str | None = None) -> None:
 
 
 def _print_results(spec: str | None = None) -> None:
-    """Print latest run results."""
-    results = get_latest_results(spec)
-    if not results:
+    """Print latest run results.
+
+    When *spec* is given, prints results for that single spec only.
+    When *spec* is ``None``, prints results for every spec that has a recorded
+    run (via :func:`get_all_latest_results`).
+    """
+    if spec:
+        single = get_latest_results(spec)
+        all_results = [single] if single is not None else []
+    else:
+        all_results = get_all_latest_results()
+
+    if not all_results:
         print("No results found.")
         return
 
-    print(f"Run: {results['run_id']} at {results['executed_at']}")
-    print(f"Total: {results['rules_total']} | Passed: {results['rules_passed']} | Failed: {results['rules_failed']}")
-    print(f"P0 gate: {'PASS' if results['p0_passed'] else 'FAIL'}")
-    print()
-    print(f"{'Rule ID':<15} {'Result':<8} {'Value':<10} {'Time (ms)':<10} {'Detail'}")
-    print("-" * 80)
-    for r in results.get("results", []):
-        status = "PASS" if r["passed"] else ("ERROR" if r.get("error") else "FAIL")
-        value = str(r.get("raw_value", ""))[:10]
-        detail = r.get("error") or r.get("detail", "")
-        print(f"{r['rule_id']:<15} {status:<8} {value:<10} {r.get('execution_time_ms', 0):<10} {detail[:40]}")
+    for results in all_results:
+        spec_label = results.get("spec") or "unknown"
+        print(f"=== Spec: {spec_label} ===")
+        print(f"Run: {results['run_id']} at {results['executed_at']}")
+        print(f"Total: {results['rules_total']} | Passed: {results['rules_passed']} | Failed: {results['rules_failed']}")
+        print(f"P0 gate: {'PASS' if results['p0_passed'] else 'FAIL'}")
+        print()
+        print(f"{'Rule ID':<15} {'Result':<8} {'Value':<10} {'Time (ms)':<10} {'Detail'}")
+        print("-" * 80)
+        for r in results.get("results", []):
+            status = "PASS" if r["passed"] else ("ERROR" if r.get("error") else "FAIL")
+            value = str(r.get("raw_value", ""))[:10]
+            detail = r.get("error") or r.get("detail", "")
+            print(f"{r['rule_id']:<15} {status:<8} {value:<10} {r.get('execution_time_ms', 0):<10} {detail[:40]}")
+        print()
 
 
 def main() -> None:
@@ -671,16 +864,23 @@ def main() -> None:
         _print_results(args.spec)
     elif args.command == "scorecard":
         from brightsmith.infra.dq_scorecard import generate_scorecard
-        results = get_latest_results(args.spec)
-        if not results:
-            print("No results found. Run `dq_runner run` first.")
-            sys.exit(1)
         specs = [args.spec] if args.spec else _get_all_specs()
+        if args.spec:
+            # Single-spec path: fail fast with a clear message when no run exists
+            check = get_latest_results(args.spec)
+            if not check:
+                print("No results found. Run `dq_runner run` first.")
+                sys.exit(1)
+        found_any = False
         for s in specs:
             spec_results = get_latest_results(s)
             if spec_results:
                 path = generate_scorecard(spec_results, s)
                 print(f"Scorecard written: {path}")
+                found_any = True
+        if not found_any:
+            print("No results found. Run `dq_runner run` first.")
+            sys.exit(1)
     elif args.command == "acknowledge":
         acknowledge_failures(args.spec, args.run_id, args.reason)
         print(f"Acknowledged failures for run {args.run_id}: {args.reason}")
@@ -693,7 +893,7 @@ def main() -> None:
 def _get_all_specs() -> list[str]:
     """Get all spec names from DQ rules files."""
     specs = set()
-    for path in DQ_RULES_DIR.glob("*.json"):
+    for path in _cfg("DQ_RULES_DIR").glob("*.json"):
         data = json.loads(path.read_text())
         specs.add(data.get("spec", path.stem))
     return sorted(specs)
@@ -708,14 +908,15 @@ def _update_readme_badges() -> None:
         print("README.md not found.")
         return
 
-    results = get_latest_results()
-    if not results:
+    all_results = get_all_latest_results()
+    if not all_results:
         print("No DQ results found. Run `dq_runner run` first.")
         return
 
-    passed = results["rules_passed"]
-    total = results["rules_total"]
-    p0_passed = results["p0_passed"]
+    # Aggregate across all specs
+    passed = sum(r["rules_passed"] for r in all_results)
+    total = sum(r["rules_total"] for r in all_results)
+    p0_passed = all(r["p0_passed"] for r in all_results)
 
     # Badge colors
     if passed == total:

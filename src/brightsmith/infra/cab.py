@@ -19,8 +19,8 @@ import json
 import logging
 import re
 import sys
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 
@@ -256,7 +256,7 @@ def compute_blast_radius(
     the full impact surface.
 
     Args:
-        table_name: The modified table (e.g., "consumable.company_financials").
+        table_name: The modified table (e.g., "gold.company_financials").
         project_root: Override for project root.
 
     Returns:
@@ -299,10 +299,14 @@ def compute_blast_radius(
                         contract_table = data.get("schema", {}).get("table", "")
                         if contract_table and contract_table != table_name:
                             items.append(BlastRadiusItem("contract", str(cpath.relative_to(root)), "direct_consumer"))
-                            if contract_table.startswith("consumable."):
+                            from brightsmith.infra.governance.serializers import normalize_zone
+                            contract_ns = contract_table.split(".", 1)[0] if "." in contract_table else ""
+                            if normalize_zone(contract_ns) == "gold":
                                 consumables.append(contract_name)
                         break
-            except Exception:
+            except (OSError, yaml.YAMLError, AttributeError, TypeError):
+                # Malformed/unreadable individual contract file — skip it, don't
+                # abort the whole blast-radius scan. A logic bug still surfaces.
                 continue
 
     # 3. Golden dataset scan
@@ -314,7 +318,8 @@ def compute_blast_radius(
                 if data.get("table") == table_name:
                     golden_datasets.append(gpath.stem)
                     items.append(BlastRadiusItem("golden_dataset", str(gpath.relative_to(root)), "direct_consumer"))
-            except Exception:
+            except (OSError, json.JSONDecodeError, AttributeError, TypeError):
+                # Malformed/unreadable golden-dataset file — skip it, don't abort.
                 continue
 
     # 4. MCP tool scan (from manifest)
@@ -330,7 +335,8 @@ def compute_blast_radius(
                 if table_name in tool_sources:
                     mcp_tools.append(tool.get("name", "unknown"))
                     items.append(BlastRadiusItem("mcp_tool", tool.get("name", "unknown"), "direct_consumer"))
-        except Exception:
+        except (OSError, yaml.YAMLError, AttributeError, TypeError):
+            # Malformed/unreadable manifest — skip the MCP-tool scan, don't abort.
             pass
 
     summary = {
@@ -352,8 +358,8 @@ def compute_blast_radius(
 
 def _next_decision_id(table_name: str, cab_dir: Path | None = None) -> str:
     """Generate a decision ID from timestamp and table name."""
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    # Normalize table name: consumable.company_financials → company-financials
+    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    # Normalize table name: gold.company_financials → company-financials
     table_short = table_name.split(".")[-1].replace("_", "-")
     return f"cab-{timestamp}-{table_short}"
 
@@ -404,7 +410,7 @@ def create_decision(
     """
     cdir = cab_dir or _cab_dir()
     decision_id = _next_decision_id(table_name, cdir)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     classification_reasons = [
         {
@@ -531,7 +537,7 @@ def update_decision(
 
     record.decision = decision.value
     record.decided_by = decided_by
-    record.decided_at = datetime.now(timezone.utc).isoformat()
+    record.decided_at = datetime.now(UTC).isoformat()
     record.notes = notes
     if rationale:
         record.rationale = rationale
@@ -574,7 +580,7 @@ def propose_fork(
     Returns:
         ForkDetails with v2 naming, migration spec path, and timeline.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     deprecated_at = now.strftime("%Y-%m-%d")
     archive_after = (now + timedelta(days=deprecation_days)).strftime("%Y-%m-%d")
 
@@ -677,7 +683,7 @@ def load_deprecations(cab_dir: Path | None = None) -> list[dict]:
         return []
 
     registry = json.loads(registry_path.read_text())
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
 
     for entry in registry.get("active_deprecations", []):
         try:
@@ -746,7 +752,7 @@ def detect_schema_modification(table_name: str, contracts_dir: Path | None = Non
     exists, the table is new and the CAB step should be skipped.
 
     Args:
-        table_name: Full table name (e.g., "consumable.company_financials").
+        table_name: Full table name (e.g., "gold.company_financials").
         contracts_dir: Override for contracts directory.
 
     Returns:
@@ -755,10 +761,7 @@ def detect_schema_modification(table_name: str, contracts_dir: Path | None = Non
     from brightsmith.infra.contract import list_contracts
 
     contracts = list_contracts(contracts_dir)
-    for c in contracts:
-        if c.get("table") == table_name and c.get("status") == "active":
-            return True
-    return False
+    return any(c.get("table") == table_name and c.get("status") == "active" for c in contracts)
 
 
 # ---------------------------------------------------------------------------
@@ -851,12 +854,12 @@ def review(
     if overall == Severity.PATCH:
         record.decision = Decision.APPROVED.value
         record.decided_by = "auto:cab-agent"
-        record.decided_at = datetime.now(timezone.utc).isoformat()
+        record.decided_at = datetime.now(UTC).isoformat()
         record.rationale = "PATCH change (metadata only) — auto-approved."
     elif overall == Severity.MINOR and not REQUIRE_HUMAN_APPROVAL:
         record.decision = Decision.APPROVED.value
         record.decided_by = "auto:cab-agent"
-        record.decided_at = datetime.now(timezone.utc).isoformat()
+        record.decided_at = datetime.now(UTC).isoformat()
         record.rationale = "MINOR change — auto-approved (REQUIRE_HUMAN_APPROVAL=False)."
     # MAJOR and MINOR+REQUIRE_HUMAN stay PENDING
 
@@ -962,7 +965,7 @@ def _cmd_approve(args: argparse.Namespace) -> None:
     updated = update_decision(
         decision_id=args.decision,
         decision=decision_type,
-        decided_by=getattr(args, "by"),
+        decided_by=args.by,
         notes=args.notes,
         fork=fork_details,
     )

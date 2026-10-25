@@ -7,8 +7,8 @@ or any scheduler.
 
 Usage:
     python -m brightsmith.run                          # Full pipeline
-    python -m brightsmith.run --zone raw               # Raw zone only
-    python -m brightsmith.run --zone base              # Base zone only
+    python -m brightsmith.run --zone bronze            # Bronze zone only
+    python -m brightsmith.run --zone silver            # Silver zone only
     python -m brightsmith.run --validate-only          # DQ + contracts, no data writes
     python -m brightsmith.run --dry-run                # Check readiness, no execution
     python -m brightsmith.run --output json            # JSON to stdout
@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import importlib.util
 import json
 import logging
 import sys
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,38 @@ EXIT_DQ_FAILURE = 1
 EXIT_TRANSFORM_ERROR = 2
 EXIT_CONTRACT_VIOLATION = 3
 EXIT_CONFIG_ERROR = 4
+EXIT_GOLDEN_FAILURE = 5
+
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class ZoneNotRegisteredError(Exception):
+    """Raised when a zone has no transformation module registered.
+
+    Deliberately distinct from ``ValueError`` (audit finding H2): the domain
+    transform a zone module calls into can itself raise ``ValueError`` for
+    legitimate reasons (e.g. ``append_data``'s strict-mode misspelled-column
+    error, ``compute_grain_id``'s missing-grain-field error). Catching bare
+    ``ValueError`` in ``run_pipeline`` to detect "no module registered" also
+    caught those real transform failures and silently reclassified them as
+    SKIPPED with exit 0. Raising this dedicated type lets the caller catch
+    only the "not registered" case.
+    """
+
+
+class PipelineManifestShapeError(Exception):
+    """Raised when ``domain/manifest.yaml``'s ``pipeline:`` section matches
+    neither the flat nor the nested shape (audit finding H5.2).
+
+    Previously an unrecognized shape left ``_ZONE_REGISTRY`` silently empty —
+    the headless runner would report every zone SKIPPED with no indication
+    that the manifest was actually malformed. This type ensures a bad
+    manifest fails loudly instead.
+    """
+
 
 # ---------------------------------------------------------------------------
 # Zone ordering
@@ -82,6 +115,7 @@ class GoldenResult:
     passed: int = 0
     failed: int = 0
     pass_rate: float = 0.0
+    error: str = ""
 
 
 @dataclass
@@ -89,7 +123,7 @@ class PipelineResult:
     """Complete result of a pipeline run."""
 
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
-    started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     completed_at: str = ""
     duration_seconds: float = 0.0
     status: str = "PENDING"
@@ -102,7 +136,7 @@ class PipelineResult:
 
     def finalize(self) -> None:
         """Set final status and timing."""
-        self.completed_at = datetime.now(timezone.utc).isoformat()
+        self.completed_at = datetime.now(UTC).isoformat()
         started = datetime.fromisoformat(self.started_at)
         completed = datetime.fromisoformat(self.completed_at)
         self.duration_seconds = (completed - started).total_seconds()
@@ -122,6 +156,11 @@ class PipelineResult:
             else:
                 self.status = "FAILED"
                 self.exit_code = EXIT_DQ_FAILURE
+        elif self.golden_datasets.failed or self.golden_datasets.error:
+            # A known-correct reference value came back wrong (or could not be
+            # checked). The data is wrong, so this outranks a contract warning.
+            self.status = "GOLDEN_FAILURE"
+            self.exit_code = EXIT_GOLDEN_FAILURE
         elif any(z.contracts_violated > 0 for z in self.zones.values()):
             self.status = "SUCCESS_WITH_WARNINGS"
             self.exit_code = EXIT_CONTRACT_VIOLATION
@@ -155,6 +194,7 @@ class PipelineResult:
                 "passed": self.golden_datasets.passed,
                 "failed": self.golden_datasets.failed,
                 "pass_rate": self.golden_datasets.pass_rate,
+                "error": self.golden_datasets.error,
             },
         }
 
@@ -162,63 +202,256 @@ class PipelineResult:
 # ---------------------------------------------------------------------------
 # Zone execution registry
 # ---------------------------------------------------------------------------
-
-_ZONE_REGISTRY: dict[str, str] = {}
-
-
-def register_zone(zone: str, module_path: str) -> None:
-    """Register a zone's transformation module.
-
-    Args:
-        zone: Zone name (raw, base, consumable, ai_ready).
-        module_path: Dotted module path with function (e.g., "raw.run_ingest:main").
-    """
-    _ZONE_REGISTRY[zone] = module_path
+#
+# A zone maps to an ORDERED LIST of steps (audit finding H5.2). Historically
+# a zone was a single "module:function" string; multi-source domains
+# naturally produce several transform steps per zone (one per source), so
+# the registry now holds a list of `_ZoneStep`s per zone and executes them
+# in order, aggregating rows_promoted/rows_skipped across all of them.
 
 
-def _load_zone_registry() -> None:
-    """Load zone registrations from domain manifest if not already registered."""
-    if _ZONE_REGISTRY:
-        return
+@dataclass(frozen=True)
+class _ZoneStep:
+    """One executable transform step within a zone."""
 
-    try:
-        from brightsmith.domain_loader import load_manifest
-        manifest = load_manifest()
-        pipeline = getattr(manifest, "pipeline", None)
-        if pipeline:
-            for zone_name, zone_config in pipeline.items():
-                module = zone_config.get("module", "")
-                function = zone_config.get("function", "main")
-                if module:
-                    _ZONE_REGISTRY[zone_name] = f"{module}:{function}"
-    except Exception:
-        pass
+    module: str
+    function: str = "main"
+    # True when `module` is a filesystem path (e.g. "src/silver/foo.py", as
+    # field manifests use) rather than a dotted import path — determines
+    # whether we import via `importlib.import_module` or
+    # `importlib.util.spec_from_file_location`.
+    file_path: bool = False
 
 
-def _execute_zone_module(zone: str) -> dict:
-    """Execute a registered zone transformation module.
+_ZONE_REGISTRY: dict[str, list[_ZoneStep]] = {}
 
-    Returns:
-        Dict with rows_promoted, rows_skipped keys (or empty on error).
-    """
-    module_path = _ZONE_REGISTRY.get(zone)
-    if not module_path:
-        raise ValueError(f"No transformation module registered for zone '{zone}'")
 
+def _parse_step_string(module_path: str) -> _ZoneStep:
+    """Parse a legacy "module:function" (or bare "module") string into a step."""
     if ":" in module_path:
         mod_name, func_name = module_path.rsplit(":", 1)
     else:
         mod_name, func_name = module_path, "main"
+    return _ZoneStep(module=mod_name, function=func_name, file_path=False)
 
-    mod = importlib.import_module(mod_name)
-    func = getattr(mod, func_name)
-    result = func()
-    return result if isinstance(result, dict) else {}
+
+def register_zone(zone: str, module_path: str) -> None:
+    """Register a zone's transformation module (single-step, dotted path).
+
+    Args:
+        zone: Zone name (bronze, silver, gold, or mcp).
+        module_path: Dotted module path with function (e.g., "bronze.run_ingest:main").
+    """
+    from brightsmith.infra.governance.serializers import normalize_zone
+    canonical = normalize_zone(zone) or zone
+    _ZONE_REGISTRY[canonical] = [_parse_step_string(module_path)]
+
+
+def _is_file_path_module(module: str) -> bool:
+    """True when a manifest ``module:`` value looks like a file path rather
+    than a dotted import path (e.g. "src/silver/foo.py" vs "silver.foo")."""
+    return module.endswith(".py") or "/" in module
+
+
+def _load_flat_zone_registry(pipeline: dict, normalize_zone) -> None:
+    """Parse the flat manifest shape: ``pipeline: {zone: {module, function}}``.
+
+    One step per zone. A zone entry with no ``module`` key is a legitimate
+    stub (e.g. a spec'd-but-not-yet-implemented zone) and is silently
+    skipped, matching the framework's pre-existing behavior for this shape.
+    """
+    for zone_name, zone_config in pipeline.items():
+        if not isinstance(zone_config, dict):
+            continue
+        module = zone_config.get("module", "")
+        function = zone_config.get("function", "main")
+        if module:
+            canonical = normalize_zone(zone_name) or zone_name
+            step = _ZoneStep(module=module, function=function, file_path=_is_file_path_module(module))
+            _ZONE_REGISTRY[canonical] = [step]
+
+
+def _load_nested_zone_registry(zones_block: dict, normalize_zone) -> None:
+    """Parse the nested manifest shape: ``pipeline: {zones: {zone: [steps]}}``.
+
+    This is the shape multi-source domains produce naturally (field evidence:
+    futureproof-data's manifest) — an ordered list of step dicts per zone,
+    each with a ``module`` (often a file path) and ``function``. A single
+    dict (rather than a list) per zone is also accepted for the shape
+    documented in docs/specs/headless-pipeline-runner.md.
+
+    The ``mcp`` zone commonly declares a server via a ``class:`` key instead
+    of a callable ``function:`` (see the field manifest's ``pipeline.zones.mcp``
+    entry) — that's an MCP server registration parsed by ``serve.py``, not a
+    callable transform step, so it is skipped here rather than registered.
+    """
+    if not isinstance(zones_block, dict):
+        raise PipelineManifestShapeError(
+            "domain/manifest.yaml 'pipeline.zones' must be a mapping of "
+            f"zone name -> step(s), got {type(zones_block).__name__}"
+        )
+
+    for zone_name, steps in zones_block.items():
+        if isinstance(steps, dict):
+            steps = [steps]
+        if not isinstance(steps, list):
+            raise PipelineManifestShapeError(
+                f"domain/manifest.yaml 'pipeline.zones.{zone_name}' must be a list "
+                f"of step mappings (or a single mapping), got {type(steps).__name__}"
+            )
+
+        parsed_steps: list[_ZoneStep] = []
+        for step in steps:
+            if not isinstance(step, dict):
+                raise PipelineManifestShapeError(
+                    f"domain/manifest.yaml 'pipeline.zones.{zone_name}' step must be "
+                    f"a mapping, got {type(step).__name__}"
+                )
+            if "class" in step and "function" not in step:
+                # MCP server declaration, not a callable transform step.
+                continue
+            module = step.get("module", "")
+            function = step.get("function", "main")
+            if module:
+                parsed_steps.append(
+                    _ZoneStep(module=module, function=function, file_path=_is_file_path_module(module))
+                )
+
+        if parsed_steps:
+            canonical = normalize_zone(zone_name) or zone_name
+            _ZONE_REGISTRY[canonical] = parsed_steps
+
+
+def _load_zone_registry() -> None:
+    """Load zone registrations from domain manifest if not already registered.
+
+    Zone names are the physical medallion names (bronze/silver/gold/mcp).
+
+    Supports both the flat shape (``pipeline: {zone: {module, function}}``)
+    and the nested shape (``pipeline: {zones: {zone: [steps]}}``, H5.2). If
+    the ``pipeline`` block is present but matches neither shape, raises
+    :class:`PipelineManifestShapeError` rather than leaving the registry
+    silently empty (the pre-fix failure mode).
+    """
+    if _ZONE_REGISTRY:
+        return
+
+    from brightsmith.domain_loader import load_manifest
+    from brightsmith.infra.governance.serializers import normalize_zone
+    try:
+        manifest = load_manifest()
+    except FileNotFoundError:
+        # No domain manifest yet (fresh project) — legitimately leaves the
+        # registry empty. A malformed manifest (yaml/parse error) is NOT caught
+        # here: it must propagate so a broken config fails loudly.
+        return
+
+    pipeline = getattr(manifest, "pipeline", None)
+    if not pipeline:
+        return  # No pipeline section at all — legitimately empty.
+
+    if not isinstance(pipeline, dict):
+        raise PipelineManifestShapeError(
+            f"domain/manifest.yaml 'pipeline' section must be a mapping, got {type(pipeline).__name__}"
+        )
+
+    if "zones" in pipeline:
+        _load_nested_zone_registry(pipeline["zones"], normalize_zone)
+    elif all(isinstance(v, dict) for v in pipeline.values()):
+        _load_flat_zone_registry(pipeline, normalize_zone)
+    else:
+        raise PipelineManifestShapeError(
+            "domain/manifest.yaml 'pipeline' section did not match a recognized "
+            "shape: flat 'pipeline: {zone: {module, function}}' or nested "
+            "'pipeline: {zones: {zone: [...steps]}}'. Fix the manifest — a zone "
+            "registry left silently empty is the failure this error replaces."
+        )
+
+
+def _import_step_module(step: _ZoneStep):
+    """Import a zone step's module, dotted-path or file-path."""
+    if not step.file_path:
+        return importlib.import_module(step.module)
+
+    from brightsmith.config import PROJECT_ROOT
+
+    file_path = Path(step.module)
+    if not file_path.is_absolute():
+        file_path = PROJECT_ROOT / file_path
+    if not file_path.exists():
+        raise ImportError(f"Zone step module file not found: {file_path}")
+
+    # A synthetic, unique module name avoids collisions between same-named
+    # step files in different directories (e.g. two "transformer.py" files).
+    module_name = f"_brightsmith_zone_step__{file_path.stem}__{abs(hash(str(file_path)))}"
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load zone step module from file: {file_path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _execute_zone_module(zone: str) -> dict:
+    """Execute every registered step for a zone, in order.
+
+    Returns:
+        Dict with aggregated ``rows_promoted``/``rows_skipped`` across all
+        steps registered for the zone.
+
+    Raises:
+        ZoneNotRegisteredError: No steps registered for this zone.
+    """
+    steps = _ZONE_REGISTRY.get(zone)
+    if not steps:
+        raise ZoneNotRegisteredError(f"No transformation module registered for zone '{zone}'")
+
+    total_promoted = 0
+    total_skipped = 0
+    for step in steps:
+        mod = _import_step_module(step)
+        func = getattr(mod, step.function)
+        result = func()
+        if isinstance(result, dict):
+            total_promoted += result.get("rows_promoted", result.get("promoted", 0))
+            total_skipped += result.get("rows_skipped", result.get("skipped", 0))
+
+    return {"rows_promoted": total_promoted, "rows_skipped": total_skipped}
 
 
 # ---------------------------------------------------------------------------
 # Pipeline orchestrator
 # ---------------------------------------------------------------------------
+
+
+def _preflight_relocation(zones: list[str]) -> None:
+    """Loud-fail if any table in the requested zones is unreadable because the
+    warehouse was moved/cloned (baked-in foreign absolute paths).
+
+    Re-raises only :class:`WarehouseRelocationError`; any other table-load error
+    is left for the per-zone execution to handle.
+    """
+    if not zones:
+        return
+    from brightsmith.config import CATALOG_PATH, WAREHOUSE_PATH
+    from brightsmith.infra.iceberg_setup import WarehouseRelocationError, get_catalog
+
+    if not Path(CATALOG_PATH).exists():
+        return  # fresh project — nothing baked in yet
+
+    catalog = get_catalog(WAREHOUSE_PATH, CATALOG_PATH)
+    namespaces = {ns[0] for ns in catalog.list_namespaces()}
+    for zone in zones:
+        if zone not in namespaces:
+            continue
+        for ident in catalog.list_tables(zone):
+            try:
+                catalog.load_table(ident)
+            except WarehouseRelocationError:
+                raise
+            except Exception:
+                # Not a relocation problem — leave it for zone execution.
+                pass
 
 
 def run_pipeline(
@@ -248,6 +481,22 @@ def run_pipeline(
         result.finalize()
         return result
 
+    # Preflight: a moved/cloned warehouse would read silently empty. Fail loudly
+    # with the exact repair command instead of producing a bogus all-green run.
+    # Scoped to the tables in the zones we are about to touch — a stale legacy
+    # table in some other namespace must not block an unrelated run.
+    if not dry_run:
+        from brightsmith.infra.iceberg_setup import WarehouseRelocationError
+
+        try:
+            _preflight_relocation(zones)
+        except WarehouseRelocationError as exc:
+            print(str(exc), file=sys.stderr)
+            result.status = "CONFIG_ERROR"
+            result.exit_code = EXIT_CONFIG_ERROR
+            result.finalize()
+            return result
+
     if dry_run:
         result.status = "DRY_RUN"
         for zone in zones:
@@ -276,8 +525,11 @@ def run_pipeline(
                 exec_result = _execute_zone_module(zone)
                 zr.rows_promoted = exec_result.get("rows_promoted", exec_result.get("promoted", 0))
                 zr.rows_skipped = exec_result.get("rows_skipped", exec_result.get("skipped", 0))
-            except ValueError as e:
-                # No module registered — skip if validate-only would apply
+            except ZoneNotRegisteredError as e:
+                # No module registered — skip if validate-only would apply.
+                # A ValueError raised by the domain transform itself is NOT
+                # caught here (H2 fix) — it falls through to the generic
+                # Exception handler below and is reported as FAILED.
                 zr.status = "SKIPPED"
                 zr.warnings.append(str(e))
                 result.add_zone_result(zone, zr)
@@ -289,8 +541,19 @@ def run_pipeline(
                 result.finalize()
                 return result
 
-        # 3. Post-write: run DQ rules
-        dq_ok, dq_passed, dq_failed, p0_failures = _run_dq_for_zone(zone)
+        # 3. Post-write: run DQ rules against the real warehouse.
+        #    Rule-level failures (including errored P0 rules) come back as
+        #    p0_failures and become a DQ_FAILURE. A failure to EXECUTE DQ at
+        #    all (catalog/engine/governance-write error) is infrastructure —
+        #    it must surface as TRANSFORM_ERROR, never be swallowed into a pass.
+        try:
+            dq_ok, dq_passed, dq_failed, p0_failures = _run_dq_for_zone(zone)
+        except Exception as e:
+            zr.status = "FAILED"
+            zr.error = f"DQ execution failed for zone '{zone}': {e}"
+            result.add_zone_result(zone, zr)
+            result.finalize()
+            return result
         zr.dq_rules_passed = dq_passed
         zr.dq_rules_failed = dq_failed
         zr.dq_p0_passed = dq_ok
@@ -313,8 +576,13 @@ def run_pipeline(
         zr.status = "SUCCESS"
         result.add_zone_result(zone, zr)
 
-    # 5. Golden dataset verification
-    result.golden_datasets = _verify_golden_datasets()
+    # 5. Golden dataset verification. A crash here (malformed golden file,
+    #    non-numeric value) used to escape as a traceback with no run record;
+    #    it is now a GOLDEN_FAILURE like a mismatch.
+    try:
+        result.golden_datasets = _verify_golden_datasets()
+    except Exception as e:
+        result.golden_datasets = GoldenResult(error=f"{type(e).__name__}: {e}")
 
     result.finalize()
     return result
@@ -326,99 +594,160 @@ def run_pipeline(
 
 
 def _run_dq_for_zone(zone: str) -> tuple[bool, int, int, list[str]]:
-    """Run DQ rules for a zone. Returns (p0_ok, passed, failed, p0_failures)."""
-    try:
-        from brightsmith.infra.dq_runner import load_rules, run_rules
-        from brightsmith.config import CATALOG_PATH, WAREHOUSE_PATH
+    """Run DQ rules for a zone against the real Iceberg warehouse.
 
-        rules = load_rules()
-        zone_rules = [r for r in rules if _rule_matches_zone(r, zone)]
-        if not zone_rules:
-            return (True, 0, 0, [])
+    Returns (p0_ok, passed, failed, p0_failures).
 
-        # Run via DQ runner
-        passed = 0
-        failed = 0
-        p0_failures = []
-        for rule in zone_rules:
-            status = rule.get("status", "active")
-            if status not in ("active", "approved"):
-                continue
-            # Simplified: count rules as passed (actual execution needs Iceberg)
-            passed += 1
+    Execution goes through ``dq_runner.run_rules(rule_filter=...)`` (audit
+    finding M2/W4), scoped to only the rules that touch this zone via
+    ``_rule_matches_zone``. Previously this called ``run_rules()`` unfiltered
+    — every rule, regardless of zone — and discarded non-matching results
+    here; a 4-zone pipeline run executed every rule 4x and wrote 4 governance
+    ``dq_runs`` records for the same rules. Each rule now executes exactly
+    once per pipeline run, at the point its own zone runs (so bronze P0
+    failures still abort before silver/gold/mcp run at all — fail-fast is
+    unchanged, only the redundant re-execution is gone).
 
-        return (len(p0_failures) == 0, passed, failed, p0_failures)
-    except Exception:
+    An errored P0 rule counts as a FAILURE (decision D3 — a gate that cannot
+    fail is worse than no gate). ``run_rules`` already sets ``passed=False`` on
+    errored rules, so no special-casing of ``error`` is needed here.
+
+    Raises:
+        Whatever ``run_rules`` raises on an infrastructure failure (missing
+        catalog, engine error, governance-write error). The caller maps that
+        to TRANSFORM_ERROR — it is never swallowed into a passing gate.
+    """
+    from brightsmith.infra.dq_runner import load_rules, run_rules
+
+    zone_rules = [r for r in load_rules() if _rule_matches_zone(r, zone)]
+    if not zone_rules:
         return (True, 0, 0, [])
+
+    priorities = {r["rule_id"]: str(r.get("priority", "P3")).upper() for r in zone_rules}
+
+    result = run_rules(rule_filter=lambda r: _rule_matches_zone(r, zone))
+
+    passed = 0
+    failed = 0
+    p0_failures: list[str] = []
+    for r in result["results"]:
+        rule_id = r["rule_id"]
+        if r["passed"]:
+            passed += 1
+        else:
+            failed += 1
+            if priorities.get(rule_id) == "P0":
+                p0_failures.append(rule_id)
+
+    return (len(p0_failures) == 0, passed, failed, p0_failures)
 
 
 def _rule_matches_zone(rule: dict, zone: str) -> bool:
-    """Check if a DQ rule applies to a zone."""
-    tables = rule.get("tables", [])
-    for t in tables:
-        if t.startswith(f"{zone}."):
-            return True
-    return False
+    """Check if a DQ rule applies to a zone.
+
+    Matches on the physical medallion namespace (bronze/silver/gold/mcp),
+    considering both the rule's declared ``tables`` and the table references
+    parsed from its SQL.
+    """
+    from brightsmith.infra.dq_runner import _extract_table_refs
+
+    namespaces: set[str] = set()
+    for table in rule.get("tables", []):
+        if isinstance(table, str) and "." in table:
+            namespaces.add(table.split(".", 1)[0])
+    sql = rule.get("sql")
+    if isinstance(sql, str):
+        for ns, _tbl in _extract_table_refs(sql):
+            namespaces.add(ns)
+    return any(ns == zone for ns in namespaces)
 
 
 def _check_contracts_for_zone(zone: str) -> bool:
-    """Check if all contracts for a zone pass verification."""
-    try:
-        from brightsmith.infra.contract import list_contracts, verify_contract
-        contracts = list_contracts()
-        zone_contracts = [c for c in contracts if c.get("table", "").startswith(f"{zone}.")]
-        for c in zone_contracts:
-            results = verify_contract(c["name"])
-            if any(r.status == "FAIL" for r in results):
-                return False
+    """Verify a source zone's contracts before consuming it.
+
+    Returns True if every contract passes OR there are no contracts to check
+    (a warning is logged in the latter case — absence of a contract is not a
+    failure). Returns False if any contract fails verification.
+
+    Verification/infrastructure errors are NOT swallowed into a pass: if
+    ``list_contracts``/``verify_contract`` raise, the exception propagates and
+    fails the pipeline rather than masquerading as a clean gate.
+    """
+    from brightsmith.infra.contract import list_contracts, verify_contract
+
+    contracts = list_contracts()
+    zone_contracts = [c for c in contracts if _contract_matches_zone(c, zone)]
+    if not zone_contracts:
+        logger.warning("No contracts found for zone '%s'; skipping contract pre-check", zone)
         return True
-    except Exception:
-        return True  # No contracts = no failure
+
+    for c in zone_contracts:
+        results = verify_contract(c["name"])
+        if any(r.status == "FAIL" for r in results):
+            return False
+    return True
+
+
+def _contract_matches_zone(contract: dict, zone: str) -> bool:
+    """Check if a contract's table belongs to a medallion zone."""
+    table = contract.get("table", "")
+    if not isinstance(table, str) or "." not in table:
+        return False
+    ns = table.split(".", 1)[0]
+    return ns == zone
 
 
 def _verify_contracts_for_zone(zone: str) -> tuple[int, int]:
-    """Verify contracts for a zone. Returns (valid_count, violated_count)."""
-    try:
-        from brightsmith.infra.contract import list_contracts, verify_contract
-        contracts = list_contracts()
-        zone_contracts = [c for c in contracts if c.get("table", "").startswith(f"{zone}.")]
-        valid = 0
-        violated = 0
-        for c in zone_contracts:
-            results = verify_contract(c["name"])
-            if any(r.status == "FAIL" for r in results):
-                violated += 1
-            else:
-                valid += 1
-        return (valid, violated)
-    except Exception:
-        return (0, 0)
+    """Verify contracts for a zone. Returns (valid_count, violated_count).
+
+    Verification/infrastructure errors are NOT swallowed into ``(0, 0)`` — that
+    would make a broken verifier indistinguishable from "no contracts to check".
+    If ``list_contracts``/``verify_contract`` raise, the exception propagates
+    (consistent with the ``_check_contracts_for_zone`` pre-check).
+
+    Uses ``_contract_matches_zone`` to associate each contract with its
+    medallion zone by namespace prefix.
+    """
+    from brightsmith.infra.contract import list_contracts, verify_contract
+    contracts = list_contracts()
+    zone_contracts = [c for c in contracts if _contract_matches_zone(c, zone)]
+    valid = 0
+    violated = 0
+    for c in zone_contracts:
+        results = verify_contract(c["name"])
+        if any(r.status == "FAIL" for r in results):
+            violated += 1
+        else:
+            valid += 1
+    return (valid, violated)
 
 
 def _verify_golden_datasets() -> GoldenResult:
-    """Run golden dataset verification across all specs."""
-    try:
-        from brightsmith.infra.golden_dataset import list_golden_datasets, verify_golden_dataset
-        datasets = list_golden_datasets()
-        if not datasets:
-            return GoldenResult()
+    """Run golden dataset verification across all specs.
 
-        total_checked = 0
-        total_passed = 0
-        for ds in datasets:
-            results = verify_golden_dataset(ds["spec"])
-            total_checked += len(results)
-            total_passed += sum(1 for r in results if r.status in ("MATCH", "CLOSE"))
-
-        rate = (total_passed / total_checked * 100.0) if total_checked > 0 else 0.0
-        return GoldenResult(
-            checked=total_checked,
-            passed=total_passed,
-            failed=total_checked - total_passed,
-            pass_rate=rate,
-        )
-    except Exception:
+    A verification/infrastructure error is NOT swallowed into an empty
+    ``GoldenResult()`` (which would look like "all clear / nothing to check").
+    If golden-dataset loading or verification raises, the exception propagates.
+    """
+    from brightsmith.infra.golden_dataset import list_golden_datasets, verify_golden_dataset
+    datasets = list_golden_datasets()
+    if not datasets:
         return GoldenResult()
+
+    total_checked = 0
+    total_passed = 0
+    for ds in datasets:
+        results = verify_golden_dataset(ds["spec"])
+        total_checked += len(results)
+        total_passed += sum(1 for r in results if r.status in ("MATCH", "CLOSE"))
+
+    rate = (total_passed / total_checked * 100.0) if total_checked > 0 else 0.0
+    return GoldenResult(
+        checked=total_checked,
+        passed=total_passed,
+        failed=total_checked - total_passed,
+        pass_rate=rate,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -445,12 +774,11 @@ def check_headless_ready() -> tuple[bool, list[str]]:
         issues.append("No zone transformation modules registered in manifest")
     else:
         for zone in ZONE_ORDER:
-            if zone in _ZONE_REGISTRY:
-                mod_path = _ZONE_REGISTRY[zone].split(":")[0]
+            for step in _ZONE_REGISTRY.get(zone, []):
                 try:
-                    importlib.import_module(mod_path)
-                except ImportError as e:
-                    issues.append(f"Zone '{zone}' module '{mod_path}' not importable: {e}")
+                    _import_step_module(step)
+                except (ImportError, OSError) as e:
+                    issues.append(f"Zone '{zone}' module '{step.module}' not importable: {e}")
 
     # No anthropic imports in zone code
     src_dir = PROJECT_ROOT / "src"
@@ -463,8 +791,13 @@ def check_headless_ready() -> tuple[bool, list[str]]:
                 content = py_file.read_text()
                 if "import anthropic" in content or "from anthropic" in content:
                     issues.append(f"LLM import found in {py_file.relative_to(PROJECT_ROOT)}")
-            except Exception:
-                pass
+            except (OSError, UnicodeDecodeError) as e:
+                # Can't read a source file to verify it has no LLM imports —
+                # report it as an issue rather than silently assuming it's clean.
+                issues.append(
+                    f"Could not read {py_file.relative_to(PROJECT_ROOT)} to check "
+                    f"for LLM imports: {e}"
+                )
 
     # Contracts exist and pass
     try:
@@ -477,8 +810,12 @@ def check_headless_ready() -> tuple[bool, list[str]]:
                 results = verify_contract(c["name"])
                 if any(r.status == "FAIL" for r in results):
                     issues.append(f"Contract '{c['name']}' verification FAILED")
-    except Exception:
-        pass
+    except Exception as e:
+        # Readiness diagnostic: a broken contract layer must surface as a
+        # blocking readiness issue, never a silent "ready". Broad by intent —
+        # any failure to load/verify contracts means we cannot certify ready.
+        # (Allowlisted in tests/infra/test_no_swallowed_exceptions.py.)
+        issues.append(f"Contract verification could not be completed: {e}")
 
     # DQ rules exist
     from brightsmith.config import DQ_RULES_DIR
@@ -503,7 +840,7 @@ def _save_run_history(result: PipelineResult) -> Path:
 
     history_dir = PROJECT_ROOT / "governance" / "run-history"
     history_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     path = history_dir / f"{timestamp}.json"
     path.write_text(json.dumps(result.to_dict(), indent=2) + "\n")
     return path
@@ -570,9 +907,11 @@ def _print_summary(result: PipelineResult) -> None:
         for w in zr.warnings:
             print(f"    Warning: {w}")
 
-    if result.golden_datasets.checked:
-        gr = result.golden_datasets
+    gr = result.golden_datasets
+    if gr.checked:
         print(f"\n  Golden datasets: {gr.passed}/{gr.checked} ({gr.pass_rate:.0f}%)")
+    if gr.error:
+        print(f"\n  Golden datasets: verification failed: {gr.error}")
 
 
 def _cmd_headless_ready() -> None:

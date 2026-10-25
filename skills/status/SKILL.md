@@ -10,7 +10,7 @@ Check and report:
 
 1. **Specs** — List all specs in `docs/specs/`, their status (DRAFT/IN_PROGRESS/COMPLETE), and zone
 2. **DQ Rules** — Run `python -m brightsmith.infra.dq_runner status` to show rule counts by status
-3. **DQ Results** — Check `governance/dq-results/` for latest run results and P0 gate status
+3. **DQ Results** — Run `python -m brightsmith.infra.dq_runner results --spec <spec>` for each spec to show its latest real run and P0 gate status (from the governance database; JSON files in `governance/dq-results/` are imports and are not authoritative)
 4. **Governance Artifacts** — Check which artifacts exist:
    - `governance/domain-context.md` (exists?)
    - `governance/models/` (which specs have models?)

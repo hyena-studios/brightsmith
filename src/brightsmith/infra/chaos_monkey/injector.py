@@ -7,14 +7,13 @@ to a shadow namespace and applies corruptions at a configurable rate.
 
 from __future__ import annotations
 
-import math
 import random
-from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from typing import Any
 
 from pyiceberg.schema import Schema
-from pyiceberg.table import Table
 from pyiceberg.types import (
     BooleanType,
     DateType,
@@ -31,6 +30,8 @@ from brightsmith.infra.chaos_monkey.manifest import ChaosManifest, CorruptionRec
 from brightsmith.infra.chaos_monkey.safety import SHADOW_PREFIX, SafetyGate
 from brightsmith.infra.iceberg_setup import append_data, get_or_create_table
 
+# A corruption function takes (value, rng) and returns (corrupted_value, strategy_label).
+CorruptionFn = Callable[[Any, random.Random], "tuple[Any, str]"]
 
 # ---------------------------------------------------------------------------
 # Type → corruption strategy mapping
@@ -95,9 +96,9 @@ def _corrupt_timestamp(value: Any, rng: random.Random) -> tuple[Any, str]:
     if strategy == "null":
         return None, "null"
     elif strategy == "future":
-        return datetime(2099, 12, 31, 23, 59, 59, tzinfo=timezone.utc), "future_timestamp"
+        return datetime(2099, 12, 31, 23, 59, 59, tzinfo=UTC), "future_timestamp"
     else:
-        return datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc), "epoch_timestamp"
+        return datetime(1970, 1, 1, 0, 0, 0, tzinfo=UTC), "epoch_timestamp"
 
 
 def _corrupt_boolean(value: Any, rng: random.Random) -> tuple[Any, str]:
@@ -105,7 +106,7 @@ def _corrupt_boolean(value: Any, rng: random.Random) -> tuple[Any, str]:
 
 
 # Map PyIceberg types to corruption functions
-_CORRUPTION_MAP: dict[type, callable] = {
+_CORRUPTION_MAP: dict[type, CorruptionFn] = {
     StringType: _corrupt_string,
     DoubleType: _corrupt_double,
     FloatType: _corrupt_double,
@@ -129,7 +130,7 @@ class ColumnProfile:
     name: str
     iceberg_type: type
     required: bool
-    corruption_fn: callable | None
+    corruption_fn: CorruptionFn | None
 
 
 class SchemaIntrospector:
@@ -194,7 +195,7 @@ class ChaosInjector:
         """Inject corruptions into a copy of the data.
 
         Args:
-            source_namespace: Original table namespace (e.g., 'base').
+            source_namespace: Original table namespace (e.g., 'silver').
             source_table: Original table name (e.g., 'financial_facts').
             records: Original records read from the source table.
 
@@ -233,6 +234,8 @@ class ChaosInjector:
                 n_cols = self.rng.randint(1, min(self.config.max_corruptions_per_row, len(corruptible)))
                 targets = self.rng.sample(corruptible, n_cols)
                 for col in targets:
+                    if col.corruption_fn is None:  # corruptible_columns filters these out; guard for the type checker
+                        continue
                     original = row.get(col.name)
                     corrupted_val, strategy = col.corruption_fn(original, self.rng)
                     # Skip null injection on required fields to avoid schema violations

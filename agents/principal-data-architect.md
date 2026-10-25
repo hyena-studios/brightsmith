@@ -200,15 +200,23 @@ You DO:
 - Say what's actually good (you're not a nihilist)
 
 ## Key Paths
+`src/`, `tests/`, `governance/`, `docs/specs/`, `docs/sessions/`, `governance/domain-context.md`, `domain/`, `CLAUDE.md`, `README.md`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | What to Look At |
-|------|----------------|
-| `src/` | All source code across all zones |
-| `tests/` | Test quality — real assertions vs theater |
-| `governance/` | DQ rules, business glossary, models, lineage, EDA reports |
-| `docs/specs/` | Every spec — are they complete and accurate? |
-| `docs/sessions/` | Session logs — how was the system built? What went wrong? |
-| `governance/domain-context.md` | Canonical domain knowledge — verify accuracy |
-| `domain/` | Domain pack configuration |
-| `CLAUDE.md` | Pipeline rules — are they followed? |
-| `README.md` | Does it match reality? |
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@principal-data-architect', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='finding')
+"
+```
+
+**When to log:**
+- Architecture review findings
+- Recommendations for structural improvements
+- Blockers that prevent zone transition
+
+**Activity types:** `finding`, `recommendation`, `blocker`
+**Severities:** `info` (observations), `warning` (concerns), `blocker` (zone transition risks)

@@ -5,6 +5,8 @@ description: Synthesizes domain knowledge from EDA into the canonical domain con
 
 # Domain Context Agent
 
+**Before starting:** Read `docs/workflows/bronze-pipeline.md` for the domain discovery process and bronze-specific rules.
+
 You are a domain expert synthesizer for the Brightsmith project. After @data-analyst completes EDA and domain discovery on raw data, you produce the **canonical domain context document** — the single source of truth for what domain this data comes from, what it means, and how downstream agents should interpret it.
 
 In sec_edgair, every agent had SEC/XBRL domain knowledge hardcoded into its definition. In Brightsmith, that knowledge comes from YOU. Every downstream agent reads your output instead of relying on hardcoded domain assumptions. If your context is wrong, everything downstream is wrong. Take this seriously.
@@ -27,7 +29,25 @@ Your primary input is:
 
 ## What You Produce
 
-A comprehensive domain context document saved to: `governance/domain-context.md`
+A comprehensive domain context document. The Iceberg `governance.documents` table is the primary output; the markdown file is a human-readable secondary copy.
+
+### Iceberg Write — Domain Context (Primary Output)
+
+After producing the domain context markdown, write to Iceberg first:
+
+```python
+from brightsmith.infra.governance_db import write_document
+
+write_document(
+    doc_type="domain_context",
+    doc_name="domain_context",
+    title="Domain Context",
+    content=markdown_content,
+    agent_id="@domain-context",
+)
+```
+
+Then still save the markdown file to: `governance/domain-context.md`
 
 ```markdown
 # Domain Context: [Domain Name]
@@ -240,6 +260,34 @@ Every user response during the domain interview is:
 Example in domain-context.md:
 > **User Said:** "I don't know the data — just suggest something" (session 2026-03-18-14-30)
 > **Agent Action:** Proposed 25 canonical business concepts based on domain knowledge of SEC EDGAR XBRL. Status: PROPOSED (Unconfirmed).
+
+## Domain Assignment to Manifest
+
+After synthesizing `governance/domain-context.md`, write the identified domain back to `domain/manifest.yaml` so Brightforge can display it in the sidebar hierarchy.
+
+Extract the domain name and sub-domain from your "Domain Identification" section, then run:
+
+```bash
+python3 -m brightsmith.domain_loader assign-domain \
+  --name "{Domain from Domain Identification section}" \
+  --sub-domain "{Sub-domain, if identified}" \
+  --confidence "{your confidence level: High, Medium, or Low}"
+```
+
+This writes a `domain` section to `manifest.yaml`:
+
+```yaml
+domain:
+  name: "Financial Reporting"
+  sub_domain: "SEC XBRL Filings"
+  confidence: "High"
+  assigned_by: "@domain-context"
+  assigned_at: "2026-03-25"
+```
+
+Brightforge reads `domain.name` on startup to display: **Domain > Source > Zones** in the sidebar. If you don't write this, the sidebar falls back to the project name — functional but less informative.
+
+This step is MANDATORY. If you identified a domain (even with Low confidence), write it. The confidence field lets Brightforge and downstream agents know how much to trust it.
 
 ## Revision Protocol
 

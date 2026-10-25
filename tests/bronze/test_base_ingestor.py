@@ -11,12 +11,13 @@ from typing import Any
 
 import pytest
 from pyiceberg.schema import Schema
-from pyiceberg.types import IntegerType, NestedField, StringType, TimestamptzType, DateType
+from pyiceberg.types import DateType, IntegerType, NestedField, StringType, TimestamptzType
 
+import brightsmith.config as config
+from brightsmith.bronze.base_ingestor import BaseIngestor
 from brightsmith.domain_loader import DomainHints, DomainManifest, SourceConfig
 from brightsmith.infra.iceberg_setup import get_catalog, read_with_duckdb
-from brightsmith.bronze.base_ingestor import BaseIngestor
-
+from brightsmith.infra.lineage import query_lineage_events
 
 # --- Test Ingestor (minimal concrete implementation) ---
 
@@ -232,6 +233,81 @@ class TestIngestPipeline:
         assert results[1]["rows"] == 0
 
 
+# --- Lineage attribution ---
+
+
+@pytest.fixture
+def gov_warehouse(tmp_path, monkeypatch):
+    """Point the governance warehouse/catalog at tmp (matches
+    test_lineage_roundtrip.py's convention) so lineage events land somewhere
+    isolated and queryable."""
+    monkeypatch.setattr(config, "GOVERNANCE_WAREHOUSE", tmp_path / "gov-wh")
+    monkeypatch.setattr(config, "CATALOG_PATH", tmp_path / "catalog.db")
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    return tmp_path
+
+
+class TestLineageAttribution:
+    """Tests that ingest() threads spec_reference/agent_id into the lineage event."""
+
+    def test_ingest_threads_spec_reference_and_agent_id(self, tmp_workspace, gov_warehouse):
+        test_data = {1: [{"id": 1, "name": "alpha", "value": "100"}]}
+        source = _make_source_config(entities={1: "Entity A"})
+        manifest = _make_manifest(source)
+        ingestor = SimpleIngestor(source, manifest, test_data)
+
+        ingestor.ingest(
+            warehouse_path=tmp_workspace["warehouse"],
+            catalog_path=config.CATALOG_PATH,  # the project catalog: lineage lands beside the data
+            spec_reference="docs/specs/raw-ingest-statements.md",
+            agent_id="@document-extractor",
+        )
+
+        events = query_lineage_events("bronze.test_data", event_type="START")
+        assert len(events) == 1
+        assert events[0]["spec_reference"] == "docs/specs/raw-ingest-statements.md"
+        assert events[0]["agent_id"] == "@document-extractor"
+
+    def test_ingest_without_attribution_defaults_to_none(self, tmp_workspace, gov_warehouse):
+        """Existing callers that don't pass spec_reference/agent_id keep the
+        current NULL behavior."""
+        test_data = {1: [{"id": 1, "name": "alpha", "value": "100"}]}
+        source = _make_source_config(entities={1: "Entity A"})
+        manifest = _make_manifest(source)
+        ingestor = SimpleIngestor(source, manifest, test_data)
+
+        ingestor.ingest(
+            warehouse_path=tmp_workspace["warehouse"],
+            catalog_path=config.CATALOG_PATH,
+        )
+
+        events = query_lineage_events("bronze.test_data", event_type="START")
+        assert len(events) == 1
+        assert events[0]["spec_reference"] is None
+        assert events[0]["agent_id"] is None
+
+
+    def test_ingest_into_other_catalog_keeps_lineage_out_of_project_catalog(
+        self, tmp_workspace, gov_warehouse
+    ):
+        """Lineage used to go to config.CATALOG_PATH whatever catalog the data
+        went to — how pytest fixture events reached a consumer's shipped
+        catalog (2026-09-08 audit §6)."""
+        from brightsmith.infra.iceberg_setup import get_catalog, read_with_duckdb
+        from brightsmith.infra.lineage import _get_lineage_table
+
+        test_data = {1: [{"id": 1, "name": "alpha", "value": "100"}]}
+        source = _make_source_config(entities={1: "Entity A"})
+        ingestor = SimpleIngestor(source, _make_manifest(source), test_data)
+
+        ingestor.ingest(warehouse_path=tmp_workspace["warehouse"], catalog_path=tmp_workspace["catalog"])
+
+        assert query_lineage_events("bronze.test_data") == []
+        scratch = get_catalog(tmp_workspace["warehouse"], tmp_workspace["catalog"])
+        events = read_with_duckdb(_get_lineage_table(scratch))
+        assert {e["event_type"] for e in events} == {"START", "COMPLETE"}
+
+
 # --- Dedup ---
 
 
@@ -291,3 +367,47 @@ class TestDedup:
         table = catalog.load_table("bronze.test_data")
         rows = read_with_duckdb(table)
         assert len(rows) == 2
+
+
+# ---------------------------------------------------------------------------
+# W3b — _build_existing_grains reads only the grain columns (docs/technical-
+# audit-2026-07-02.md M1: "reads all columns of all rows when it needs only
+# the grain fields").
+# ---------------------------------------------------------------------------
+
+
+class TestBuildExistingGrainsColumnPruning:
+    def test_reads_only_grain_columns_not_the_whole_table(self, tmp_workspace, monkeypatch):
+        """Behavioral spy: read_with_duckdb (called internally by
+        _build_existing_grains) must be invoked with columns= set to exactly
+        the dedup_grain fields — proving column pruning actually happens,
+        not just that the resulting set is correct."""
+        import brightsmith.bronze.base_ingestor as base_ingestor_mod
+
+        source = _make_source_config(dedup_grain=["id", "name"])
+        manifest = _make_manifest(source)
+        ingestor = SimpleIngestor(source, manifest, {1: [{"id": 1, "name": "alpha", "value": "100"}]})
+
+        # First ingest creates the table with one row so the second call has
+        # something to read grains from.
+        ingestor.ingest(
+            warehouse_path=tmp_workspace["warehouse"],
+            catalog_path=tmp_workspace["catalog"],
+        )
+
+        calls = []
+        original = base_ingestor_mod.read_with_duckdb
+
+        def spy(table, *args, **kwargs):
+            calls.append(kwargs)
+            return original(table, *args, **kwargs)
+
+        monkeypatch.setattr(base_ingestor_mod, "read_with_duckdb", spy)
+
+        catalog = get_catalog(tmp_workspace["warehouse"], tmp_workspace["catalog"])
+        table = catalog.load_table("bronze.test_data")
+        grains = ingestor._build_existing_grains(table)
+
+        assert len(calls) == 1
+        assert calls[0].get("columns") == ["id", "name"]
+        assert grains == {("1", "alpha")}

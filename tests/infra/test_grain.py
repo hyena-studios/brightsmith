@@ -1,5 +1,7 @@
 """Tests for deterministic grain hashing."""
 
+import pytest
+
 from brightsmith.infra.grain import compute_grain_id
 
 
@@ -21,18 +23,41 @@ def test_different_input_produces_different_hash():
     assert compute_grain_id(row_a, fields) != compute_grain_id(row_b, fields)
 
 
-def test_null_fields_handled():
-    """None and missing fields should produce a consistent hash, not crash."""
-    row_a = {"cik": 320193, "fy": None, "fp": "FY"}
-    row_b = {"cik": 320193, "fp": "FY"}  # fy missing entirely
+def test_present_but_none_value_hashes_deterministically():
+    """A grain field present with a None value is allowed and hashes as "None".
+
+    (WP-2.4: distinguishes "key present, value None" — allowed — from
+    "key missing" — a hard error, see test_missing_grain_field_raises.)
+    """
+    row = {"cik": 320193, "fy": None, "fp": "FY"}
     fields = ["cik", "fy", "fp"]
-    h_a = compute_grain_id(row_a, fields)
-    h_b = compute_grain_id(row_b, fields)
-    assert isinstance(h_a, str)
-    assert isinstance(h_b, str)
-    # Both use str(None) and str("") respectively — different but both valid
-    assert len(h_a) == 16
-    assert len(h_b) == 16
+    h1 = compute_grain_id(row, fields)
+    h2 = compute_grain_id(row, fields)
+    assert h1 == h2
+    assert len(h1) == 16
+    # It hashes the literal string "None" for the missing value, so it differs
+    # from a row whose fy is the integer 0 or any other value.
+    assert h1 != compute_grain_id({"cik": 320193, "fy": 0, "fp": "FY"}, fields)
+
+
+def test_missing_grain_field_raises():
+    """A grain field KEY absent from the row is a hard error naming the field.
+
+    (WP-2.4: previously this silently became "" and collapsed distinct rows into
+    one hash — data loss via dedup.)
+    """
+    row = {"cik": 320193, "fp": "FY"}  # "fy" key entirely absent
+    fields = ["cik", "fy", "fp"]
+    with pytest.raises(ValueError, match="fy"):
+        compute_grain_id(row, fields)
+
+
+def test_delimiter_escaping_prevents_collision():
+    """('a|b', 'c') must not collide with ('a', 'b|c'). (WP-2.4)"""
+    fields = ["x", "y"]
+    h1 = compute_grain_id({"x": "a|b", "y": "c"}, fields)
+    h2 = compute_grain_id({"x": "a", "y": "b|c"}, fields)
+    assert h1 != h2
 
 
 def test_prefix_included_in_id():

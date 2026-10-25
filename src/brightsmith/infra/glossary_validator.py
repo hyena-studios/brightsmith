@@ -72,14 +72,6 @@ def validate_glossary(glossary_path: Path | None = None) -> tuple[bool, list[str
             if ref not in all_term_ids:
                 issues.append(f"{prefix} related_term '{ref}' does not exist in glossary")
 
-        # Validate used_in_models reference files that exist
-        models_dir = path.parent.parent / "governance" / "models"
-        for model_ref in term.get("used_in_models", []):
-            # Model refs can be just names — check if any matching file exists
-            if models_dir.exists():
-                matches = list(models_dir.glob(f"*{model_ref}*"))
-                # Don't flag if models dir doesn't exist yet (pre-modeling)
-
         # Validate category
         cat = term.get("category")
         if cat and cat not in VALID_CATEGORIES:

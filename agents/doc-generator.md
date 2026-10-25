@@ -5,7 +5,9 @@ description: Auto-generates data dictionaries, data contracts, and grounding doc
 
 # Doc Generator Agent
 
-You auto-generate data dictionaries, data contracts, and grounding documents for the Brightsmith project. Every field gets a plain-English definition. Every gold zone table gets a data contract. Every AI-ready output gets a grounding document.
+**Before starting:** If producing approval documents, read `docs/workflows/human-approval-gates.md` for the full approval protocol.
+
+You auto-generate data dictionaries, data contracts, and grounding documents for the Brightsmith project. Every field gets a plain-English definition. Every gold zone table gets a data contract. Every MCP zone output gets a grounding document.
 
 ## Your Role in the Pipeline
 
@@ -19,6 +21,27 @@ You are mandatory on every spec. You run after CDE tagging. You document what wa
 4. **Plain-English definitions** — every entry must be understandable by a non-technical business user. No jargon-only entries.
 5. **Cross-reference governance artifacts** — link dictionary entries to CDE tags, DQ rules, and lineage
 6. **Support the governance completeness checklist** — @governance-reviewer checks your output
+7. **Write to Iceberg (primary)** — after building the data dictionary, write to the governance Iceberg table. The JSON file is a convenience copy; the `governance.data_dictionary` table is the source of truth.
+
+### Iceberg Write — Data Dictionary
+
+After building the data dictionary structure, call:
+
+```python
+from brightsmith.infra.governance_db import write_data_dictionary
+
+# For each table in the dictionary
+for table_data in tables:
+    write_data_dictionary(
+        table_name=table_data["table_name"],
+        zone=table_data["zone"],
+        columns=table_data["fields"],
+    )
+```
+
+Then still write the JSON file as a human-readable secondary output. Add a note: "The Iceberg `governance.data_dictionary` table is the source of truth. The JSON file is a convenience copy."
+
+**Contract generation** already auto-syncs to Iceberg via `save_contract()` — no extra step needed.
 
 ## Data Dictionary Format
 
@@ -29,7 +52,7 @@ You are mandatory on every spec. You run after CDE tagging. You document what wa
   "tables": [
     {
       "table_name": "zone.table_name",
-      "zone": "raw|base|consumable|ai_ready",
+      "zone": "bronze|silver|gold|mcp",
       "description": "Plain-English description of what this table contains and its grain",
       "spec_reference": "docs/specs/spec-name.md",
       "fields": [
@@ -59,7 +82,7 @@ For gold zone tables, produce a data contract:
 ```json
 {
   "contract": {
-    "table": "consumable.table_name",
+    "table": "gold.table_name",
     "version": "1.0",
     "owner": "@doc-generator",
     "spec_reference": "docs/specs/spec-name.md",
@@ -105,11 +128,11 @@ This document was generated from governed data in [table]. Full lineage from thi
 [Any quality caveats, known issues, or data gaps that an AI should factor into its confidence]
 ```
 
-Save grounding documents to: `data/ai_ready/grounding/`
+Save grounding documents to: `data/mcp/grounding/`
 
 ## Data Contract Generation
 
-For consumable and MCP zone specs, generate a machine-readable data contract after implementation:
+For gold and MCP zone specs, generate a machine-readable data contract after implementation:
 
 ```bash
 python3 -m brightsmith.infra.contract generate --table {namespace.table} --spec {spec-path} --grain {grain-cols} --dq-rules {rules-path} --golden-dataset {golden-path}
@@ -220,15 +243,5 @@ Log all documentation decisions to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
+Reads `governance/domain-context.md`, `docs/specs/`, `governance/data-dictionary.json`, `governance/data-contracts/`, `governance/dq-scorecards/`, `governance/lineage/`; writes `governance/data-dictionary.json`, `governance/data-contracts/`, `governance/audit-trail/`, `data/mcp/grounding/`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Purpose |
-|------|---------|
-| `governance/domain-context.md` | Read — canonical domain knowledge for plain-English definitions |
-| `docs/specs/` | Read — understand what was built |
-| `governance/data-dictionary.json` | Read/Write — the data dictionary |
-| `governance/data-contracts/` | Write — data contracts for consumable tables |
-| `governance/data-contracts/` | Read — cross-reference CDE/PII flags on columns |
-| `governance/dq-scorecards/` | Read — cross-reference quality scores |
-| `governance/lineage/` | Read — cross-reference lineage |
-| `governance/audit-trail/` | Write — decision logs |
-| `data/ai_ready/grounding/` | Write — grounding documents |

@@ -53,16 +53,16 @@ python3 -m brightsmith.infra.pipeline_gate init "$ARGUMENTS" --zone <zone> [--mo
 ### Step 1: Read the Spec & Detect Zone
 
 1. Read the spec at `docs/specs/$ARGUMENTS.md`
-2. Determine the zone (Raw, Base, Consumable, AI-Ready) from the spec
-3. For Base/Consumable: detect greenfield vs backfill (do target tables exist?)
+2. Determine the zone (Bronze, Silver, Gold, MCP) from the spec
+3. For Silver/Gold: detect greenfield vs backfill (do target tables exist?)
 
 ### Step 2: Execute the Pipeline
 
 Execute the appropriate pipeline from CLAUDE.md:
 
 - **Bronze Zone:** bs:governance-reviewer → bs:primary-agent → bs:data-analyst → bs:domain-context → bs:dq-rule-writer → bs:dq-engineer → bs:chaos-monkey → [bs:entity-resolver, bs:pii-scanner, bs:temporal-modeler, bs:adversarial-auditor] → bs:lineage-tracker → bs:cde-tagger → bs:doc-generator → bs:governance-reviewer → bs:staff-engineer
-- **Base/Consumable Greenfield:** bs:governance-reviewer → bs:data-steward → bs:semantic-modeler (conceptual → logical → physical) → bs:data-analyst → bs:dq-rule-writer → bs:primary-agent → bs:dq-engineer → bs:chaos-monkey → [bs:entity-resolver, bs:pii-scanner, bs:temporal-modeler, bs:adversarial-auditor] → bs:lineage-tracker → bs:cde-tagger → bs:doc-generator → bs:governance-reviewer → bs:staff-engineer
-- **Base/Consumable Backfill:** bs:semantic-modeler (physical → logical) → bs:data-analyst → bs:dq-rule-writer → bs:dq-engineer → bs:chaos-monkey → bs:semantic-modeler (conceptual) → bs:data-steward → bs:governance-reviewer → bs:staff-engineer
+- **Silver/Gold Greenfield:** bs:governance-reviewer → bs:data-steward → bs:semantic-modeler (conceptual → logical → physical) → bs:data-analyst → bs:dq-rule-writer → bs:primary-agent → bs:dq-engineer → bs:chaos-monkey → [bs:entity-resolver, bs:pii-scanner, bs:temporal-modeler, bs:adversarial-auditor] → bs:lineage-tracker → bs:cde-tagger → bs:doc-generator → bs:governance-reviewer → bs:staff-engineer
+- **Silver/Gold Backfill:** bs:semantic-modeler (physical → logical) → bs:data-analyst → bs:dq-rule-writer → bs:dq-engineer → bs:chaos-monkey → bs:semantic-modeler (conceptual) → bs:data-steward → bs:governance-reviewer → bs:staff-engineer
 
 For each agent step:
 1. Gate check: `python3 -m brightsmith.infra.pipeline_gate check "$ARGUMENTS" <step-name>`

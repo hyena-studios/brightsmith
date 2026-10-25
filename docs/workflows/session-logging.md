@@ -5,8 +5,34 @@ Every Claude Code session is logged for two reasons:
 1. Open source transparency — anyone can see exactly how this project was built
 2. Continuity — pick up where we left off between sessions
 
-## Session Log Location
-All session logs go in `docs/sessions/`
+## Session Log Storage
+
+Session logs are **Iceberg-authoritative**, consistent with the rest of governance:
+
+1. **Primary (authoritative):** the governance `sessions` table. Write it via
+   `log_session(...)` — the record is queryable with `get_sessions(...)` and shows
+   up in the Brightforge UI alongside agent activity.
+2. **Secondary (optional, human-readable):** a markdown file under `docs/sessions/`
+   using the template below. This is a convenience export for reading in git — the
+   table is the record of truth. If the two disagree, the table wins.
+
+```python
+from brightsmith.infra.governance_db import log_session
+
+log_session(
+    session_id="2026-07-01-1430",              # YYYY-MM-DD-HHMM, stable per session
+    title="Short session title",
+    summary="1-2 sentence summary of what this session accomplished",
+    author="human:jeff",                        # or an agent id
+    spec_name="the-spec",                        # optional
+    agents_involved=["@staff-engineer"],          # optional
+    artifacts=["governance/…", "silver.table"],   # optional
+    content="<the full markdown session log body>",  # optional — the export text
+)
+```
+
+`log_session` is strict by default: if the governance write fails it raises, so a
+lost session record is loud, not silent. Pass `strict=False` for best-effort.
 
 ## At the START of Every Session
 
@@ -90,8 +116,8 @@ Append the following to the same session log file:
 - Decisions Made should capture the WHY, not just the WHAT
 - If a session spans multiple specs, log all of them
 - Don't sanitize or polish — raw is better for transparency
-- Session logs are NEVER deleted, only appended to
-- If you need to reference a previous session, check `docs/sessions/` first
+- Session logs are NEVER deleted, only appended to (the `sessions` table is append-only; the markdown export is only appended to)
+- If you need to reference a previous session, query the `sessions` table (`get_sessions(...)`) or check `docs/sessions/` — the table is authoritative
 - Every user message is logged in the Human Input Log — no exceptions, no paraphrasing
 - AskUserQuestion responses are logged with BOTH the question that was asked AND the option/text selected
 - Approval decisions are logged with the artifact path, the decision (APPROVED/CHANGES REQUESTED/etc.), and any notes

@@ -20,21 +20,45 @@ import os
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
 
-from brightsmith.config import PROJECT_ROOT
+from brightsmith import config
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MANIFEST_PATH = PROJECT_ROOT / "domain" / "manifest.yaml"
+
+def _default_manifest_path() -> Path:
+    """Resolve the default manifest path from the live config (call-time)."""
+    return config.PROJECT_ROOT / "domain" / "manifest.yaml"
+
+
+def __getattr__(name):
+    # Back-compat: ``DEFAULT_MANIFEST_PATH`` and ``PROJECT_ROOT`` were module
+    # constants; expose them as live views so configure() takes effect.
+    if name == "DEFAULT_MANIFEST_PATH":
+        return _default_manifest_path()
+    if name == "PROJECT_ROOT":
+        return config.PROJECT_ROOT
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 @dataclass
 class SourceConfig:
-    """Configuration for a single data source."""
+    """Configuration for a single data source.
+
+    Most sources declare one table (``table:``). Multi-table sources (e.g.
+    O*NET's 7-table bulk extract, field evidence: futureproof-data's
+    ``onet.yaml``) declare ``tables:`` instead — a list of names, or a
+    mapping keyed by table name carrying per-table metadata (per-table
+    metadata other than ``dedup_grain`` is not consumed by this loader). ``table`` is always
+    populated (the first entry of ``tables`` for back-compat with existing
+    single-table callers); ``tables`` always holds the full list, and
+    defaults to ``[table]`` when not passed explicitly (back-compat for
+    callers constructing SourceConfig directly, e.g. tests).
+    """
 
     name: str
     namespace: str
@@ -43,12 +67,21 @@ class SourceConfig:
     entities: dict[int | str, str]
     dedup_grain: list[str]
     cache_dir: Path
+    tables: list[str] = field(default_factory=list)
     fetcher_path: str | None = None
     flattener_path: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.tables:
+            self.tables = [self.table]
 
     @property
     def full_table_name(self) -> str:
         return f"{self.namespace}.{self.table}"
+
+    @property
+    def full_table_names(self) -> list[str]:
+        return [f"{self.namespace}.{t}" for t in self.tables]
 
 
 @dataclass
@@ -95,6 +128,11 @@ class DomainManifest:
     hints: DomainHints
     domain: DomainAssignment | None = None
     pipeline: dict | None = None
+    # Top-level `mcp: {module, class}` block (H1) — names the domain-specific
+    # MCP server class serve.py should load instead of the generic
+    # BaseMCPServer. Distinct from a `pipeline.zones.mcp` entry (the shape
+    # field manifests use), which serve.py also checks as a fallback.
+    mcp: dict | None = None
 
 
 def _resolve_path(path_str: str | None, project_root: Path) -> Path | None:
@@ -105,6 +143,80 @@ def _resolve_path(path_str: str | None, project_root: Path) -> Path | None:
     if p.is_absolute():
         return p
     return project_root / p
+
+
+def _resolve_table_names(data: dict, source_config_path: Path) -> list[str]:
+    """Resolve the table name(s) declared by a source config (H5.1).
+
+    Supports the singular ``table:`` key (one table per source — unchanged
+    behavior) and the plural ``tables:`` key for multi-table sources, which
+    may be either a YAML list of names or a mapping keyed by table name
+    carrying per-table metadata (e.g. ``source_file``/``dedup_grain`` — field
+    evidence: futureproof-data's O*NET source declares 5 tables this way).
+    Per-table metadata under a mapping form is not consumed here; only the
+    table names are extracted.
+
+    Raises:
+        KeyError: Neither ``table:`` nor ``tables:`` is present.
+        ValueError: ``tables:`` is present but not a list/mapping, or is empty.
+    """
+    if "table" in data:
+        return [data["table"]]
+
+    tables = data.get("tables")
+    if tables is None:
+        raise KeyError(
+            f"Source config {source_config_path} has neither 'table:' (singular) "
+            f"nor 'tables:' (plural) — one is required."
+        )
+    if isinstance(tables, dict):
+        names = list(tables.keys())
+    elif isinstance(tables, list):
+        names = list(tables)
+    else:
+        raise ValueError(
+            f"Source config {source_config_path}: 'tables:' must be a list or "
+            f"mapping of table names, got {type(tables).__name__}"
+        )
+    if not names:
+        raise ValueError(f"Source config {source_config_path}: 'tables:' is empty")
+    return names
+
+
+def _resolve_dedup_grain(data: dict, table_names: list[str], source_config_path: Path) -> list[str]:
+    """Return the grain for the source's primary table, requiring one per table.
+
+    A missing grain used to default to ``[]``, which silently disabled dedup:
+    every re-run appended the whole source again (2026-09-08 audit §2 P0). A
+    top-level ``dedup_grain:`` covers every table; a ``tables:`` mapping may
+    instead give each table its own ``dedup_grain``.
+
+    Raises:
+        ValueError: No non-empty grain is declared for some table.
+    """
+    top = data.get("dedup_grain")
+    if isinstance(top, str):
+        # list("id") would silently become ["i", "d"]
+        raise ValueError(
+            f"Source config {source_config_path}: dedup_grain must be a list of column "
+            f"names, got the string {top!r}. Write dedup_grain: [{top}]."
+        )
+    if top:
+        return list(top)
+
+    tables = data.get("tables")
+    per_table = {
+        name: (meta or {}).get("dedup_grain") for name, meta in tables.items()
+    } if isinstance(tables, dict) else {}
+    missing = [name for name in table_names if not per_table.get(name)]
+    if missing:
+        raise ValueError(
+            f"Source config {source_config_path}: no dedup_grain for table(s) {missing}. "
+            f"Declare the columns that identify one source fact, either as a top-level "
+            f"'dedup_grain:' list or per table under 'tables:'. Without a grain every "
+            f"re-run appends the full source again."
+        )
+    return list(per_table[table_names[0]] or [])
 
 
 def _load_source_config(source_entry: dict, project_root: Path) -> SourceConfig:
@@ -120,19 +232,22 @@ def _load_source_config(source_entry: dict, project_root: Path) -> SourceConfig:
     with open(source_config_path) as f:
         data = yaml.safe_load(f)
 
-    # Ensure entity keys are the right type (YAML may parse them as ints or strings)
-    entities = {}
-    for k, v in data.get("entities", {}).items():
-        entities[k] = v
+    # YAML may parse entity keys as ints or strings depending on quoting;
+    # SourceConfig.entities accepts both, so the raw dict is used as-is.
+    entities = data.get("entities", {})
+
+    table_names = _resolve_table_names(data, source_config_path)
 
     return SourceConfig(
         name=data["name"],
         namespace=data["namespace"],
-        table=data["table"],
+        table=table_names[0],
+        tables=table_names,
         fetch=data.get("fetch", {}),
         entities=entities,
-        dedup_grain=data.get("dedup_grain", []),
-        cache_dir=_resolve_path(data.get("cache_dir", "data/raw/json_cache"), project_root),
+        dedup_grain=_resolve_dedup_grain(data, table_names, source_config_path),
+        cache_dir=_resolve_path(data.get("cache_dir", "data/raw/json_cache"), project_root)
+        or project_root / "data/raw/json_cache",
         fetcher_path=source_entry.get("fetcher"),
         flattener_path=source_entry.get("flattener"),
     )
@@ -170,7 +285,7 @@ def load_manifest(manifest_path: Path | None = None) -> DomainManifest:
     Raises:
         FileNotFoundError: If the manifest file doesn't exist.
     """
-    path = manifest_path or DEFAULT_MANIFEST_PATH
+    path = manifest_path or _default_manifest_path()
     if not path.exists():
         raise FileNotFoundError(
             f"Domain manifest not found at {path}. "
@@ -199,6 +314,7 @@ def load_manifest(manifest_path: Path | None = None) -> DomainManifest:
         hints=hints,
         domain=domain,
         pipeline=data.get("pipeline"),
+        mcp=data.get("mcp"),
     )
 
     logger.info(
@@ -283,14 +399,14 @@ def assign_domain(
     if confidence not in VALID_CONFIDENCE:
         raise ValueError(f"confidence must be one of {VALID_CONFIDENCE}, got '{confidence}'")
 
-    path = manifest_path or DEFAULT_MANIFEST_PATH
+    path = manifest_path or _default_manifest_path()
     if not path.exists():
         raise FileNotFoundError(f"Domain manifest not found at {path}")
 
     with open(path) as f:
         data = yaml.safe_load(f) or {}
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    now = datetime.now(UTC).strftime("%Y-%m-%d")
 
     data["domain"] = {
         "name": domain_name,
@@ -335,7 +451,7 @@ def show_domain(manifest_path: Path | None = None) -> DomainAssignment | None:
     Returns:
         DomainAssignment or None if not assigned.
     """
-    path = manifest_path or DEFAULT_MANIFEST_PATH
+    path = manifest_path or _default_manifest_path()
     if not path.exists():
         return None
 

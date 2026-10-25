@@ -21,8 +21,9 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pyarrow as pa
 from pyiceberg.schema import Schema
@@ -35,8 +36,11 @@ from pyiceberg.types import (
     TimestamptzType,
 )
 
-from brightsmith.config import CATALOG_PATH, GOVERNANCE_WAREHOUSE, PROJECT_NAME, PROJECT_ROOT
+from brightsmith import config
 from brightsmith.infra.iceberg_setup import get_catalog, get_or_create_table
+
+if TYPE_CHECKING:
+    from pyiceberg.catalog import Catalog
 
 logger = logging.getLogger(__name__)
 
@@ -104,15 +108,62 @@ def build_column_lineage(mappings: list[ColumnMapping]) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _get_lineage_table():
-    """Lazily create and return the governance.lineage_events table."""
-    catalog = get_catalog(GOVERNANCE_WAREHOUSE, CATALOG_PATH)
+def _is_project_catalog(catalog: Catalog) -> bool:
+    uri = str(catalog.properties.get("uri", ""))
+    return uri.removeprefix("sqlite:///") == str(Path(config.CATALOG_PATH).resolve())
+
+
+def _get_lineage_table(catalog: Catalog | None = None):
+    """Lazily create and return the governance.lineage_events table.
+
+    With no ``catalog`` (or the project's own catalog) the table lives in the
+    project's governance warehouse. Any other catalog gets its own lineage
+    table, so a write into a scratch or test catalog never leaves events in
+    the project's catalog (2026-09-08 audit §6: 584 pytest fixture events
+    reached a consumer's shipped catalog this way).
+    """
+    if catalog is None or _is_project_catalog(catalog):
+        catalog = get_catalog(config.GOVERNANCE_WAREHOUSE, config.CATALOG_PATH)
     return get_or_create_table(catalog, "governance", "lineage_events", LINEAGE_EVENTS_SCHEMA)
 
 
-def _write_event(record: dict) -> None:
+def _read_lineage_arrow() -> pa.Table:
+    """All lineage events in the project catalog, as Arrow.
+
+    A catalog with no lineage table yet reads as zero events. Reading never
+    creates the table, so status and verify commands leave the catalog as
+    they found it (2026-09-08 audit Phase 0 item 7).
+    """
+    from pyiceberg.io.pyarrow import schema_to_pyarrow
+
+    from brightsmith.infra.iceberg_setup import load_table_if_exists
+
+    catalog = get_catalog(config.GOVERNANCE_WAREHOUSE, config.CATALOG_PATH)
+    table = load_table_if_exists(catalog, "governance", "lineage_events")
+    if table is None:
+        return schema_to_pyarrow(LINEAGE_EVENTS_SCHEMA).empty_table()
+    return table.scan().to_arrow()
+
+
+def _emit(record: dict, catalog: Catalog | None, strict: bool) -> None:
+    """Write ``record``; on failure raise when ``strict``, otherwise log a warning."""
+    try:
+        _write_event(record, catalog)
+    except Exception:
+        if strict:
+            raise
+        logger.warning(
+            "Failed to emit lineage %s for %s", record["event_type"], record["job_name"], exc_info=True
+        )
+        return
+    logger.debug(
+        "Lineage %s emitted for %s (run_id=%s)", record["event_type"], record["job_name"], record["run_id"]
+    )
+
+
+def _write_event(record: dict, catalog: Catalog | None = None) -> None:
     """Write a single event record to the lineage_events table."""
-    table = _get_lineage_table()
+    table = _get_lineage_table(catalog)
     from pyiceberg.io.pyarrow import schema_to_pyarrow
 
     arrow_schema = schema_to_pyarrow(table.schema())
@@ -135,19 +186,23 @@ def emit_start(
     producer: str,
     spec_reference: str | None = None,
     agent_id: str | None = None,
+    catalog: Catalog | None = None,
+    strict: bool = False,
 ) -> str:
     """Emit a START event. Returns run_id for pairing with COMPLETE/FAIL.
 
-    Fault-tolerant: logs a warning and returns run_id even if write fails.
+    ``catalog`` is the catalog the job wrote into; events land beside it (see
+    :func:`_get_lineage_table`). With ``strict=False`` (default) a failed write
+    logs a warning and the run_id is still returned; ``strict=True`` raises.
     """
     run_id = str(uuid.uuid4())
-    try:
-        _write_event({
+    _emit(
+        {
             "event_id": str(uuid.uuid4()),
             "run_id": run_id,
             "event_type": "START",
             "job_name": job_name,
-            "job_namespace": PROJECT_NAME,
+            "job_namespace": config.PROJECT_NAME,
             "producer": producer,
             "input_tables": json.dumps(input_tables),
             "output_table": output_table,
@@ -159,14 +214,14 @@ def emit_start(
             "dq_p0_passed": None,
             "duration_ms": None,
             "error_message": None,
-            "event_time": datetime.now(timezone.utc),
+            "event_time": datetime.now(UTC),
             "spec_reference": spec_reference,
             "agent_id": agent_id,
             "transformation_steps": None,
-        })
-        logger.debug("Lineage START emitted for %s (run_id=%s)", job_name, run_id)
-    except Exception:
-        logger.warning("Failed to emit lineage START for %s", job_name, exc_info=True)
+        },
+        catalog,
+        strict,
+    )
     return run_id
 
 
@@ -183,15 +238,17 @@ def emit_complete(
     dq_p0_passed: bool | None = None,
     duration_ms: int | None = None,
     transformation_steps: list[dict] | None = None,
+    catalog: Catalog | None = None,
+    strict: bool = False,
 ) -> None:
-    """Emit a COMPLETE event. Fault-tolerant: logs warning on failure."""
-    try:
-        _write_event({
+    """Emit a COMPLETE event. See :func:`emit_start` for ``catalog``/``strict``."""
+    _emit(
+        {
             "event_id": str(uuid.uuid4()),
             "run_id": run_id,
             "event_type": "COMPLETE",
             "job_name": job_name,
-            "job_namespace": PROJECT_NAME,
+            "job_namespace": config.PROJECT_NAME,
             "producer": producer,
             "input_tables": "[]",
             "output_table": output_table,
@@ -203,14 +260,14 @@ def emit_complete(
             "dq_p0_passed": dq_p0_passed,
             "duration_ms": duration_ms,
             "error_message": None,
-            "event_time": datetime.now(timezone.utc),
+            "event_time": datetime.now(UTC),
             "spec_reference": None,
             "agent_id": None,
             "transformation_steps": json.dumps(transformation_steps) if transformation_steps else None,
-        })
-        logger.debug("Lineage COMPLETE emitted for %s (run_id=%s)", job_name, run_id)
-    except Exception:
-        logger.warning("Failed to emit lineage COMPLETE for %s", job_name, exc_info=True)
+        },
+        catalog,
+        strict,
+    )
 
 
 def emit_fail(
@@ -220,15 +277,17 @@ def emit_fail(
     producer: str,
     error_message: str,
     duration_ms: int | None = None,
+    catalog: Catalog | None = None,
+    strict: bool = False,
 ) -> None:
-    """Emit a FAIL event. Fault-tolerant: logs warning on failure."""
-    try:
-        _write_event({
+    """Emit a FAIL event. See :func:`emit_start` for ``catalog``/``strict``."""
+    _emit(
+        {
             "event_id": str(uuid.uuid4()),
             "run_id": run_id,
             "event_type": "FAIL",
             "job_name": job_name,
-            "job_namespace": PROJECT_NAME,
+            "job_namespace": config.PROJECT_NAME,
             "producer": producer,
             "input_tables": "[]",
             "output_table": output_table,
@@ -240,14 +299,14 @@ def emit_fail(
             "dq_p0_passed": None,
             "duration_ms": duration_ms,
             "error_message": error_message[:4000] if error_message else None,
-            "event_time": datetime.now(timezone.utc),
+            "event_time": datetime.now(UTC),
             "spec_reference": None,
             "agent_id": None,
             "transformation_steps": None,
-        })
-        logger.debug("Lineage FAIL emitted for %s (run_id=%s)", job_name, run_id)
-    except Exception:
-        logger.warning("Failed to emit lineage FAIL for %s", job_name, exc_info=True)
+        },
+        catalog,
+        strict,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -260,14 +319,13 @@ def _read_all_events() -> list[dict]:
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
         if arrow_table.num_rows == 0:
             return []
-        con = duckdb.connect()
-        rows = con.sql("SELECT * FROM arrow_table ORDER BY event_time DESC").fetchall()
-        columns = [f.name for f in table.schema().fields]
-        return [dict(zip(columns, row)) for row in rows]
+        with duckdb.connect() as con:
+            rows = con.sql("SELECT * FROM arrow_table ORDER BY event_time DESC").fetchall()
+        columns = arrow_table.schema.names
+        return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception:
         logger.warning("Could not read lineage events", exc_info=True)
         return []
@@ -285,21 +343,20 @@ def query_lineage_events(
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
         if arrow_table.num_rows == 0:
             return []
-        con = duckdb.connect()
-        rows = con.sql("""
-            SELECT *
-            FROM arrow_table
-            WHERE output_table = $1
-              AND event_type = $2
-            ORDER BY event_time DESC
-            LIMIT $3
-        """, params=[table_name, event_type, limit]).fetchall()
-        columns = [f.name for f in table.schema().fields]
-        return [dict(zip(columns, row)) for row in rows]
+        with duckdb.connect() as con:
+            rows = con.sql("""
+                SELECT *
+                FROM arrow_table
+                WHERE output_table = $1
+                  AND event_type = $2
+                ORDER BY event_time DESC
+                LIMIT $3
+            """, params=[table_name, event_type, limit]).fetchall()
+        columns = arrow_table.schema.names
+        return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception:
         logger.warning("Could not query lineage events for %s", table_name, exc_info=True)
         return []
@@ -319,23 +376,22 @@ def query_downstream_consumers(
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
         if arrow_table.num_rows == 0:
             return []
-        con = duckdb.connect()
         # Search for table_name in the JSON array string of input_tables
         pattern = f'%"{table_name}"%'
-        rows = con.sql("""
-            SELECT *
-            FROM arrow_table
-            WHERE input_tables LIKE $1
-              AND event_type = 'START'
-            ORDER BY event_time DESC
-            LIMIT $2
-        """, params=[pattern, limit]).fetchall()
-        columns = [f.name for f in table.schema().fields]
-        return [dict(zip(columns, row)) for row in rows]
+        with duckdb.connect() as con:
+            rows = con.sql("""
+                SELECT *
+                FROM arrow_table
+                WHERE input_tables LIKE $1
+                  AND event_type = 'START'
+                ORDER BY event_time DESC
+                LIMIT $2
+            """, params=[pattern, limit]).fetchall()
+        columns = arrow_table.schema.names
+        return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception:
         logger.warning("Could not query downstream consumers for %s", table_name, exc_info=True)
         return []
@@ -344,7 +400,7 @@ def query_downstream_consumers(
 def _job_name_to_slug(job_name: str) -> str:
     """Convert a job_name to a filename slug.
 
-    base.financial_facts -> base-financial-facts
+    silver.financial_facts -> silver-financial-facts
     ingest:my_source -> ingest-my_source
     """
     return job_name.replace(".", "-").replace(":", "-")
@@ -360,8 +416,7 @@ def cmd_status() -> None:
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
     except Exception as e:
         print(f"No lineage events table found: {e}")
         return
@@ -370,19 +425,19 @@ def cmd_status() -> None:
         print("No lineage events recorded yet.")
         return
 
-    con = duckdb.connect()
-    rows = con.sql("""
-        WITH ranked AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
-            FROM arrow_table
-            WHERE event_type IN ('COMPLETE', 'FAIL')
-        )
-        SELECT job_name, event_time, row_count, duration_ms, event_type, error_message
-        FROM ranked
-        WHERE rn = 1
-        ORDER BY job_name
-    """).fetchall()
+    with duckdb.connect() as con:
+        rows = con.sql("""
+            WITH ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
+                FROM arrow_table
+                WHERE event_type IN ('COMPLETE', 'FAIL')
+            )
+            SELECT job_name, event_time, row_count, duration_ms, event_type, error_message
+            FROM ranked
+            WHERE rn = 1
+            ORDER BY job_name
+        """).fetchall()
 
     if not rows:
         print("No COMPLETE or FAIL events recorded yet.")
@@ -406,8 +461,7 @@ def cmd_history(job_name: str) -> None:
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
     except Exception as e:
         print(f"No lineage events table found: {e}")
         return
@@ -416,14 +470,14 @@ def cmd_history(job_name: str) -> None:
         print("No lineage events recorded yet.")
         return
 
-    con = duckdb.connect()
-    rows = con.sql(f"""
-        SELECT event_type, event_time, row_count, duration_ms, run_id,
-               output_snapshot_id, dq_rules_passed, dq_rules_total, error_message
-        FROM arrow_table
-        WHERE job_name = '{job_name}'
-        ORDER BY event_time DESC
-    """).fetchall()
+    with duckdb.connect() as con:
+        rows = con.sql("""
+            SELECT event_type, event_time, row_count, duration_ms, run_id,
+                   output_snapshot_id, dq_rules_passed, dq_rules_total, error_message
+            FROM arrow_table
+            WHERE job_name = $1
+            ORDER BY event_time DESC
+        """, params=[job_name]).fetchall()
 
     if not rows:
         print(f"No events found for job: {job_name}")
@@ -446,8 +500,7 @@ def cmd_graph() -> None:
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
     except Exception as e:
         print(f"No lineage events table found: {e}")
         return
@@ -456,19 +509,19 @@ def cmd_graph() -> None:
         print("No lineage events recorded yet.")
         return
 
-    con = duckdb.connect()
-    rows = con.sql("""
-        WITH ranked AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
-            FROM arrow_table
-            WHERE event_type = 'START'
-        )
-        SELECT job_name, input_tables, output_table
-        FROM ranked
-        WHERE rn = 1
-        ORDER BY job_name
-    """).fetchall()
+    with duckdb.connect() as con:
+        rows = con.sql("""
+            WITH ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
+                FROM arrow_table
+                WHERE event_type = 'START'
+            )
+            SELECT job_name, input_tables, output_table
+            FROM ranked
+            WHERE rn = 1
+            ORDER BY job_name
+        """).fetchall()
 
     if not rows:
         print("No lineage graph available.")
@@ -513,8 +566,7 @@ def cmd_generate_docs() -> None:
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
     except Exception as e:
         print(f"No lineage events table found: {e}")
         return
@@ -523,43 +575,46 @@ def cmd_generate_docs() -> None:
         print("No lineage events to generate docs from.")
         return
 
-    con = duckdb.connect()
+    with duckdb.connect() as con:
+        # Get latest COMPLETE event per job, plus the matching START for input_tables.
+        # NB: read columns from the relation — con.description is None after
+        # con.sql() (it is only populated by con.execute()).
+        complete_rel = con.sql("""
+            WITH ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
+                FROM arrow_table
+                WHERE event_type = 'COMPLETE'
+            )
+            SELECT * FROM ranked WHERE rn = 1
+        """)
+        complete_columns = complete_rel.columns
+        complete_rows = complete_rel.fetchall()
 
-    # Get latest COMPLETE event per job, plus the matching START for input_tables
-    complete_rows = con.sql("""
-        WITH ranked AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
-            FROM arrow_table
-            WHERE event_type = 'COMPLETE'
-        )
-        SELECT * FROM ranked WHERE rn = 1
-    """).fetchall()
-    complete_columns = [desc[0] for desc in con.description]
-
-    start_rows = con.sql("""
-        WITH ranked AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
-            FROM arrow_table
-            WHERE event_type = 'START'
-        )
-        SELECT * FROM ranked WHERE rn = 1
-    """).fetchall()
-    start_columns = [desc[0] for desc in con.description]
+        start_rel = con.sql("""
+            WITH ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY job_name ORDER BY event_time DESC) AS rn
+                FROM arrow_table
+                WHERE event_type = 'START'
+            )
+            SELECT * FROM ranked WHERE rn = 1
+        """)
+        start_columns = start_rel.columns
+        start_rows = start_rel.fetchall()
 
     # Build start event lookup by job_name
     start_lookup: dict[str, dict] = {}
     for row in start_rows:
-        event = dict(zip(start_columns, row))
+        event = dict(zip(start_columns, row, strict=False))
         start_lookup[event["job_name"]] = event
 
-    lineage_dir = PROJECT_ROOT / "governance" / "lineage"
+    lineage_dir = config.PROJECT_ROOT / "governance" / "lineage"
     lineage_dir.mkdir(parents=True, exist_ok=True)
     generated = 0
 
     for row in complete_rows:
-        event = dict(zip(complete_columns, row))
+        event = dict(zip(complete_columns, row, strict=False))
         job_name = event["job_name"]
         start_event = start_lookup.get(job_name, {})
         input_tables_json = start_event.get("input_tables", "[]")
@@ -588,7 +643,7 @@ def cmd_generate_docs() -> None:
             }
             # Try to find the DQ rules file
             spec_slug = _job_name_to_slug(job_name)
-            dq_rules_path = PROJECT_ROOT / "governance" / "dq-rules" / f"{spec_slug}.json"
+            dq_rules_path = config.PROJECT_ROOT / "governance" / "dq-rules" / f"{spec_slug}.json"
             if dq_rules_path.exists():
                 dq_facet["rulesFile"] = f"governance/dq-rules/{spec_slug}.json"
             run_facets["brightsmith_dataQuality"] = dq_facet
@@ -624,7 +679,7 @@ def cmd_generate_docs() -> None:
             input_table_names = json.loads(input_tables_json)
             for inp_name in input_table_names:
                 inputs.append({
-                    "namespace": PROJECT_NAME,
+                    "namespace": config.PROJECT_NAME,
                     "name": inp_name,
                 })
         except (json.JSONDecodeError, TypeError):
@@ -633,8 +688,7 @@ def cmd_generate_docs() -> None:
         # Build output with schema if available
         output_facets: dict = {}
         try:
-            from brightsmith.config import WAREHOUSE_PATH
-            catalog = get_catalog(WAREHOUSE_PATH, CATALOG_PATH)
+            catalog = get_catalog(config.WAREHOUSE_PATH, config.CATALOG_PATH)
             iceberg_table = catalog.load_table(event["output_table"])
             schema_fields = [
                 {"name": f.name, "type": str(f.field_type)}
@@ -661,14 +715,14 @@ def cmd_generate_docs() -> None:
                 "facets": run_facets,
             },
             "job": {
-                "namespace": PROJECT_NAME,
+                "namespace": config.PROJECT_NAME,
                 "name": job_name,
                 "facets": job_facets,
             },
             "inputs": inputs,
             "outputs": [
                 {
-                    "namespace": PROJECT_NAME,
+                    "namespace": config.PROJECT_NAME,
                     "name": event["output_table"],
                     "facets": output_facets,
                 }
@@ -695,8 +749,7 @@ def cmd_verify(spec_name: str) -> int:
     checks: list[tuple[str, bool, str]] = []  # (label, passed, detail)
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
     except Exception:
         print("[FAIL] Cannot access lineage_events table")
         return 1
@@ -705,18 +758,20 @@ def cmd_verify(spec_name: str) -> int:
         print("[FAIL] No lineage events recorded")
         return 1
 
-    con = duckdb.connect()
-
     # Find events matching this spec (by job_name containing spec_name, or by spec_reference)
-    events = con.sql(f"""
-        SELECT *
-        FROM arrow_table
-        WHERE job_name LIKE '%{spec_name}%'
-           OR (spec_reference IS NOT NULL AND spec_reference LIKE '%{spec_name}%')
-        ORDER BY event_time DESC
-    """).fetchall()
-    event_columns = [desc[0] for desc in con.description]
-    events_dicts = [dict(zip(event_columns, row)) for row in events]
+    with duckdb.connect() as con:
+        rel = con.sql(f"""
+            SELECT *
+            FROM arrow_table
+            WHERE job_name LIKE '%{spec_name}%'
+               OR (spec_reference IS NOT NULL AND spec_reference LIKE '%{spec_name}%')
+            ORDER BY event_time DESC
+        """)
+        # NB: use the relation's own columns — con.description is None after
+        # con.sql() (it is only populated by con.execute()).
+        event_columns = rel.columns
+        events = rel.fetchall()
+    events_dicts = [dict(zip(event_columns, row, strict=False)) for row in events]
 
     # Check 1: Events exist
     if not events_dicts:
@@ -771,7 +826,7 @@ def cmd_verify(spec_name: str) -> int:
 
     # Check 7: Governance doc exists
     slug = _job_name_to_slug(spec_name)
-    lineage_dir = PROJECT_ROOT / "governance" / "lineage"
+    lineage_dir = config.PROJECT_ROOT / "governance" / "lineage"
     doc_path = lineage_dir / f"{slug}.json"
     if doc_path.exists():
         checks.append(("Governance doc", True, str(doc_path.name)))

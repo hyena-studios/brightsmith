@@ -17,16 +17,39 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import yaml
 
-from brightsmith.config import PROJECT_ROOT
+from brightsmith import config
 
 logger = logging.getLogger(__name__)
 
-GLOSSARIES_DIR = PROJECT_ROOT / "glossaries"
-REGISTRY_PATH = GLOSSARIES_DIR / "registry.yaml"
-PROJECT_GLOSSARY_PATH = PROJECT_ROOT / "governance" / "business-glossary.json"
+# Path constants are derived from the live config at call time so that
+# brightsmith.config.configure() takes effect after import. They remain
+# assignable module attributes (tests patch REGISTRY_PATH directly): a real
+# value overrides the config-derived default, while the _UNSET sentinel means
+# "derive from config".
+_UNSET = object()
+GLOSSARIES_DIR = _UNSET
+REGISTRY_PATH = _UNSET
+PROJECT_GLOSSARY_PATH = _UNSET
+
+
+def _glossaries_dir() -> Path:
+    return cast(Path, GLOSSARIES_DIR) if GLOSSARIES_DIR is not _UNSET else config.PROJECT_ROOT / "glossaries"
+
+
+def _registry_path() -> Path:
+    return cast(Path, REGISTRY_PATH) if REGISTRY_PATH is not _UNSET else _glossaries_dir() / "registry.yaml"
+
+
+def _project_glossary_path() -> Path:
+    return (
+        cast(Path, PROJECT_GLOSSARY_PATH)
+        if PROJECT_GLOSSARY_PATH is not _UNSET
+        else config.PROJECT_ROOT / "governance" / "business-glossary.json"
+    )
 
 
 @dataclass
@@ -57,7 +80,7 @@ class GlossaryRegistry:
         """Get the file path for a named glossary."""
         for entry in self.standards + self.domains:
             if entry["name"] == name:
-                return GLOSSARIES_DIR / entry["file"]
+                return _glossaries_dir() / entry["file"]
         return None
 
     def list_available(self) -> list[str]:
@@ -82,9 +105,7 @@ class ComposedGlossary:
         q = query.lower()
         results = []
         for term in self.terms.values():
-            if q in term.term.lower():
-                results.append(term)
-            elif any(q in s.lower() for s in term.synonyms):
+            if q in term.term.lower() or any(q in s.lower() for s in term.synonyms):
                 results.append(term)
         return results
 
@@ -107,11 +128,12 @@ def load_registry() -> GlossaryRegistry:
     Returns a GlossaryRegistry even if the registry file doesn't exist
     (empty registry — no shared glossaries available).
     """
-    if not REGISTRY_PATH.exists():
-        logger.info("No glossary registry found at %s — no shared glossaries available", REGISTRY_PATH)
+    registry_path = _registry_path()
+    if not registry_path.exists():
+        logger.info("No glossary registry found at %s — no shared glossaries available", registry_path)
         return GlossaryRegistry(standards=[], domains=[])
 
-    with open(REGISTRY_PATH) as f:
+    with open(registry_path) as f:
         data = yaml.safe_load(f)
 
     return GlossaryRegistry(
@@ -166,7 +188,7 @@ def load_project_glossary(
     ComposedGlossary with terms from all tiers. Terms that were
     inherited from shared glossaries are marked read_only=True.
     """
-    path = glossary_path or PROJECT_GLOSSARY_PATH
+    path = glossary_path or _project_glossary_path()
     if not path.exists():
         logger.info("No project glossary found at %s — starting empty", path)
         return ComposedGlossary(terms={}, inherited_from=[], version="0.0")

@@ -1,8 +1,8 @@
 """Tests for lineage verification logic."""
 
 from brightsmith.infra.lineage import (
-    emit_start,
     emit_complete,
+    emit_start,
     query_lineage_events,
 )
 

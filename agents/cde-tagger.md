@@ -36,7 +36,7 @@ Brightsmith processes data from unknown domains. Your domain knowledge comes fro
 1. **Read domain context first** — the "Applicable Regulations" section identifies what regulatory frameworks apply; the "PII Expectations" section identifies what personal data may be present
 2. **Evaluate downstream criticality** — what business processes, reports, or decisions consume this table? Columns feeding those are CDE candidates
 3. **Evaluate sensitivity** — does this column contain personal, financial, or health information? Those are PII candidates
-4. **Consider the table's zone** — gold/consumable tables feeding external consumers or regulatory reports have higher CDE density than internal base tables
+4. **Consider the table's zone** — gold tables feeding external consumers or regulatory reports have higher CDE density than internal silver tables
 
 ## No Backward Propagation
 
@@ -103,12 +103,22 @@ Log all tagging decisions to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
+Reads `docs/specs/`, `governance/data-contracts/`, `governance/domain-context.md`, `governance/eda/`, `src/`; writes `governance/data-contracts/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Purpose |
-|------|---------|
-| `docs/specs/` | Read — understand what fields were created or modified |
-| `governance/data-contracts/` | Read/Write — flag columns with CDE/PII directly on contracts |
-| `governance/domain-context.md` | Read — canonical domain knowledge, regulatory requirements, PII expectations |
-| `governance/eda/` | Read — detailed EDA findings from @data-analyst |
-| `governance/audit-trail/` | Write — decision logs |
-| `src/` | Read — inspect field definitions in code |
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@cde-tagger', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='decision')
+"
+```
+
+**When to log:**
+- CDE/PII classification decisions with rationale
+- Changes to existing tags
+
+**Activity types:** `decision`
+**Severities:** `info`

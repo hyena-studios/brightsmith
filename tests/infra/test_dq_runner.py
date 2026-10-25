@@ -7,6 +7,10 @@ parsing, and the rule lifecycle (proposed -> approved -> active).
 from __future__ import annotations
 
 import json
+import logging
+import os
+import subprocess
+import sys
 from unittest.mock import patch
 
 import duckdb
@@ -23,7 +27,6 @@ from brightsmith.infra.dq_runner import (
     run_rules,
     validate_after_write,
 )
-
 
 # ---------------------------------------------------------------------------
 # Threshold evaluation
@@ -130,6 +133,42 @@ class TestExtractTableRefs:
         refs = _extract_table_refs("SELECT 1")
         assert refs == []
 
+    def test_table_name_with_digits(self):
+        """M4/T6a — a table name containing digits (e.g. a year-partitioned
+        table) must resolve; the old `[a-z_]+` pattern couldn't match it."""
+        refs = _extract_table_refs("SELECT * FROM gold.revenue_2024")
+        assert ("gold", "revenue_2024") in refs
+
+    def test_table_name_with_digits_in_join(self):
+        sql = "SELECT * FROM gold.revenue_2024 r JOIN silver.entity_mappings m ON r.cik = m.cik"
+        refs = _extract_table_refs(sql)
+        assert ("gold", "revenue_2024") in refs
+        assert ("silver", "entity_mappings") in refs
+
+    def test_skips_namespace_table_inside_string_literal(self):
+        """A namespace.table token inside a single-quoted string literal is
+        string DATA (e.g. a provenance/value_source tag), not a table ref, and
+        must not be registered/rewritten."""
+        sql = (
+            "SELECT COUNT(*) FROM silver.networth_position "
+            "WHERE value_source = 'bronze.holdings.market_value'"
+        )
+        refs = _extract_table_refs(sql)
+        assert ("silver", "networth_position") in refs
+        assert ("bronze", "holdings") not in refs
+
+    def test_finds_real_ref_alongside_literal(self):
+        """A real bronze.holdings FROM/JOIN ref is still found even when the same
+        namespace.table text also appears inside a string literal."""
+        sql = (
+            "SELECT COUNT(*) FROM silver.networth_position n "
+            "JOIN bronze.holdings h ON h.security_name = n.security_name "
+            "WHERE n.value_source = 'bronze.holdings.market_value'"
+        )
+        refs = _extract_table_refs(sql)
+        assert ("silver", "networth_position") in refs
+        assert ("bronze", "holdings") in refs
+
 
 # ---------------------------------------------------------------------------
 # SQL rewriting
@@ -149,6 +188,42 @@ class TestRewriteSql:
         result = _rewrite_sql(sql, [("bronze", "xbrl_company_facts"), ("silver", "entity_mappings")])
         assert "bronze_xbrl_company_facts" in result
         assert "silver_entity_mappings" in result
+
+    def test_table_name_with_digits(self):
+        sql = "SELECT * FROM gold.revenue_2024"
+        result = _rewrite_sql(sql, [("gold", "revenue_2024")])
+        assert result == "SELECT * FROM gold_revenue_2024"
+
+    def test_preserves_namespace_table_inside_string_literal(self):
+        """The FROM ref is rewritten to a view name but the identical text inside
+        a string literal is left verbatim (the bug this guards: an unconditional
+        str.replace corrupted the literal, spuriously failing the rule)."""
+        sql = (
+            "SELECT COUNT(*) FROM silver.networth_position "
+            "WHERE value_source = 'bronze.holdings.market_value'"
+        )
+        result = _rewrite_sql(sql, [("silver", "networth_position")])
+        assert "FROM silver_networth_position" in result
+        assert "'bronze.holdings.market_value'" in result
+
+    def test_rewrites_real_ref_but_not_literal(self):
+        sql = (
+            "SELECT COUNT(*) FROM silver.networth_position n "
+            "JOIN bronze.holdings h ON h.security_name = n.security_name "
+            "WHERE n.value_source = 'bronze.holdings.market_value'"
+        )
+        result = _rewrite_sql(sql, [("silver", "networth_position"), ("bronze", "holdings")])
+        assert "JOIN bronze_holdings h" in result
+        assert "FROM silver_networth_position n" in result
+        assert "'bronze.holdings.market_value'" in result
+
+    def test_does_not_corrupt_longer_table_name(self):
+        """Word-boundary safety: rewriting silver.foo must not corrupt a longer
+        silver.foo_bar reference (the old substring replace would)."""
+        sql = "SELECT * FROM silver.foo JOIN silver.foo_bar ON true"
+        result = _rewrite_sql(sql, [("silver", "foo"), ("silver", "foo_bar")])
+        assert "FROM silver_foo " in result
+        assert "JOIN silver_foo_bar " in result
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +389,7 @@ class TestExecuteSqlRule:
             "spec": "test",
         }
         result = execute_sql_rule(rule, con_with_data)
-        expected_keys = {"rule_id", "spec", "category", "passed", "raw_value", "threshold", "detail", "violations", "execution_time_ms", "error", "executed_at"}
+        expected_keys = {"rule_id", "spec", "category", "priority", "passed", "raw_value", "threshold", "detail", "violations", "execution_time_ms", "error", "executed_at"}
         assert expected_keys == set(result.keys())
 
 
@@ -397,7 +472,7 @@ class TestRunRulesIntegration:
         from pyiceberg.schema import Schema
         from pyiceberg.types import DateType, DoubleType, IntegerType, NestedField, StringType
 
-        from brightsmith.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
+        from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
 
         warehouse = tmp_path / "warehouse"
         catalog_db = tmp_path / "catalog.db"
@@ -486,6 +561,31 @@ class TestRunRulesIntegration:
         assert result["run_id"] is not None
         assert result["executed_at"] is not None
 
+    def test_unloadable_table_fails_its_rules_with_the_load_error(self, iceberg_env):
+        """A table that cannot be loaded used to be skipped with `pass`; its rules
+        then failed with DuckDB's generic missing-view error, hiding the cause."""
+        rules = {
+            "spec": "missing-table",
+            "rules": [{
+                "rule_id": "MISS-001",
+                "category": "Validity",
+                "priority": "P0",
+                "description": "References a table that does not exist",
+                "sql": "SELECT COUNT(*) FROM silver.no_such_table",
+                "threshold": "result = 0",
+                "status": "active",
+            }],
+        }
+        (iceberg_env["rules_dir"] / "missing-table.json").write_text(json.dumps(rules))
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+            result = run_rules(spec="missing-table", catalog=iceberg_env["catalog"])
+
+        [rule] = result["results"]
+        assert rule["passed"] is False
+        assert "silver.no_such_table" in rule["error"]
+        assert result["p0_passed"] is False
+
     def test_run_rules_detects_duplicate_fact_ids(self, iceberg_env):
         """INT-002 (uniqueness) should fail -- we inserted a duplicate F1."""
         with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
@@ -545,6 +645,123 @@ class TestRunRulesIntegration:
 
 
 # ---------------------------------------------------------------------------
+# W5 (audit finding M3): the DQ rule lifecycle must be enforced for
+# status-less rules, not silently bypassed via an "active" default.
+# ---------------------------------------------------------------------------
+
+
+class TestRuleLifecycleGate:
+    """load_rules() now defaults missing `status` to "proposed"; run_rules()
+    only executes PROPOSED rules when REQUIRE_HUMAN_APPROVAL is False, and
+    always logs a loud warning naming what it skipped."""
+
+    @pytest.fixture
+    def lifecycle_env(self, tmp_path):
+        from pyiceberg.schema import Schema
+        from pyiceberg.types import NestedField, StringType
+
+        from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
+
+        warehouse = tmp_path / "warehouse"
+        catalog_db = tmp_path / "catalog.db"
+        catalog = get_catalog(warehouse, catalog_db)
+
+        schema = Schema(NestedField(1, "id", StringType(), required=True))
+        table = get_or_create_table(catalog, "silver", "lifecycle_facts", schema)
+        append_data(table, [{"id": "A"}])
+
+        rules_dir = tmp_path / "dq-rules"
+        rules_dir.mkdir()
+        results_dir = tmp_path / "dq-results"
+        results_dir.mkdir()
+
+        rules_path = rules_dir / "lifecycle-test.json"
+        rules_path.write_text(json.dumps({
+            "spec": "lifecycle-test",
+            "tables": ["silver.lifecycle_facts"],
+            "rules": [{
+                "rule_id": "NOSTATUS-1",
+                "priority": "P1",
+                "category": "Validity",
+                "description": "status-less rule — must default to proposed, not active",
+                "sql": "SELECT COUNT(*) FROM silver.lifecycle_facts",
+                "threshold": "result >= 0",
+                # Deliberately no "status" key.
+            }],
+        }, indent=2))
+
+        return {
+            "catalog": catalog,
+            "rules_dir": rules_dir,
+            "results_dir": results_dir,
+            "rules_path": rules_path,
+        }
+
+    def test_status_less_rule_defaults_to_proposed(self, lifecycle_env):
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", lifecycle_env["rules_dir"]):
+            rules = load_rules(spec="lifecycle-test")
+        assert rules[0]["status"] == "proposed"
+
+    def test_proposed_rule_does_not_execute_when_approval_required(self, lifecycle_env, monkeypatch):
+        import brightsmith.config as cfg
+        monkeypatch.setattr(cfg, "REQUIRE_HUMAN_APPROVAL", True)
+
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", lifecycle_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", lifecycle_env["results_dir"]):
+            result = run_rules(spec="lifecycle-test", catalog=lifecycle_env["catalog"])
+
+        assert result["rules_total"] == 0
+        assert "NOSTATUS-1" not in [r["rule_id"] for r in result["results"]]
+
+    def test_proposed_rule_auto_advances_when_approval_not_required(self, lifecycle_env, monkeypatch):
+        import brightsmith.config as cfg
+        monkeypatch.setattr(cfg, "REQUIRE_HUMAN_APPROVAL", False)
+
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", lifecycle_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", lifecycle_env["results_dir"]):
+            result = run_rules(spec="lifecycle-test", catalog=lifecycle_env["catalog"])
+
+        assert result["rules_total"] == 1
+        assert "NOSTATUS-1" in [r["rule_id"] for r in result["results"]]
+
+        # Auto-advance is execution-time only — it must NOT rewrite the rules
+        # file (a durable transition still goes through approve_rules/the
+        # `approve` CLI, so `dq_runner status` keeps reflecting reality).
+        on_disk = json.loads(lifecycle_env["rules_path"].read_text())
+        assert on_disk["rules"][0].get("status") is None
+
+    def test_skipped_proposed_rule_logs_one_warning_with_approve_command(self, lifecycle_env, monkeypatch, caplog):
+        import brightsmith.config as cfg
+        monkeypatch.setattr(cfg, "REQUIRE_HUMAN_APPROVAL", True)
+
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", lifecycle_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", lifecycle_env["results_dir"]):
+            with caplog.at_level(logging.WARNING, logger="brightsmith.infra.dq_runner"):
+                run_rules(spec="lifecycle-test", catalog=lifecycle_env["catalog"])
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
+        message = warnings[0].getMessage()
+        assert "NOSTATUS-1" in message
+        assert "python -m brightsmith.infra.dq_runner approve NOSTATUS-1" in message
+
+    def test_active_rule_executes_regardless_of_approval_toggle(self, lifecycle_env, monkeypatch):
+        import brightsmith.config as cfg
+        monkeypatch.setattr(cfg, "REQUIRE_HUMAN_APPROVAL", True)
+
+        data = json.loads(lifecycle_env["rules_path"].read_text())
+        data["rules"][0]["status"] = "active"
+        lifecycle_env["rules_path"].write_text(json.dumps(data, indent=2))
+
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", lifecycle_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", lifecycle_env["results_dir"]):
+            result = run_rules(spec="lifecycle-test", catalog=lifecycle_env["catalog"])
+
+        assert result["rules_total"] == 1
+        assert "NOSTATUS-1" in [r["rule_id"] for r in result["results"]]
+
+
+# ---------------------------------------------------------------------------
 # Integration: validate_after_write
 # ---------------------------------------------------------------------------
 
@@ -558,7 +775,7 @@ class TestValidateAfterWrite:
         from pyiceberg.schema import Schema
         from pyiceberg.types import DoubleType, NestedField, StringType
 
-        from brightsmith.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
+        from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
 
         catalog = get_catalog(tmp_path / "wh", tmp_path / "cat.db")
         schema = Schema(
@@ -596,7 +813,7 @@ class TestValidateAfterWrite:
         from pyiceberg.schema import Schema
         from pyiceberg.types import DoubleType, NestedField, StringType
 
-        from brightsmith.infra.iceberg_setup import append_data, get_or_create_table, get_catalog
+        from brightsmith.infra.iceberg_setup import append_data, get_catalog, get_or_create_table
 
         catalog = get_catalog(tmp_path / "wh", tmp_path / "cat.db")
         schema = Schema(
@@ -656,3 +873,389 @@ class TestValidateAfterWrite:
 
         assert exc_info.value.run_result["rules_total"] == 1
         assert exc_info.value.run_result["p0_passed"] is False
+
+    # ------------------------------------------------------------------
+    # WP-1.4: errored P0 rules must BLOCK (Q2 / D3 hard-block decision)
+    # ------------------------------------------------------------------
+
+    @pytest.fixture
+    def erroring_p0_env(self, tmp_path):
+        """Iceberg env where a P0 rule references a nonexistent table (SQL error)."""
+        from brightsmith.infra.iceberg_setup import get_catalog
+
+        # Catalog exists but contains no tables — the rule's table is absent.
+        catalog = get_catalog(tmp_path / "wh", tmp_path / "cat.db")
+
+        rules_dir = tmp_path / "dq-rules"
+        rules_dir.mkdir()
+        results_dir = tmp_path / "dq-results"
+        results_dir.mkdir()
+
+        rules = {
+            "spec": "test-error",
+            "tables": ["silver.ghost_table"],
+            "rules": [
+                {
+                    "rule_id": "ERR-P0-001",
+                    "category": "Validity",
+                    "priority": "P0",
+                    "description": "P0 rule against a nonexistent table",
+                    "sql": "SELECT COUNT(*) FROM silver.ghost_table",
+                    "threshold": "result = 0",
+                    "status": "active",
+                },
+                {
+                    "rule_id": "ERR-P1-001",
+                    "category": "Completeness",
+                    "priority": "P1",
+                    "description": "Non-P0 rule against a nonexistent table",
+                    "sql": "SELECT COUNT(*) FROM silver.ghost_table WHERE 1=0",
+                    "threshold": "result = 0",
+                    "status": "active",
+                },
+            ],
+        }
+        import json
+        (rules_dir / "test-error.json").write_text(json.dumps(rules, indent=2))
+
+        return {"catalog": catalog, "rules_dir": rules_dir, "results_dir": results_dir}
+
+    def test_validate_raises_on_p0_error(self, erroring_p0_env):
+        """An errored P0 rule (nonexistent table) must raise DQValidationError.
+
+        This is the WP-1.4 regression test: before the fix, `not r.get("error")`
+        silently excused the errored rule and let the gate pass.
+        """
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", erroring_p0_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", erroring_p0_env["results_dir"]):
+            with pytest.raises(DQValidationError) as exc_info:
+                validate_after_write("test-error", catalog=erroring_p0_env["catalog"])
+
+        assert "ERR-P0-001" in str(exc_info.value)
+        assert len(exc_info.value.failures) >= 1
+        p0_failure = next(f for f in exc_info.value.failures if f["rule_id"] == "ERR-P0-001")
+        assert p0_failure["passed"] is False
+        # The error text must be carried into the failure so the operator can diagnose
+        assert p0_failure["error"] is not None
+        assert p0_failure["error"] != ""
+
+    def test_non_p0_error_does_not_raise(self, erroring_p0_env, tmp_path):
+        """An errored non-P0 rule must NOT raise; only P0 errors block.
+
+        Uses a separate env with only the P1 rule so p0_passed stays True.
+        """
+        import json
+
+        from brightsmith.infra.iceberg_setup import get_catalog
+
+        catalog = get_catalog(tmp_path / "wh2", tmp_path / "cat2.db")
+        rules_dir = tmp_path / "dq-rules2"
+        rules_dir.mkdir()
+        results_dir = tmp_path / "dq-results2"
+        results_dir.mkdir()
+
+        rules = {
+            "spec": "test-p1-error",
+            "tables": ["silver.ghost_table"],
+            "rules": [{
+                "rule_id": "P1-ERR-001",
+                "category": "Completeness",
+                "priority": "P1",
+                "description": "Non-P0 error: nonexistent table, should not block",
+                "sql": "SELECT COUNT(*) FROM silver.ghost_table",
+                "threshold": "result = 0",
+                "status": "active",
+            }],
+        }
+        (rules_dir / "test-p1-error.json").write_text(json.dumps(rules, indent=2))
+
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", rules_dir), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", results_dir):
+            # Must not raise — no P0 rules at all, so p0_passed is vacuously True
+            result = validate_after_write("test-p1-error", catalog=catalog)
+
+        assert result["p0_passed"] is True
+
+
+# ---------------------------------------------------------------------------
+# WP-2.5: CLI no-spec forms — subprocess tests (Q6)
+# ---------------------------------------------------------------------------
+
+
+def _make_seeded_root(tmp_path):
+    """Seed a minimal project root in *tmp_path* and run `dq_runner run`.
+
+    Creates governance/dq-rules/cli-test-spec.json with one trivially-passing
+    rule (``SELECT 0`` / ``result = 0``) that requires no Iceberg tables, so no
+    data warehouse setup is needed.  Also drops a stub README.md for the badge
+    command.  All writes are isolated to *tmp_path* via BRIGHTSMITH_PROJECT_ROOT.
+    """
+    rules_dir = tmp_path / "governance" / "dq-rules"
+    rules_dir.mkdir(parents=True)
+    rules = {
+        "spec": "cli-test-spec",
+        "tables": [],
+        "rules": [
+            {
+                "rule_id": "CLI-001",
+                "category": "Validity",
+                "priority": "P0",
+                "description": "Always-passing constant check — no Iceberg tables needed",
+                "sql": "SELECT 0",
+                "threshold": "result = 0",
+                "status": "active",
+            }
+        ],
+    }
+    (rules_dir / "cli-test-spec.json").write_text(json.dumps(rules, indent=2))
+
+    # Stub README required by the badge subcommand
+    (tmp_path / "README.md").write_text(
+        "# Test Project\n"
+        "![DQ Rules](https://img.shields.io/badge/DQ%20rules-0%2F0%20passing-lightgrey)\n"
+        "![P0 Gate](https://img.shields.io/badge/P0%20gate-UNKNOWN-lightgrey)\n"
+    )
+
+    env = {**os.environ, "BRIGHTSMITH_PROJECT_ROOT": str(tmp_path)}
+
+    # Seed governance DB by running the DQ engine once
+    result = subprocess.run(
+        [sys.executable, "-m", "brightsmith.infra.dq_runner", "run", "--spec", "cli-test-spec"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"dq_runner run failed (seed step):\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    return tmp_path
+
+
+class TestCLINoSpec:
+    """Subprocess tests — all three no-``--spec`` CLI forms produce real output.
+
+    Each test:
+    * Uses a dedicated tmp_path so Iceberg writes never touch the shared
+      project warehouse (avoids CommitFailedException flakiness).
+    * Seeds results via ``dq_runner run --spec cli-test-spec`` before
+      exercising the no-spec form.
+    * Asserts exit 0, non-empty stdout, and that the "No results found"
+      failure path was NOT taken.
+    """
+
+    def test_results_no_spec_exits_0_with_output(self, tmp_path):
+        """``results`` without ``--spec`` exits 0 and prints spec results."""
+        seeded = _make_seeded_root(tmp_path)
+        env = {**os.environ, "BRIGHTSMITH_PROJECT_ROOT": str(seeded)}
+
+        proc = subprocess.run(
+            [sys.executable, "-m", "brightsmith.infra.dq_runner", "results"],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, (
+            f"Expected exit 0 for 'results':\nstdout={proc.stdout}\nstderr={proc.stderr}"
+        )
+        assert proc.stdout.strip(), "Expected non-empty stdout for 'results'"
+        assert "No results found" not in proc.stdout, (
+            f"'No results found' should not appear; got:\n{proc.stdout}"
+        )
+        # Verify a meaningful spec line was printed
+        assert "cli-test-spec" in proc.stdout or "Spec:" in proc.stdout
+
+    def test_scorecard_no_spec_exits_0_and_writes_file(self, tmp_path):
+        """``scorecard`` without ``--spec`` exits 0 and reports a written file."""
+        seeded = _make_seeded_root(tmp_path)
+        env = {**os.environ, "BRIGHTSMITH_PROJECT_ROOT": str(seeded)}
+
+        proc = subprocess.run(
+            [sys.executable, "-m", "brightsmith.infra.dq_runner", "scorecard"],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, (
+            f"Expected exit 0 for 'scorecard':\nstdout={proc.stdout}\nstderr={proc.stderr}"
+        )
+        assert proc.stdout.strip(), "Expected non-empty stdout for 'scorecard'"
+        assert "No results found" not in proc.stdout, (
+            f"'No results found' should not appear; got:\n{proc.stdout}"
+        )
+        assert "Scorecard written" in proc.stdout, (
+            f"Expected 'Scorecard written' in output; got:\n{proc.stdout}"
+        )
+
+    def test_badge_no_spec_exits_0_and_updates_readme(self, tmp_path):
+        """``badge`` without ``--spec`` exits 0 and reports badge update."""
+        seeded = _make_seeded_root(tmp_path)
+        env = {**os.environ, "BRIGHTSMITH_PROJECT_ROOT": str(seeded)}
+
+        proc = subprocess.run(
+            [sys.executable, "-m", "brightsmith.infra.dq_runner", "badge"],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, (
+            f"Expected exit 0 for 'badge':\nstdout={proc.stdout}\nstderr={proc.stderr}"
+        )
+        assert proc.stdout.strip(), "Expected non-empty stdout for 'badge'"
+        assert "No DQ results found" not in proc.stdout, (
+            f"'No DQ results found' should not appear; got:\n{proc.stdout}"
+        )
+        assert "Updated README badges" in proc.stdout, (
+            f"Expected 'Updated README badges' in output; got:\n{proc.stdout}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# spec_registry status carry-forward — _write_governance_results must not
+# clobber a status a human/agent already wrote directly to spec_registry
+# (e.g. @staff-engineer's COMPLETE). Same _last_known_status() carry-forward
+# doctrine as the governance-sync fix (test_governance_sync_migration.py) and
+# the pipeline-gate fix (test_pipeline_gate_validation.py).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def gov_project(tmp_path):
+    """Isolate config at a tmp project + governance warehouse, then restore.
+
+    ``configure`` mutates the process-global config, so we snapshot and restore
+    it to avoid leaking into other tests.
+    """
+    import brightsmith.config as config
+    from brightsmith.infra.iceberg_setup import reset_catalog_cache
+
+    original = config.get_config()
+    config.configure(project_root=tmp_path)
+    config.DQ_RULES_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        yield tmp_path
+    finally:
+        config._CONFIG = original
+        reset_catalog_cache()
+
+
+def _write_active_rule(rules_dir, spec):
+    """A single trivial, always-passing, unconditionally-active rule with no
+    table dependency -- only the registry side effect matters here."""
+    (rules_dir / f"{spec}.json").write_text(json.dumps({
+        "spec": spec,
+        "tables": [],
+        "rules": [{
+            "rule_id": "CF-001",
+            "category": "Validity",
+            "priority": "P2",
+            "description": "Trivial always-pass rule (no table dependency)",
+            "sql": "SELECT 0",
+            "threshold": "result = 0",
+            "status": "active",
+        }],
+    }))
+
+
+class TestSpecRegistryStatusCarryForward:
+    """Regression for the reported clobber bug: dq_runner's
+    ``_write_governance_results`` used to hardcode ``status="IN_PROGRESS"`` on
+    every DQ run, reverting any staff-authored terminal status back to
+    IN_PROGRESS on the very next `dq_runner run`."""
+
+    def test_dq_run_does_not_clobber_staff_engineer_complete_status(self, gov_project):
+        import brightsmith.config as config
+        from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+
+        write_spec_registry(
+            spec_name="dq-clobber-1", zone="gold", status="COMPLETE",
+            output_tables=["gold.t"], updated_by="@staff-engineer",
+        )
+        _write_active_rule(config.DQ_RULES_DIR, "dq-clobber-1")
+
+        run_rules(spec="dq-clobber-1")
+
+        specs = {s["spec_name"]: s for s in get_current_specs()}
+        assert specs["dq-clobber-1"]["status"] == "COMPLETE"
+
+    def test_dq_run_on_brand_new_spec_still_defaults_to_in_progress(self, gov_project):
+        """The genuine case: a spec with no prior registry row at all still
+        defaults sensibly to IN_PROGRESS after its first DQ run -- carry-forward
+        must not break normal spec creation."""
+        import brightsmith.config as config
+        from brightsmith.infra.governance_db import get_current_specs
+
+        _write_active_rule(config.DQ_RULES_DIR, "dq-fresh-1")
+
+        run_rules(spec="dq-fresh-1")
+
+        specs = {s["spec_name"]: s for s in get_current_specs()}
+        assert specs["dq-fresh-1"]["status"] == "IN_PROGRESS"
+
+
+class TestSpecRegistryZoneAndOutputTablesCarryForward:
+    """Regression for the reported clobber bug: dq_runner's
+    ``_write_governance_results`` hardcoded ``zone=""`` on every DQ run (it has
+    no zone signal of its own at all), and wrote ``output_tables`` from the DQ
+    rules' own "tables" metadata with no fallback -- blanking both fields on
+    any spec whose rule file declares no tables. Live-observed twice against
+    the finances domain project."""
+
+    def test_dq_run_does_not_clobber_zone_and_output_tables(self, gov_project):
+        import brightsmith.config as config
+        from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+
+        write_spec_registry(
+            spec_name="dq-clobber-zt", zone="gold", status="COMPLETE",
+            output_tables=["gold.portfolio_exposure"], updated_by="@staff-engineer",
+        )
+        _write_active_rule(config.DQ_RULES_DIR, "dq-clobber-zt")
+
+        run_rules(spec="dq-clobber-zt")
+
+        specs = {s["spec_name"]: s for s in get_current_specs()}
+        assert specs["dq-clobber-zt"]["zone"] == "gold"
+        assert json.loads(specs["dq-clobber-zt"]["output_tables"]) == ["gold.portfolio_exposure"]
+
+    def test_dq_run_on_brand_new_spec_zone_and_output_tables_default_to_empty(self, gov_project):
+        """The genuine case: a spec with no prior registry row at all still
+        defaults zone/output_tables sensibly to empty -- carry-forward must
+        not break normal spec creation."""
+        import brightsmith.config as config
+        from brightsmith.infra.governance_db import get_current_specs
+
+        _write_active_rule(config.DQ_RULES_DIR, "dq-fresh-zt")
+
+        run_rules(spec="dq-fresh-zt")
+
+        specs = {s["spec_name"]: s for s in get_current_specs()}
+        assert specs["dq-fresh-zt"]["zone"] == ""
+        assert json.loads(specs["dq-fresh-zt"]["output_tables"]) == []
+
+    def test_dq_run_uses_real_table_list_from_rule_when_present(self, gov_project):
+        """A rule file that DOES declare tables still drives output_tables as
+        before -- carry-forward is a fallback, not a override of real signal."""
+        import brightsmith.config as config
+        from brightsmith.infra.governance_db import get_current_specs, write_spec_registry
+
+        write_spec_registry(
+            spec_name="dq-real-tables", zone="gold", status="COMPLETE",
+            output_tables=["gold.stale"], updated_by="@staff-engineer",
+        )
+        (config.DQ_RULES_DIR / "dq-real-tables.json").write_text(json.dumps({
+            "spec": "dq-real-tables",
+            "tables": ["gold.portfolio_exposure"],
+            "rules": [{
+                "rule_id": "CF-002",
+                "category": "Validity",
+                "priority": "P2",
+                "description": "Trivial always-pass rule with a real table",
+                "sql": "SELECT 0",
+                "threshold": "result = 0",
+                "status": "active",
+            }],
+        }))
+
+        run_rules(spec="dq-real-tables")
+
+        specs = {s["spec_name"]: s for s in get_current_specs()}
+        assert json.loads(specs["dq-real-tables"]["output_tables"]) == ["gold.portfolio_exposure"]

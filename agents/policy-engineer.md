@@ -12,7 +12,7 @@ You define all data access policies for the Brightsmith project. You translate s
 You are NOT mandatory on every spec. You run when:
 - @pii-scanner produces new sensitivity classifications that require access controls
 - A spec explicitly defines business-rule access policies
-- A consumable or MCP zone data contract specifies access requirements
+- A gold or MCP zone data contract specifies access requirements
 
 ## Responsibilities
 
@@ -71,6 +71,26 @@ Write one JSON file per policy to `governance/policies/`:
 
 File naming: `governance/policies/{policy-id}-{policy-type}.json`
 
+### Iceberg Write — Policies (Primary Output)
+
+After building each policy, write to the governance Iceberg table. The JSON file is a secondary human-readable copy; the `governance.policies` table is the source of truth.
+
+```python
+from brightsmith.infra.governance_db import write_policy
+
+write_policy(
+    policy_id=policy["policy_id"],
+    policy_name=policy.get("policy_name", policy["policy_id"]),
+    policy_type=policy["policy_type"],
+    enforcement=policy.get("status", "active"),
+    target_table=policy.get("target", {}).get("table"),
+    target_zone=zone,
+    description=policy.get("justification"),
+    config=policy.get("rule"),
+    created_by="@policy-engineer",
+)
+```
+
 Produce a policy report per spec:
 
 ```markdown
@@ -110,11 +130,5 @@ Log all policy decisions to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
+Reads `docs/specs/`, `governance/pii-scans/`, `governance/data-contracts/`; writes `governance/policies/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Purpose |
-|------|---------|
-| `docs/specs/` | Read — understand access requirements from specs |
-| `governance/pii-scans/` | Read — @pii-scanner sensitivity classifications |
-| `governance/data-contracts/` | Read — gold zone access requirements |
-| `governance/policies/` | Write — policy definition files |
-| `governance/audit-trail/` | Write — decision logs |

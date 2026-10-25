@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pyiceberg.schema import Schema
 from pyiceberg.types import BooleanType, IntegerType, NestedField, StringType, TimestamptzType
@@ -68,15 +68,28 @@ _ID_FIELDS = {
 }
 
 
-def _get_enterprise_table(table_name: str):
+def _enterprise_catalog(table_name: str):
     from brightsmith.config import CATALOG_PATH, GOVERNANCE_WAREHOUSE
-    from brightsmith.infra.iceberg_setup import get_catalog, get_or_create_table
+    from brightsmith.infra.iceberg_setup import get_catalog
 
     if table_name not in ENTERPRISE_TABLE_CONFIGS:
         raise ValueError(f"Unknown enterprise governance table: {table_name}")
+    return get_catalog(GOVERNANCE_WAREHOUSE, CATALOG_PATH)
+
+
+def _get_enterprise_table(table_name: str):
+    """Return an enterprise table for writing, creating it if needed."""
+    from brightsmith.infra.iceberg_setup import get_or_create_table
+
     schema, _ = ENTERPRISE_TABLE_CONFIGS[table_name]
-    catalog = get_catalog(GOVERNANCE_WAREHOUSE, CATALOG_PATH)
-    return get_or_create_table(catalog, "governance_enterprise", table_name, schema)
+    return get_or_create_table(_enterprise_catalog(table_name), "governance_enterprise", table_name, schema)
+
+
+def _find_enterprise_table(table_name: str):
+    """Return an enterprise table for reading, or None if it was never written."""
+    from brightsmith.infra.iceberg_setup import load_table_if_exists
+
+    return load_table_if_exists(_enterprise_catalog(table_name), "governance_enterprise", table_name)
 
 
 def _write_enterprise_records(table_name: str, records: list[dict]) -> dict:
@@ -93,7 +106,8 @@ def _write_enterprise_records(table_name: str, records: list[dict]) -> dict:
                 value = value.isoformat()
             grain_row[field] = value
         record["record_id"] = compute_grain_id(grain_row, grain_fields, prefix=table_name.upper()[:4])
-    return promote(_get_enterprise_table(table_name), records)
+    # First write wins, as for product governance tables (see queries._write_records).
+    return promote(_get_enterprise_table(table_name), records, on_conflict="skip", ignore_fields=("updated_at",))
 
 
 def write_enterprise_standard(
@@ -124,7 +138,7 @@ def write_enterprise_standard(
         name_field: name,
         "description": description,
         "metadata": json.dumps(metadata or {}, sort_keys=True),
-        "updated_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(UTC),
     }
     if table_name == "stewards":
         record["active"] = status == "active"
@@ -145,18 +159,22 @@ def enterprise_record_exists(table_name: str, id_field: str, value: str) -> bool
     """Return whether an enterprise reference exists."""
     import duckdb
 
-    table = _get_enterprise_table(table_name)
+    table = _find_enterprise_table(table_name)
+    if table is None:
+        return False
     arrow_table = table.scan().to_arrow()
     if arrow_table.num_rows == 0:
         return False
-    con = duckdb.connect()
-    rel = con.sql(f"SELECT 1 FROM arrow_table WHERE {id_field} = $1 LIMIT 1", params=[value])
-    return rel.fetchone() is not None
+    with duckdb.connect() as con:
+        rel = con.sql(f"SELECT 1 FROM arrow_table WHERE {id_field} = $1 LIMIT 1", params=[value])
+        return rel.fetchone() is not None
 
 
 def get_enterprise_records(table_name: str) -> list[dict]:
     """Read enterprise records from a table."""
-    table = _get_enterprise_table(table_name)
+    table = _find_enterprise_table(table_name)
+    if table is None:
+        return []
     arrow_table = table.scan().to_arrow()
     if arrow_table.num_rows == 0:
         return []

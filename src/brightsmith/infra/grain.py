@@ -31,7 +31,25 @@ def compute_grain_id(row: dict, grain_fields: list[str], prefix: str = "") -> st
     Returns:
         Deterministic hash string. With prefix: "FF-a3f2b8c1d4e5f607".
         Without prefix: "a3f2b8c1d4e5f607".
+
+    Raises:
+        ValueError: if a grain field KEY is absent from ``row``. A missing key
+            (e.g. a typo'd field name) would otherwise silently collapse distinct
+            rows into one hash — data loss via dedup. A key that is present but
+            ``None`` is allowed and hashes deterministically as the string "None".
     """
-    grain_values = "|".join(str(row.get(f, "")) for f in grain_fields)
+    parts = []
+    for f in grain_fields:
+        if f not in row:
+            raise ValueError(
+                f"Grain field {f!r} is absent from the row "
+                f"(available keys: {sorted(row)}). A missing grain field would "
+                f"silently collapse distinct rows into one hash. If the value is "
+                f"genuinely unknown, set it to None explicitly."
+            )
+        # Escape the delimiter so distinct tuples can never collide:
+        # ("a|b", "c") must differ from ("a", "b|c").
+        parts.append(str(row[f]).replace("|", "\\|"))
+    grain_values = "|".join(parts)
     hash_hex = hashlib.sha256(grain_values.encode()).hexdigest()[:16]
     return f"{prefix}-{hash_hex}" if prefix else hash_hex

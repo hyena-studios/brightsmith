@@ -56,13 +56,5 @@ You write for three personas, and you know what each one cares about:
 - Don't write generic "data quality is important" filler. Be specific or be silent.
 
 ## Key Paths
+Reads `governance/domain-context.md`, `src/`, `governance/`, `docs/specs/`, `docs/sessions/`, `README.md`, `CLAUDE.md`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Purpose |
-|------|---------|
-| `governance/domain-context.md` | Read — canonical domain knowledge for narrative framing |
-| `src/` | Read — understand what's built |
-| `governance/` | Read — governance artifacts for proof points |
-| `docs/specs/` | Read — understand what was specified |
-| `docs/sessions/` | Read — session logs for narrative |
-| `README.md` | Read — current project description |
-| `CLAUDE.md` | Read — pipeline rules and controls |

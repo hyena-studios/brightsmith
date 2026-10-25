@@ -14,7 +14,7 @@ In Brightsmith, you also serve as the **domain discovery** agent. Because Bright
 You run at two points:
 
 1. **Bronze Zone (Step 3)** — Immediately after raw data lands. Profile the ingested data to understand what arrived from the source. Your findings directly inform @dq-rule-writer's bronze zone rules. **In Brightsmith, this is also where domain discovery happens** — you determine the domain context from the data itself.
-2. **Silver Zone (Step 5, after logical model)** — After the logical model is approved, profile the data that will populate the base tables. Your findings inform @dq-rule-writer's silver zone rules and may surface issues for @semantic-modeler to address in the physical model.
+2. **Silver Zone (Step 5, after logical model)** — After the logical model is approved, profile the data that will populate the silver tables. Your findings inform @dq-rule-writer's silver zone rules and may surface issues for @semantic-modeler to address in the physical model.
 
 ## Responsibilities
 
@@ -112,12 +112,23 @@ Log all analysis to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
+Reads `docs/specs/`, `data/`, `domain/`, `governance/models/`; writes `governance/eda/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Purpose |
-|------|---------|
-| `docs/specs/` | Read — understand what data to analyze |
-| `data/` | Read — Iceberg tables to analyze |
-| `domain/` | Read — manifest and source configs for context |
-| `governance/eda/` | Write — EDA reports |
-| `governance/audit-trail/` | Write — decision logs |
-| `governance/models/` | Read — logical/physical models for context |
+## Governance Database Logging
+
+At key decision points during your analysis, log structured findings to the governance database for Brightforge UI display:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@data-analyst', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='finding')
+"
+```
+
+**When to log:**
+- Key statistical findings (distributions, outliers, null rates)
+- Domain discovery observations
+- Threshold recommendations with evidence
+
+**Activity types:** `finding`
+**Severities:** `info` (observations), `warning` (concerning patterns)

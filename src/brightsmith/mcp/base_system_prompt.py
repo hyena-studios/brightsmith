@@ -23,9 +23,9 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from brightsmith.mcp.base_anomaly_checker import BaseAnomalyChecker
@@ -164,7 +164,9 @@ class BaseSystemPrompt:
             if not contracts:
                 return ""
             return f"This dataset is served by {len(contracts)} governed table(s) with active data contracts."
-        except Exception:
+        except (OSError, ValueError):
+            # Missing/unreadable contract dir → omit this optional section. A
+            # logic bug raises a different type and is caught+logged by build().
             return ""
 
     def _build_dq_section(self) -> str:
@@ -177,7 +179,9 @@ class BaseSystemPrompt:
             if not scorecards:
                 return ""
             return f"{len(scorecards)} data quality scorecard(s) available. Use the `get_data_quality` tool for detailed results per table."
-        except Exception:
+        except (OSError, ValueError):
+            # Missing/unreadable scorecards dir → omit this optional section. A
+            # logic bug raises a different type and is caught+logged by build().
             return ""
 
     def _build_glossary_section(self) -> str:
@@ -192,7 +196,7 @@ class BaseSystemPrompt:
             if not terms:
                 return ""
 
-            lines = [f"| Term | Definition |", f"|------|------------|"]
+            lines = ["| Term | Definition |", "|------|------------|"]
             for term in terms[:25]:  # Cap at 25 terms to keep prompt manageable
                 name = term.get("term", term.get("name", ""))
                 defn = term.get("definition", term.get("description", ""))
@@ -204,7 +208,10 @@ class BaseSystemPrompt:
             if len(lines) <= 2:
                 return ""
             return "\n".join(lines)
-        except Exception:
+        except (OSError, ValueError):
+            # Missing/unreadable/invalid glossary JSON → omit this optional
+            # section. A logic bug raises a different type and is caught+logged
+            # by build().
             return ""
 
     def _build_guidelines_section(self) -> str:

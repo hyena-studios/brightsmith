@@ -4,6 +4,7 @@ Physical-only, quick and dirty. No data modeling gates.
 
 ## Agent Sequence
 
+0. @document-extractor — **Document sources only** (PDFs, scans, spreadsheets). Runs BEFORE ingestion: turns source documents into structured, per-document row artifacts in `data/extracted/` that the step-2 `BaseIngestor` then loads. Skipped entirely for API/JSON/CSV sources, which `BaseIngestor.fetch()` reads directly. See "Document Sources" below.
 1. @governance-reviewer — Pre-implementation review
 2. @primary-agent — Implementation (ingest raw data via BaseIngestor)
 3. @data-analyst — EDA on raw data (distributions, outliers, edge cases, threshold evidence, **domain discovery**)
@@ -44,3 +45,14 @@ This is the key difference from a domain-specific pipeline: specs for Silver and
 ## Project Bootstrapping
 
 New domain projects are scaffolded by @setup — the first agent a user interacts with. It creates the full project structure (domain pack, governance directories, ingestor skeleton, first spec, CLAUDE.md, pyproject.toml with brightsmith dependency) from a few questions about the data source. After @setup finishes, the normal spec-driven pipeline takes over.
+
+## Document Sources (step 0 — @document-extractor)
+
+Most sources are structured (an API returning JSON, a CSV export) and `BaseIngestor.fetch()` reads them directly. Some sources are **semi-structured documents** — PDF statements, scanned images, exported spreadsheets — where the rows must first be extracted by an LLM because no headless parser can reliably read an arbitrary document layout. For those, @document-extractor runs as **step 0, before ingestion**.
+
+The division of labor is deliberate and load-bearing:
+
+- **@document-extractor (non-deterministic, once per document):** reads each source document, extracts fielded rows (never raw text), normalizes the grain fields consistently, verifies the extraction against the source's control total (e.g. a statement's `opening + Σ(amount) == closing`), and writes **one artifact per document** to `data/extracted/{source}/`. It hashes each source document and never re-extracts one it has already done. Documents that fail their control-total check are quarantined and flagged, never emitted.
+- **`BaseIngestor` (deterministic, idempotent, re-runnable):** its `fetch()` globs `data/extracted/{source}/` and its `flatten()` passes the rows through; the framework then does grain dedup, the idempotent promote, the Iceberg write, and lineage — exactly as for any other source.
+
+Keeping extraction on the *upstream* side of the artifact boundary is what makes re-runs safe: the fallible LLM step happens once per document under review, while the deterministic load can run over the whole accumulated artifact folder forever, collapsing overlapping documents (e.g. monthly statements that re-show prior transactions) to one clean copy. The `dedup_grain` and the optional `control_total` formula are declared once in `domain/sources/*.yaml` and reused by promote dedup, DQ uniqueness rules, contracts, and the extractor's self-check. See `agents/document-extractor.md` for the full doctrine and a worked financial-statements example.

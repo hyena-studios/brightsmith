@@ -1,11 +1,10 @@
 """Tests for governance admin database."""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers — set up isolated governance DB for each test
@@ -64,7 +63,8 @@ def gov_env(tmp_path):
 
 def test_governance_tables_created(gov_env):
     """All 8 governance tables should be created lazily."""
-    from brightsmith.infra.governance_db import _get_governance_table, _TABLE_CONFIGS
+    from brightsmith.infra.governance.queries import _get_governance_table
+    from brightsmith.infra.governance.schemas import _TABLE_CONFIGS
 
     for table_name in _TABLE_CONFIGS:
         table = _get_governance_table(table_name)
@@ -85,9 +85,9 @@ def test_write_spec_registry(gov_env):
 
     write_spec_registry(
         spec_name="test-spec",
-        zone="raw",
+        zone="bronze",
         status="IN_PROGRESS",
-        output_tables=["raw.test_table"],
+        output_tables=["bronze.test_table"],
         updated_by="@test",
         dq_score_pct=95.0,
         dq_rules_total=20,
@@ -128,7 +128,7 @@ def test_write_dq_run(gov_env):
     """Write a DQ run and query it back."""
     from brightsmith.infra.governance_db import get_dq_runs, get_latest_dq_run, write_dq_run
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     write_dq_run(
         run_id="run-001", spec_name="test-spec", table_name="raw.test",
         executed_at=now, rules_total=10, rules_passed=9, rules_failed=1,
@@ -159,7 +159,7 @@ def test_write_dq_rule_results(gov_env):
             "passed": True,
             "raw_value": "0",
             "threshold": "result = 0",
-            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "executed_at": datetime.now(UTC).isoformat(),
         },
         {
             "rule_id": "RAW-002",
@@ -168,7 +168,7 @@ def test_write_dq_rule_results(gov_env):
             "description": "FY format valid",
             "passed": False,
             "violations": 3,
-            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "executed_at": datetime.now(UTC).isoformat(),
         },
     ]
     write_dq_rule_results("run-001", "test-spec", results)
@@ -223,16 +223,112 @@ def test_write_agent_activity(gov_env):
     assert blockers[0]["agent_id"] == "@staff-engineer"
 
 
-def test_log_agent_finding_fault_tolerant(gov_env):
-    """log_agent_finding should not raise even if write fails."""
+def test_log_agent_finding_writes_by_default(gov_env):
+    """log_agent_finding succeeds and records a row in the happy path."""
     from brightsmith.infra.governance_db import log_agent_finding
 
-    # Should succeed in test env
     result = log_agent_finding(
         spec_name="test-spec", agent_id="@test",
         summary="test finding", severity="info",
     )
     assert result is not None
+
+
+def test_log_agent_finding_raises_on_write_failure(gov_env, monkeypatch):
+    """Default (strict) log_agent_finding propagates a write failure so the
+    calling pipeline step blocks — the governance DB is authoritative and a
+    dropped finding must never look like success."""
+    import brightsmith.infra.governance.writers as writers
+
+    def boom(**kwargs):
+        raise RuntimeError("governance warehouse unavailable")
+
+    monkeypatch.setattr(writers, "write_agent_activity", boom)
+
+    with pytest.raises(RuntimeError, match="governance warehouse unavailable"):
+        writers.log_agent_finding(
+            spec_name="test-spec", agent_id="@test", summary="x",
+        )
+
+
+def test_log_agent_finding_strict_false_is_fault_tolerant(gov_env, monkeypatch):
+    """strict=False keeps the old best-effort behavior: warn and return None."""
+    import brightsmith.infra.governance.writers as writers
+
+    def boom(**kwargs):
+        raise RuntimeError("governance warehouse unavailable")
+
+    monkeypatch.setattr(writers, "write_agent_activity", boom)
+
+    result = writers.log_agent_finding(
+        spec_name="test-spec", agent_id="@test", summary="x", strict=False,
+    )
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Session logs (restored docs/sessions practice as a governance table)
+# ---------------------------------------------------------------------------
+
+
+def test_write_session_and_query(gov_env):
+    """Write session logs and read them back, most recent first."""
+    from brightsmith.infra.governance_db import get_sessions, write_session
+
+    write_session(
+        session_id="2026-07-01-a",
+        title="Batch A",
+        summary="Did ruff + guard work",
+        author="human:jeff",
+        spec_name="audit-remediation",
+        agents_involved=["@staff-engineer", "@governance-reviewer"],
+        artifacts=["governance/sessions"],
+        content="# Session A\nfull log body",
+    )
+    write_session(
+        session_id="2026-07-01-b",
+        title="Batch B",
+        summary="Sessions table",
+        author="claude-code",
+    )
+
+    all_sessions = get_sessions()
+    assert len(all_sessions) == 2
+
+    scoped = get_sessions(spec_name="audit-remediation")
+    assert len(scoped) == 1
+    row = scoped[0]
+    assert row["title"] == "Batch A"
+    assert row["author"] == "human:jeff"
+    assert json.loads(row["agents_involved"]) == ["@staff-engineer", "@governance-reviewer"]
+    assert row["content"] == "# Session A\nfull log body"
+
+
+def test_write_session_is_idempotent(gov_env):
+    """Re-writing the same session_id dedups (grain = session_id)."""
+    from brightsmith.infra.governance_db import get_sessions, write_session
+
+    for _ in range(3):
+        write_session(session_id="dup", title="t", summary="s", author="a")
+    assert len(get_sessions()) == 1
+
+
+def test_log_session_strict_raises_on_failure(gov_env, monkeypatch):
+    """Default (strict) log_session propagates a write failure."""
+    import brightsmith.infra.governance.writers as writers
+
+    def boom(**kwargs):
+        raise RuntimeError("governance warehouse unavailable")
+
+    monkeypatch.setattr(writers, "write_session", boom)
+
+    with pytest.raises(RuntimeError, match="governance warehouse unavailable"):
+        writers.log_session(session_id="x", title="t", summary="s", author="a")
+
+    # strict=False stays best-effort.
+    assert writers.log_session(
+        session_id="x", title="t", summary="s", author="a", strict=False,
+    ) is None
 
 
 def test_sync_contract(gov_env):
@@ -378,7 +474,8 @@ def test_sync_contract_columns_idempotent(gov_env):
 
 def test_sync_glossary_term(gov_env):
     """Sync a glossary term to the governance DB."""
-    from brightsmith.infra.governance_db import _query_table, sync_glossary_term
+    from brightsmith.infra.governance.queries import _query_table
+    from brightsmith.infra.governance_db import sync_glossary_term
 
     term = {
         "term_id": "BT-001",
@@ -405,7 +502,7 @@ def test_idempotent_writes(gov_env):
     """Writing the same data twice should produce 0 duplicates."""
     from brightsmith.infra.governance_db import write_dq_run
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     result1 = write_dq_run(
         run_id="idem-run", spec_name="idem-spec", table_name="raw.test",
         executed_at=now, rules_total=5, rules_passed=5, rules_failed=0,
@@ -629,7 +726,7 @@ def test_dq_acknowledgment_idempotent(gov_env):
     """Writing same acknowledgment twice should produce 0 new rows."""
     from brightsmith.infra.governance_db import write_dq_acknowledgment
 
-    now = datetime(2026, 3, 29, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 3, 29, 12, 0, 0, tzinfo=UTC)
     r1 = write_dq_acknowledgment(
         run_id="idem-run", rule_id="IDEM-001", spec_name="test",
         acknowledged_by="@test", reason="test", acknowledged_at=now,
@@ -651,7 +748,7 @@ def test_dq_acknowledgment_join_pattern(gov_env):
         write_dq_rule_results,
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     write_dq_rule_results("join-run", "join-spec", [
         {"rule_id": "J-001", "category": "completeness", "priority": "P0",
          "description": "null check", "passed": False, "executed_at": now.isoformat()},
@@ -774,7 +871,7 @@ def test_write_run_history(gov_env):
     """Write a run history record and query it back."""
     from brightsmith.infra.governance_db import get_run_history, write_run_history
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     write_run_history(
         run_id="run-2026-001", started_at=now, status="SUCCESS",
         zones_summary={"raw": {"status": "SUCCESS", "rows": 1000}},
@@ -791,7 +888,7 @@ def test_run_history_idempotent(gov_env):
     """Same run_id should not duplicate."""
     from brightsmith.infra.governance_db import write_run_history
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     r1 = write_run_history(run_id="idem-run", started_at=now, status="SUCCESS", zones_summary={})
     r2 = write_run_history(run_id="idem-run", started_at=now, status="SUCCESS", zones_summary={})
     assert r1.get("promoted", 0) == 1
@@ -938,13 +1035,14 @@ def test_pipeline_event_with_content(gov_env):
     assert events[0]["approval_decision"] == "APPROVED"
 
 
-# -- 20 tables created --
+# -- all governance tables created --
 
-def test_all_15_tables_created(gov_env):
-    """All 20 governance tables should be created lazily."""
-    from brightsmith.infra.governance_db import _get_governance_table, _TABLE_CONFIGS
+def test_all_tables_created(gov_env):
+    """Every governance table should be created lazily from _TABLE_CONFIGS."""
+    from brightsmith.infra.governance.queries import _get_governance_table
+    from brightsmith.infra.governance.schemas import _TABLE_CONFIGS
 
-    assert len(_TABLE_CONFIGS) == 20
+    assert len(_TABLE_CONFIGS) == 21  # includes the sessions table (M2.3/QW3)
     for table_name in _TABLE_CONFIGS:
         table = _get_governance_table(table_name)
         assert table is not None
@@ -1072,8 +1170,15 @@ def test_dq_runner_iceberg_only(gov_env, monkeypatch):
     assert len(result_files) == 0
 
 
-def test_save_contract_writes_iceberg_only(gov_env):
-    """save_contract() should sync to Iceberg without writing runtime YAML."""
+def test_save_contract_dual_writes_file_and_iceberg(gov_env):
+    """save_contract() dual-writes: a readable YAML file AND the Iceberg mirror.
+
+    WP-1.3 (decision D1) reverses the iceberg-only design from commit
+    c1f41f5: the YAML file is authoritative for reads, so save_contract must
+    always write it (audit finding A2). The Iceberg sync is kept as a mirror.
+    """
+    import yaml
+
     from brightsmith.infra.contract import save_contract
     from brightsmith.infra.governance_db import get_contracts
 
@@ -1099,9 +1204,11 @@ def test_save_contract_writes_iceberg_only(gov_env):
     contracts_dir = gov_env / "governance" / "data-contracts"
     path = save_contract(contract, contracts_dir)
 
-    assert not path.exists()
+    # Dual-write 1: the YAML file is written and round-trips to the same dict.
+    assert path.exists()
+    assert yaml.safe_load(path.read_text()) == contract
 
-    # Iceberg should have the contract
+    # Dual-write 2: Iceberg has the contract too.
     contracts = get_contracts()
     assert any(c["contract_name"] == "auto-sync-test" for c in contracts)
 
@@ -1198,7 +1305,7 @@ def test_exporters_generate_files_from_iceberg(gov_env):
         run_id="export-run",
         spec_name="export-spec",
         table_name="gold.metrics",
-        executed_at=datetime.now(timezone.utc),
+        executed_at=datetime.now(UTC),
         rules_total=0,
         rules_passed=0,
         rules_failed=0,
@@ -1225,18 +1332,18 @@ def test_iceberg_write_failures_are_not_swallowed(gov_env, monkeypatch):
         dq_runner_mod.run_rules(spec="missing-rules")
 
 
-def test_aliases_normalize_before_persistence(gov_env):
-    """Deprecated zone aliases persist as canonical names."""
+def test_medallion_names_persist_unchanged(gov_env):
+    """Medallion zone and table names persist verbatim — no alias translation."""
     from brightsmith.infra.governance_db import get_contracts, get_current_specs, sync_contract, write_spec_registry
 
-    write_spec_registry("alias-spec", "raw", "IN_PROGRESS", ["raw.table"], "@test")
+    write_spec_registry("medallion-spec", "bronze", "IN_PROGRESS", ["bronze.table"], "@test")
     sync_contract(
         {
-            "metadata": {"name": "alias-contract", "version": "1.0.0", "status": "active"},
-            "schema": {"table": "consumable.metrics", "namespace": "consumable", "columns": [{"name": "id"}]},
+            "metadata": {"name": "gold-contract", "version": "1.0.0", "status": "active"},
+            "schema": {"table": "gold.metrics", "namespace": "gold", "columns": [{"name": "id"}]},
             "quality": {},
         },
-        "governance/data-contracts/alias-contract.yaml",
+        "governance/data-contracts/gold-contract.yaml",
     )
 
     assert get_current_specs()[0]["zone"] == "bronze"
@@ -1287,3 +1394,31 @@ def test_product_write_fails_on_missing_enterprise_reference(gov_env):
             },
             "governance/data-contracts/missing-ref.yaml",
         )
+
+
+# ---------------------------------------------------------------------------
+# Import-smoke test: module split (Changes 1 & 2)
+# ---------------------------------------------------------------------------
+
+
+def test_governance_db_split_symbols_still_importable():
+    """Public symbols remain importable from governance_db after module split.
+
+    Change 1 moved _parse_mermaid_* to parsers.py and migrate_files_to_iceberg /
+    cmd_migrate to migration.py. Change 2 moved write_model_entity, write_model_columns,
+    write_model_relationships, write_policy to model_writers.py. All four must still
+    be accessible via governance_db (the public facade).
+    """
+    from brightsmith.infra.governance_db import (  # noqa: F401
+        migrate_files_to_iceberg,
+        sync_from_files,
+        write_model_entity,
+        write_model_relationships,
+        write_policy,
+    )
+
+    assert callable(sync_from_files)
+    assert callable(migrate_files_to_iceberg)
+    assert callable(write_model_entity)
+    assert callable(write_model_relationships)
+    assert callable(write_policy)

@@ -16,7 +16,7 @@ You run at **zone transitions** (silver-to-gold and gold-to-mcp only):
 1. **After Silver Zone complete** → Inform Gold Zone specs (data products + MCP server design)
 2. **After Gold Zone complete** → Inform MCP Zone specs (MCP server design is primary focus)
 
-Note: Raw-to-base transitions do NOT get an insight report. The bronze-to-silver transition is mechanical (normalize flat data into dimensional tables), and the domain discovery needs are already covered by @data-analyst EDA and @domain-context (with user interview). There's not enough signal in raw data for meaningful product recommendations.
+Note: Bronze-to-silver transitions do NOT get an insight report. The bronze-to-silver transition is mechanical (normalize flat data into dimensional tables), and the domain discovery needs are already covered by @data-analyst EDA and @domain-context (with user interview). There's not enough signal in raw data for meaningful product recommendations.
 
 Your output is an **Insight Report** that becomes the primary input for spec writing. No downstream spec should be written without your analysis of what's worth building.
 
@@ -147,7 +147,7 @@ Regardless of domain, the following are ALWAYS Tier 1 if the data supports them:
 At the gold-to-mcp transition, the insight report MUST include:
 
 1. **Question categories** with example questions (at least 5 categories: point lookup, comparison, ranking, trend, edge case)
-2. **Answer verification strategy** — how to mechanically check each answer against consumable tables
+2. **Answer verification strategy** — how to mechanically check each answer against gold tables
 3. **Edge cases to test** — entity-specific caveats, NULL handling, cross-concept queries
 4. **Minimum case counts per category** — e.g., 15 lookup, 10 comparison, 8 ranking, 8 trend, 9 edge case = 50 minimum
 
@@ -180,16 +180,23 @@ You DO:
 - Think about the end user (analyst, LLM, domain expert)
 
 ## Key Paths
+Reads `data/`, `governance/domain-context.md`, `governance/eda/`, `governance/business-glossary.json`, `governance/data-contracts/`, `governance/dq-scorecards/`, `docs/specs/`, `domain/`; writes `governance/insights/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Access | Purpose |
-|------|--------|---------|
-| `data/` | Read | Query Iceberg tables for actual data |
-| `governance/domain-context.md` | Read | Canonical domain knowledge — entity types, external data opportunities, AI-ready considerations |
-| `governance/eda/` | Read | Build on existing EDA reports |
-| `governance/business-glossary.json` | Read | Understand defined terms |
-| `governance/data-contracts/` | Read | Understand CDE/PII flags on columns |
-| `governance/dq-scorecards/` | Read | Understand data quality state |
-| `governance/insights/` | Write | Insight reports |
-| `governance/audit-trail/` | Write | Decision logs |
-| `docs/specs/` | Read | Understand what's been built |
-| `domain/` | Read | Understand data source configuration |
+## Governance Database Logging
+
+At key decision points, log structured records to the governance database:
+
+```bash
+python3 -c "
+from brightsmith.infra.governance_db import log_agent_finding
+log_agent_finding(spec_name='SPEC', agent_id='@insight-manager', summary='SUMMARY', detail='DETAIL', severity='info', activity_type='recommendation')
+"
+```
+
+**When to log:**
+- Data product recommendations with value/feasibility ranking
+- External data combination opportunities
+- MCP server design recommendations
+
+**Activity types:** `recommendation`
+**Severities:** `info`

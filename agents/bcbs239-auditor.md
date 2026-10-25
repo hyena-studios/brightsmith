@@ -65,17 +65,5 @@ Structure your output as a formal regulatory assessment with:
 5. Conclusion (can AI-built pipelines meet regulatory standards?)
 
 ## Key Paths
+Reads `src/`, `governance/`, `governance/domain-context.md`, `governance/eda/`, `governance/lineage/`, `governance/dq-rules/`, `governance/audit-trail/`, `governance/pii-scans/`, `governance/policies/`, `docs/specs/`, `CLAUDE.md`; writes `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Purpose |
-|------|---------|
-| `src/` | Read — review pipeline implementation |
-| `governance/` | Read — review all governance artifacts |
-| `governance/domain-context.md` | Read — canonical domain knowledge, applicable regulations (PRIMARY for framework selection) |
-| `governance/eda/` | Read — detailed EDA findings |
-| `governance/lineage/` | Read — assess lineage completeness |
-| `governance/dq-rules/` | Read — assess data quality controls |
-| `governance/audit-trail/` | Read/Write — review and log audit trail |
-| `governance/pii-scans/` | Read — assess PII handling (GDPR, HIPAA) |
-| `governance/policies/` | Read — assess access control policies |
-| `docs/specs/` | Read — review spec completeness |
-| `CLAUDE.md` | Read — understand pipeline rules and human-in-the-loop controls |

@@ -4,6 +4,8 @@ Validates: manifest parsing, source config loading, hints parsing,
 missing manifest handling, and get_source lookup.
 """
 
+import shutil
+from pathlib import Path
 
 import pytest
 import yaml
@@ -16,6 +18,7 @@ from brightsmith.domain_loader import (
     show_domain,
 )
 
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "domain_loader"
 
 # --- Fixtures ---
 
@@ -179,6 +182,121 @@ class TestSourceConfig:
         assert source.table == "test_data"
         assert len(source.entities) == 2
         assert source.dedup_grain == ["id", "date"]
+
+    def test_singular_table_unchanged(self, minimal_manifest):
+        """Singular `table:` still populates both `table` and `tables` (H5.1)."""
+        manifest = load_manifest(minimal_manifest)
+        source = manifest.sources[0]
+        assert source.table == "test_data"
+        assert source.tables == ["test_data"]
+        assert source.full_table_name == "bronze.test_data"
+        assert source.full_table_names == ["bronze.test_data"]
+
+
+# ---------------------------------------------------------------------------
+# H5.1 — `tables:` (plural, multi-table sources).
+#
+# `_load_source_config` used to hard-require singular `table:` and raised
+# KeyError for sources declaring `tables:` — the shape multi-table sources
+# naturally use (field evidence: futureproof-data's `onet.yaml`, copied in
+# trimmed form to tests/fixtures/domain_loader/onet_source_trimmed.yaml).
+# ---------------------------------------------------------------------------
+
+
+def _manifest_with_source_file(tmp_path, source_yaml_path: Path):
+    """Build a minimal manifest.yaml pointing at a given source config file."""
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    dest = sources_dir / source_yaml_path.name
+    shutil.copy(source_yaml_path, dest)
+
+    manifest = {
+        "name": "tables-test",
+        "version": "1.0",
+        "description": "tables: plural source test",
+        "sources": [
+            {"name": "onet", "source_config": f"sources/{source_yaml_path.name}"}
+        ],
+    }
+    manifest_path = tmp_path / "manifest.yaml"
+    with open(manifest_path, "w") as f:
+        yaml.dump(manifest, f)
+    return manifest_path
+
+
+class TestPluralTablesSource:
+    """`tables:` (plural) sources must load without KeyError (H5.1)."""
+
+    def test_onet_style_tables_mapping_loads(self, tmp_path):
+        """A `tables:` mapping (onet.yaml's real shape) loads all table names."""
+        manifest_path = _manifest_with_source_file(
+            tmp_path, FIXTURES_DIR / "onet_source_trimmed.yaml"
+        )
+        manifest = load_manifest(manifest_path)
+        source = manifest.sources[0]
+
+        assert source.tables == ["onet_occupations", "onet_task_statements"]
+        # `table` is set to the first entry for back-compat with single-table callers.
+        assert source.table == "onet_occupations"
+        assert source.full_table_names == [
+            "bronze.onet_occupations",
+            "bronze.onet_task_statements",
+        ]
+
+    def test_tables_as_plain_list_loads(self, tmp_path):
+        """`tables:` given as a plain YAML list (no per-table metadata) also loads."""
+        source_config = {
+            "name": "multi",
+            "namespace": "bronze",
+            "tables": ["table_a", "table_b", "table_c"],
+            "fetch": {},
+            "entities": {},
+            "dedup_grain": ["id"],
+            "cache_dir": "data/raw/multi_cache",
+        }
+        sources_dir = tmp_path / "sources"
+        sources_dir.mkdir()
+        (sources_dir / "multi.yaml").write_text(yaml.dump(source_config))
+
+        manifest = {
+            "name": "tables-list-test",
+            "version": "1.0",
+            "description": "",
+            "sources": [{"name": "multi", "source_config": "sources/multi.yaml"}],
+        }
+        manifest_path = tmp_path / "manifest.yaml"
+        manifest_path.write_text(yaml.dump(manifest))
+
+        result = load_manifest(manifest_path)
+        source = result.sources[0]
+        assert source.tables == ["table_a", "table_b", "table_c"]
+        assert source.table == "table_a"
+
+    def test_neither_table_nor_tables_raises(self, tmp_path):
+        """A source config with neither `table:` nor `tables:` fails loudly."""
+        source_config = {
+            "name": "broken",
+            "namespace": "bronze",
+            "fetch": {},
+            "entities": {},
+            "dedup_grain": ["id"],
+            "cache_dir": "data/raw/cache",
+        }
+        sources_dir = tmp_path / "sources"
+        sources_dir.mkdir()
+        (sources_dir / "broken.yaml").write_text(yaml.dump(source_config))
+
+        manifest = {
+            "name": "broken-test",
+            "version": "1.0",
+            "description": "",
+            "sources": [{"name": "broken", "source_config": "sources/broken.yaml"}],
+        }
+        manifest_path = tmp_path / "manifest.yaml"
+        manifest_path.write_text(yaml.dump(manifest))
+
+        with pytest.raises(KeyError, match="table"):
+            load_manifest(manifest_path)
 
 
 # --- Get Source ---
@@ -393,7 +511,7 @@ class TestDomainAssignment:
         """domain set to a plain string degrades to None."""
         source_config = {
             "name": "test_source", "namespace": "bronze", "table": "t",
-            "fetch": {}, "entities": {}, "dedup_grain": [],
+            "fetch": {}, "entities": {}, "dedup_grain": ["id"],
             "cache_dir": "data/raw/cache",
         }
         sources_dir = tmp_path / "sources"
@@ -415,7 +533,7 @@ class TestDomainAssignment:
         """domain set to empty dict degrades to None."""
         source_config = {
             "name": "test_source", "namespace": "bronze", "table": "t",
-            "fetch": {}, "entities": {}, "dedup_grain": [],
+            "fetch": {}, "entities": {}, "dedup_grain": ["id"],
             "cache_dir": "data/raw/cache",
         }
         sources_dir = tmp_path / "sources"
@@ -432,3 +550,56 @@ class TestDomainAssignment:
 
         result = load_manifest(path)
         assert result.domain is None
+
+
+class TestDedupGrainRequired:
+    """A missing grain silently disabled dedup — every re-run appended the
+    whole source again (2026-09-08 audit §2 P0). It is now a load error."""
+
+    def _load(self, root: Path, source: dict):
+        base = {"name": "src", "namespace": "bronze", "fetch": {}, "entities": {}, "cache_dir": "c"}
+        sources_dir = root / "sources"
+        sources_dir.mkdir(parents=True)
+        (sources_dir / "src.yaml").write_text(yaml.dump({**base, **source}))
+        manifest = {
+            "name": "m",
+            "version": "1",
+            "description": "",
+            "sources": [{"name": "src", "source_config": "sources/src.yaml"}],
+        }
+        path = root / "manifest.yaml"
+        path.write_text(yaml.dump(manifest))
+        return load_manifest(path).sources[0]
+
+    def test_missing_grain_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="no dedup_grain"):
+            self._load(tmp_path, {"table": "t"})
+
+    def test_empty_grain_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="no dedup_grain"):
+            self._load(tmp_path, {"table": "t", "dedup_grain": []})
+
+    def test_per_table_grains_satisfy_and_primary_table_grain_is_used(self, tmp_path):
+        source = self._load(
+            tmp_path, {"tables": {"a": {"dedup_grain": ["x", "y"]}, "b": {"dedup_grain": ["z"]}}}
+        )
+        assert source.dedup_grain == ["x", "y"]
+
+    def test_one_table_without_grain_raises_naming_it(self, tmp_path):
+        with pytest.raises(ValueError, match=r"\['b'\]"):
+            self._load(tmp_path, {"tables": {"a": {"dedup_grain": ["x"]}, "b": {}}})
+
+    def test_plain_table_list_needs_top_level_grain(self, tmp_path):
+        with pytest.raises(ValueError, match="no dedup_grain"):
+            self._load(tmp_path / "bad", {"tables": ["a", "b"]})
+        source = self._load(tmp_path / "ok", {"tables": ["a", "b"], "dedup_grain": ["k"]})
+        assert source.dedup_grain == ["k"]
+
+    def test_onet_fixture_resolves_first_table_grain(self, tmp_path):
+        manifest_path = _manifest_with_source_file(tmp_path, FIXTURES_DIR / "onet_source_trimmed.yaml")
+        assert load_manifest(manifest_path).sources[0].dedup_grain
+
+
+def test_string_grain_is_rejected_not_split_into_characters(tmp_path):
+    with pytest.raises(ValueError, match=r"list of column names"):
+        TestDedupGrainRequired()._load(tmp_path, {"table": "t", "dedup_grain": "id"})

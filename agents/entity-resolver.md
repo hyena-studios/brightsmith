@@ -137,12 +137,5 @@ Log all resolution decisions to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
+Reads `docs/specs/`, `data/raw/`, `governance/entity-registry.json`, `governance/domain-context.md`, `governance/eda/`; writes `governance/entity-registry.json`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Purpose |
-|------|---------|
-| `docs/specs/` | Read — understand resolution requirements |
-| `data/raw/` | Read — raw entity data from source |
-| `governance/entity-registry.json` | Read/Write — canonical entity registry |
-| `governance/domain-context.md` | Read — canonical domain knowledge, entity types, resolution strategies |
-| `governance/eda/` | Read — detailed EDA findings from @data-analyst |
-| `governance/audit-trail/` | Write — decision logs |

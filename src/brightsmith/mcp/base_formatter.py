@@ -19,8 +19,9 @@ Usage:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 
 @dataclass
@@ -56,7 +57,9 @@ class BaseFormatter:
             try:
                 if rule.match(column, value, row):
                     return rule.format_fn(value)
-            except Exception:
+            except (TypeError, ValueError, KeyError, ArithmeticError):
+                # One formatting rule that can't handle this value/column is
+                # skipped; a logic bug (AttributeError/NameError) still surfaces.
                 continue
         return None
 

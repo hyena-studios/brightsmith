@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -43,7 +43,7 @@ def archive_staging(staging_path: str | Path, archive_dir: str | Path) -> Path |
     archive_dir = Path(archive_dir)
     archive_dir.mkdir(parents=True, exist_ok=True)
 
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     archive_path = archive_dir / f"proposed-mappings-{ts}.json"
     shutil.move(str(staging_path), str(archive_path))
     return archive_path
@@ -68,9 +68,7 @@ def apply_gate(
     for proposal in proposals:
         confidence = proposal.get("confidence", 0.0)
 
-        if confidence < confidence_floor:
-            needs_review.append(proposal)
-        elif require_human_approval:
+        if confidence < confidence_floor or require_human_approval:
             needs_review.append(proposal)
         else:
             auto_promote.append(proposal)
@@ -97,7 +95,7 @@ def approve_proposals(
     proposals = read_staging(staging_path)
     approved = []
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     for p in proposals:
         if p["status"] != "pending":
@@ -124,7 +122,7 @@ def reject_proposals(
     proposals = read_staging(staging_path)
     rejected = []
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     for p in proposals:
         if p["status"] != "pending":

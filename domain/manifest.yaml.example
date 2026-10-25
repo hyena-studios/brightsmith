@@ -35,3 +35,41 @@ hints:
   #     - standard:my-standard
   # concept_mappings: domain/concept-mappings/
   # metrics: domain/metrics/
+
+# Optional headless-runner registration (python -m brightsmith.run reads this
+# to know which zone transform to call — see docs/specs/headless-pipeline-runner.md).
+# Two shapes are supported:
+#
+#   1. Flat — one step per zone, dotted or file-path module:
+#      pipeline:
+#        bronze:
+#          module: my_domain.bronze.run_ingest
+#          function: main
+#
+#   2. Nested — an ORDERED LIST of steps per zone (for multi-source domains
+#      producing several transforms per zone); `module` is typically a file
+#      path resolved against the project root:
+#      pipeline:
+#        zones:
+#          silver:
+#            - name: my_source
+#              module: src/silver/my_source_transformer.py
+#              function: transform
+#          mcp:
+#            - name: my_domain_server
+#              module: src/mcp_server/my_server.py
+#              class: MyDomainMCPServer   # picked up by serve.py; see `mcp:` below
+#
+# A `pipeline:` section matching neither shape fails loudly rather than
+# leaving the zone registry silently empty.
+
+# Optional domain-specific MCP server (see docs/workflows/mcp-pipeline.md).
+# When present, `python -m brightsmith.serve` loads this class instead of the
+# generic BaseMCPServer. `module` may be a dotted import path (as below) or a
+# file path (e.g. "src/mcp_server/my_server.py") — both are supported so
+# multi-source domains can point at the same file their pipeline steps use.
+# If omitted, serve.py also checks for a `pipeline.zones.mcp` entry carrying
+# `module`/`class` keys before falling back to BaseMCPServer.
+# mcp:
+#   module: my_domain.mcp_server
+#   class: MyDomainMCPServer

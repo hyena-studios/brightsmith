@@ -29,8 +29,8 @@ from typing import Any
 from pyiceberg.exceptions import NamespaceAlreadyExistsError, TableAlreadyExistsError
 from pyiceberg.schema import Schema
 
-from brightsmith.infra.iceberg_setup import append_data, get_catalog, read_with_duckdb
 from brightsmith.domain_loader import DomainManifest, SourceConfig
+from brightsmith.infra.iceberg_setup import append_data, get_catalog, read_with_duckdb
 
 logger = logging.getLogger(__name__)
 
@@ -116,13 +116,24 @@ class BaseIngestor(ABC):
             return set()
 
         try:
-            existing = read_with_duckdb(table)
+            # Read only the grain columns (M1) — dedup only needs them, not
+            # every column of every row.
+            existing = read_with_duckdb(table, columns=grain_fields)
             return {
                 tuple(str(r.get(f, "")) for f in grain_fields)
                 for r in existing
             }
         except Exception:
-            return set()
+            # A read failure here must NOT silently disable dedup. Returning an
+            # empty set would make every existing row look new and ingest
+            # duplicates. Surface the failure loudly so the ingest aborts.
+            logger.error(
+                "Failed to read existing dedup grains for %s; aborting to avoid "
+                "ingesting duplicates",
+                self.source.full_table_name,
+                exc_info=True,
+            )
+            raise
 
     def _make_grain(self, row: dict) -> tuple:
         """Extract the dedup grain tuple from a row."""
@@ -134,6 +145,8 @@ class BaseIngestor(ABC):
         method: str = "api",
         warehouse_path: Path | None = None,
         catalog_path: Path | None = None,
+        spec_reference: str | None = None,
+        agent_id: str | None = None,
         **kwargs,
     ) -> dict:
         """Generic ingest pipeline: fetch -> flatten -> dedup -> write.
@@ -146,12 +159,17 @@ class BaseIngestor(ABC):
             method: fetch method name. Defaults to "api".
             warehouse_path: Iceberg warehouse path override.
             catalog_path: Iceberg catalog path override.
+            spec_reference: Spec file path for lineage attribution (e.g.
+                "docs/specs/raw-ingest-statements.md"). Defaults to unattributed.
+            agent_id: Agent identifier for lineage attribution (e.g.
+                "@document-extractor"). Defaults to unattributed.
             **kwargs: passed through to fetch() (e.g., cache_dir, user_agent).
 
         Returns:
             {entity_id: {"rows": N, "snapshot_id": X, "skipped": Y}} summary.
         """
-        from brightsmith.config import WAREHOUSE_PATH as DEFAULT_WH, CATALOG_PATH as DEFAULT_CAT
+        from brightsmith.config import CATALOG_PATH as DEFAULT_CAT
+        from brightsmith.config import WAREHOUSE_PATH as DEFAULT_WH
 
         entities = entities or self.source.entities
         warehouse_path = warehouse_path or DEFAULT_WH
@@ -172,7 +190,7 @@ class BaseIngestor(ABC):
             flat_rows = self.flatten(data, entity_id)
 
             # Add framework metadata
-            ingested_at = datetime.datetime.now(tz=datetime.timezone.utc)
+            ingested_at = datetime.datetime.now(tz=datetime.UTC)
             source_url = self.get_source_url(entity_id, method)
             load_date = ingested_at.date()
             for row in flat_rows:
@@ -181,13 +199,22 @@ class BaseIngestor(ABC):
                 row["source_method"] = method
                 row["load_date"] = load_date
 
-            # Dedup against existing grains
+            # Dedup against existing grains AND against earlier rows in this same
+            # batch. Checking only `existing_grains` lets the same grain appear
+            # twice within one ingest and both get written — that violates grain
+            # uniqueness at write time. One pass handles both: a row is dropped if
+            # its grain already exists in the table OR was already seen this batch.
             original_count = len(flat_rows)
-            if existing_grains and self.source.dedup_grain:
-                flat_rows = [
-                    r for r in flat_rows
-                    if self._make_grain(r) not in existing_grains
-                ]
+            if self.source.dedup_grain:
+                seen_in_batch: set = set()
+                deduped = []
+                for r in flat_rows:
+                    grain = self._make_grain(r)
+                    if grain in existing_grains or grain in seen_in_batch:
+                        continue
+                    seen_in_batch.add(grain)
+                    deduped.append(r)
+                flat_rows = deduped
             skipped = original_count - len(flat_rows)
 
             if not flat_rows:
@@ -213,7 +240,7 @@ class BaseIngestor(ABC):
             print(f"Dedup summary: {total_new} new facts ingested, {total_skipped} duplicates skipped")
 
         # Auto-emit runtime lineage event
-        self._emit_lineage(table, results, total_new, total_skipped)
+        self._emit_lineage(table, results, total_new, total_skipped, spec_reference, agent_id)
 
         return results
 
@@ -223,6 +250,8 @@ class BaseIngestor(ABC):
         results: dict,
         total_new: int,
         total_skipped: int,
+        spec_reference: str | None = None,
+        agent_id: str | None = None,
     ) -> None:
         """Emit a runtime lineage event after ingest completes.
 
@@ -230,7 +259,7 @@ class BaseIngestor(ABC):
         Domain projects get lineage for free — no agent needed for raw zone.
         """
         try:
-            from brightsmith.infra.lineage import emit_start, emit_complete
+            from brightsmith.infra.lineage import emit_complete, emit_start
 
             source_url = self.get_source_url(
                 list(results.keys())[0] if results else "unknown",
@@ -242,6 +271,9 @@ class BaseIngestor(ABC):
                 input_tables=[source_url],
                 output_table=self.source.full_table_name,
                 producer="BaseIngestor",
+                spec_reference=spec_reference,
+                agent_id=agent_id,
+                catalog=table.catalog,
             )
 
             # Get latest snapshot ID
@@ -258,6 +290,7 @@ class BaseIngestor(ABC):
                 snapshot_id=snapshot_id,
                 row_count=total_new,
                 skipped_duplicates=total_skipped,
+                catalog=table.catalog,
             )
         except Exception:
             logger.warning("Failed to emit lineage event for %s", self.source.name, exc_info=True)

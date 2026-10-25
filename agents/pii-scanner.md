@@ -117,12 +117,5 @@ Log all scanning decisions to `governance/audit-trail/`. Include:
 - Timestamp and spec reference
 
 ## Key Paths
+Reads `docs/specs/`, `data/raw/`, `governance/domain-context.md`, `governance/eda/`; writes `governance/pii-scans/`, `governance/audit-trail/`. (Purposes and full path list in CLAUDE.md.)
 
-| Path | Purpose |
-|------|---------|
-| `docs/specs/` | Read — understand what data to scan |
-| `data/raw/` | Read — raw data files to scan |
-| `governance/domain-context.md` | Read — canonical domain knowledge, PII expectations, regulatory context |
-| `governance/eda/` | Read — detailed EDA findings from @data-analyst |
-| `governance/pii-scans/` | Write — PII scan reports |
-| `governance/audit-trail/` | Write — decision logs |

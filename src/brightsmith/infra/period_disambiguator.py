@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal
 
-
 PeriodType = Literal["annual", "quarterly", "monthly", "point_in_time", "unknown"]
 
 
@@ -74,7 +73,7 @@ class PeriodDisambiguator:
     def __init__(self, thresholds: PeriodThresholds | None = None):
         self.thresholds = thresholds or PeriodThresholds()
 
-    def classify(self, start_date: date, end_date: date) -> PeriodClassification:
+    def classify(self, start_date: date | None, end_date: date | None) -> PeriodClassification:
         """Classify a single date range by its span.
 
         Args:
@@ -185,7 +184,7 @@ class PeriodDisambiguator:
 
         # Filter to target type
         candidates: dict[tuple, list[tuple[dict, PeriodClassification]]] = {}
-        for fact, cls in zip(facts, classifications):
+        for fact, cls in zip(facts, classifications, strict=False):
             if cls.period_type != target_type:
                 continue
             key = (fact.get(entity_col), fact.get(metric_col), fact.get(period_col))

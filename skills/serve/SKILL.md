@@ -27,24 +27,24 @@ After headless readiness passes, gather real stats from the full pipeline and pr
 The full Brightsmith pipeline is complete. From raw source to AI-ready,
 your data has been mined, smelted, cast, and is now ready to serve.
 
-⛏️  Bronze (Raw):
-   • [N] raw tables ingested from [source name]
-   • [N] total raw rows
+⛏️  Bronze:
+   • [N] bronze tables ingested from [source name]
+   • [N] total bronze rows
    • Domain context discovered and documented
 
-⚒️  Silver (Base):
-   • [N] base tables — cleaned, deduplicated, normalized
+⚒️  Silver:
+   • [N] silver tables — cleaned, deduplicated, normalized
    • [N] business terms defined in the glossary
    • [N] data models (conceptual → logical → physical)
    • [N] concept mappings applied
 
-🥇 Gold (Consumable):
-   • [N] consumable data products
+🥇 Gold:
+   • [N] gold data products
    • [N] data contracts (all ACTIVE)
    • [N] golden dataset values verified
    • [N] total DQ rules protecting the pipeline
 
-🤖 MCP (AI-Ready):
+🤖 MCP:
    • Tools exposed: [list tool names from MCP spec]
    • Resources available: [list resource names]
    • Eval set: [N] Q&A cases across [N] categories

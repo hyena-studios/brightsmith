@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-test:
+    name: Lint & Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv and Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check src tests
+
+      - name: Type check (pyright)
+        run: uv run pyright
+
+      - name: Test (pytest + coverage)
+        run: uv run python -m pytest tests/ -q --cov=brightsmith --cov-report=term-missing --cov-fail-under=75
+
+      # The repo has no committed warehouse of its own (data/ is gitignored), so
+      # checking the checkout could never fail. Run against a fixture whose
+      # paths are known to be foreign and require the check to catch them.
+      - name: Relocation check detects a foreign warehouse
+        run: |
+          set +e
+          BRIGHTSMITH_PROJECT_ROOT="$PWD/tests/fixtures/relocated_project" \
+            uv run python -m brightsmith.infra.relocate --check
+          code=$?
+          if [ "$code" -ne 1 ]; then
+            echo "expected exit 1 for a warehouse baked at /srv/original-project, got $code" >&2
+            exit 1
+          fi
+
+  consumer-journey:
+    name: Consumer journey (wheel-install smoke test)
+    runs-on: ubuntu-latest
+    # Single lane, not the full matrix — this job builds the wheel, installs
+    # it into a scratch venv OUTSIDE the checkout, scaffolds a project via
+    # `brightsmith.setup init`, runs the headless pipeline against a fixture
+    # domain pack, and queries the result through BaseMCPServer. It is the
+    # structural fix for docs/technical-audit-2026-07-02.md Theme 1: the
+    # framework's tests never played the consumer, so consumer-seam defects
+    # (C1, H1, H2, H4, H5) survived undetected. Blocking, no continue-on-error.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Run consumer-journey smoke test
+        run: bash scripts/consumer_journey_smoke.sh

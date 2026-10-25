@@ -22,10 +22,9 @@ import hashlib
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
-
 
 # ---------------------------------------------------------------------------
 # Types
@@ -252,10 +251,10 @@ class PipelineGate:
     justifications, and approval decisions. Persists to a JSON state file.
 
     Usage:
-        gate = PipelineGate("raw-sec-edgar-ingest")
+        gate = PipelineGate("bronze-sec-edgar-ingest")
 
         gate.check_prerequisites("data-analyst")
-        gate.complete_step("data-analyst", output="governance/eda/raw-sec-edgar-eda.md")
+        gate.complete_step("data-analyst", output="governance/eda/bronze-sec-edgar-eda.md")
 
         gate.skip_step("pii-scanner",
                        reason="domain-context.md PII section: no PII expected",
@@ -279,8 +278,17 @@ class PipelineGate:
         return {}
 
     def _save(self) -> None:
-        """Retain state in memory; file generation is handled by exporters."""
-        return None
+        """Persist the full legacy state shape to the JSON state file.
+
+        File is authoritative for gate reads (decision D1, dual-write). This
+        writes the complete `{spec, zone, mode, started, steps, skipped_steps,
+        approvals}` shape. Iceberg event emission happens separately via
+        `_emit_governance_event` — both sides are written, the file is the read
+        side this release. State is never cached across processes: every
+        PipelineGate instance re-reads from disk in __init__ via _load().
+        """
+        self._state_dir.mkdir(parents=True, exist_ok=True)
+        self._state_path.write_text(json.dumps(self._state, indent=2) + "\n")
 
     @property
     def zone(self) -> Zone:
@@ -304,7 +312,7 @@ class PipelineGate:
         from brightsmith.infra.governance.serializers import normalize_zone
 
         zone = normalize_zone(zone)  # type: ignore[assignment]
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         steps = {}
         for step in _get_steps(zone, mode):
             steps[step.name] = {
@@ -326,13 +334,20 @@ class PipelineGate:
         }
         self._save()
 
+        from brightsmith.infra.governance.sync import _last_known_status, _last_known_value
         from brightsmith.infra.governance_db import write_spec_registry
 
+        # zone is the real value the caller just supplied -- init() is the
+        # authoritative place a spec's zone gets set, never a guess. But the
+        # pipeline-state JSON has no slot for output_tables (nothing ever
+        # writes one into self._state), so a re-init of an existing spec
+        # (e.g. a MINOR-change restart) must carry the known table list
+        # forward instead of wiping it back to [].
         write_spec_registry(
             spec_name=self.spec,
             zone=zone,
-            status="IN_PROGRESS",
-            output_tables=[],
+            status=_last_known_status(self.spec) or "IN_PROGRESS",
+            output_tables=_last_known_value(self.spec, "output_tables") or [],
             updated_by="pipeline-gate",
             pipeline_steps_total=len(steps),
             pipeline_steps_completed=0,
@@ -345,6 +360,7 @@ class PipelineGate:
         self, step_name: str, event_type: str, **kwargs,
     ) -> None:
         """Emit a pipeline event to Iceberg governance tables."""
+        from brightsmith.infra.governance.sync import _last_known_status, _last_known_value
         from brightsmith.infra.governance_db import write_pipeline_event, write_spec_registry
 
         steps = self._state.get("steps", {})
@@ -363,12 +379,31 @@ class PipelineGate:
             notes=kwargs.get("notes"),
         )
 
+        # The pipeline-state JSON never persists a top-level status field, so
+        # self._state.get("status") is always None here — the registry's own
+        # latest status (e.g. a staff-engineer-authored COMPLETE) is the only
+        # place a terminal status can come from. Carry it forward instead of
+        # hardcoding IN_PROGRESS, or every gate event would clobber it back.
         completed = sum(1 for s in steps.values() if s.get("status") in ("COMPLETED", "SKIPPED"))
+        status = self._state.get("status") or _last_known_status(self.spec) or "IN_PROGRESS"
+        # Same reasoning as status above: self._state carries a real "zone"
+        # only when init() set one (older state files may predate that), and
+        # never carries "output_tables" at all -- nothing ever writes that key
+        # into the state dict. Carry both forward from the registry instead of
+        # emitting the empty default on every single step event.
+        raw_zone = self._state.get("zone")
+        zone = raw_zone if isinstance(raw_zone, str) and raw_zone else _last_known_value(self.spec, "zone") or ""
+        raw_output_tables = self._state.get("output_tables")
+        output_tables = (
+            raw_output_tables
+            if isinstance(raw_output_tables, list) and all(isinstance(table, str) for table in raw_output_tables)
+            else _last_known_value(self.spec, "output_tables") or []
+        )
         write_spec_registry(
             spec_name=self.spec,
-            zone=self._state.get("zone", ""),
-            status=self._state.get("status", "IN_PROGRESS"),
-            output_tables=self._state.get("output_tables", []),
+            zone=zone,
+            status=status,
+            output_tables=output_tables,
             updated_by=agent_id or "pipeline-gate",
             pipeline_step_current=step_name,
             pipeline_steps_total=len(steps),
@@ -421,21 +456,35 @@ class PipelineGate:
             }
         else:
             steps[step_name]["status"] = "IN_PROGRESS"
-        steps[step_name]["started_at"] = datetime.now(timezone.utc).isoformat()
+        steps[step_name]["started_at"] = datetime.now(UTC).isoformat()
         self._save()
         self._emit_governance_event(step_name, "STARTED")
 
-    def complete_step(self, step_name: str, output: str = "") -> None:
+    def complete_step(self, step_name: str, output: str = "", finding: str | None = None) -> None:
         """Record that a step completed successfully.
+
+        Governance-DB-gated completion
+        ------------------------------
+        The authoritative state file is committed *last* — only after the
+        governance-DB writes succeed. If the Iceberg write (or the optional
+        ``finding`` write) fails, this method RAISES and the state file is left
+        un-advanced: the step stays incomplete and the next ``check`` returns
+        BLOCKED. A lost completion record therefore cannot let the pipeline
+        proceed — it stops deterministically at the next step's gate, with no
+        agent cooperation required. Retrying ``complete`` is idempotent: every
+        governance write dedups on its grain-based ``record_id``.
 
         Args:
             step_name: The step that completed.
             output: Path to the output artifact (relative to project root).
+            finding: Optional end-of-step summary recorded to the agent-activity
+                feed atomically with completion. Strict — a failed write blocks
+                completion just like the pipeline-event write.
         """
         from brightsmith.config import PROJECT_ROOT
 
         steps = self._state.setdefault("steps", {})
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         if step_name not in steps:
             step_def = _get_step_def(self.zone, self.mode, step_name)
@@ -456,8 +505,22 @@ class PipelineGate:
             if file_hash:
                 steps[step_name]["output_hash"] = file_hash
 
-        self._save()
+        # Governance DB is authoritative — write it BEFORE committing the state
+        # file. A failure here propagates and leaves the file un-advanced, so
+        # the next `check` stays BLOCKED rather than advancing on a lost record.
         self._emit_governance_event(step_name, "COMPLETED", output_path=output)
+        if finding:
+            from brightsmith.infra.governance_db import log_agent_finding
+
+            log_agent_finding(
+                spec_name=self.spec,
+                agent_id=steps[step_name].get("agent"),
+                summary=finding,
+                activity_type="completion",
+            )
+
+        # Reached only if the required governance writes succeeded.
+        self._save()
 
     def skip_step(self, step_name: str, reason: str, evidence: str) -> None:
         """Record that a step was intentionally skipped.
@@ -487,7 +550,7 @@ class PipelineGate:
         self._state.setdefault("skipped_steps", {})[step_name] = {
             "reason": reason,
             "evidence": evidence,
-            "skipped_at": datetime.now(timezone.utc).isoformat(),
+            "skipped_at": datetime.now(UTC).isoformat(),
         }
 
         # Also update the step status in the steps dict
@@ -495,8 +558,10 @@ class PipelineGate:
         if step_name in steps:
             steps[step_name]["status"] = "SKIPPED"
 
-        self._save()
+        # Governance DB first; commit the state file only if it succeeds, so a
+        # failed skip-event write leaves the file un-advanced (next check BLOCKED).
         self._emit_governance_event(step_name, "SKIPPED", skip_reason=reason)
+        self._save()
 
     # --- Approval tracking ---
 
@@ -520,7 +585,7 @@ class PipelineGate:
         self._state.setdefault("approvals", {})[artifact] = {
             "status": decision,
             "decided_by": decided_by,
-            "decided_at": datetime.now(timezone.utc).isoformat(),
+            "decided_at": datetime.now(UTC).isoformat(),
             "document": document,
             "notes": notes,
         }
@@ -602,14 +667,19 @@ class PipelineGate:
 
         issues: list[str] = []
 
-        # Consumable and AI-Ready zones: DQ rules file must exist with >= 1 rule
+        # Consumable and AI-Ready zones: DQ rules file must exist with >= 1 rule.
+        # Fast path: exact governance/dq-rules/<spec>.json. Multi-table specs
+        # file rules per-table instead (every rule still tagged "spec": self.spec),
+        # so fall back to scanning all rules files for a matching tag before
+        # concluding the spec has no rules at all.
         if zone in ("gold", "mcp"):
             dq_file = DQ_RULES_DIR / f"{self.spec}.json"
             if not dq_file.exists():
-                issues.append(
-                    f"DQ rules file missing for {zone} spec: {dq_file}. "
-                    f"@dq-rule-writer must produce rules before completion."
-                )
+                if not self._has_dq_rules_tagged_for_spec(DQ_RULES_DIR):
+                    issues.append(
+                        f"DQ rules file missing for {zone} spec: {dq_file}. "
+                        f"@dq-rule-writer must produce rules before completion."
+                    )
             else:
                 import json as _json
                 try:
@@ -620,15 +690,16 @@ class PipelineGate:
                             f"DQ rules file exists but contains 0 rules: {dq_file}. "
                             f"Consumable/AI-Ready specs require at least 1 DQ rule."
                         )
-                except Exception:
-                    issues.append(f"DQ rules file is not valid JSON: {dq_file}")
+                except (json.JSONDecodeError, OSError) as e:
+                    # Malformed/unreadable rules file — report as a blocking issue.
+                    issues.append(f"DQ rules file could not be read as JSON: {dq_file} ({e})")
 
         # Consumable zone: golden dataset must exist with >= 3 values
         if zone == "gold":
             golden_file = GOLDEN_DATASETS_DIR / f"{self.spec}-golden.json"
             if not golden_file.exists():
                 issues.append(
-                    f"Golden dataset missing for consumable spec: {golden_file}. "
+                    f"Golden dataset missing for gold-zone spec: {golden_file}. "
                     f"Must contain at least 3 independently verifiable values."
                 )
             else:
@@ -640,8 +711,9 @@ class PipelineGate:
                         issues.append(
                             f"Golden dataset has {len(values)} values (minimum 3): {golden_file}"
                         )
-                except Exception:
-                    issues.append(f"Golden dataset is not valid JSON: {golden_file}")
+                except (json.JSONDecodeError, OSError) as e:
+                    # Malformed/unreadable golden dataset — report as a blocking issue.
+                    issues.append(f"Golden dataset could not be read as JSON: {golden_file} ({e})")
 
         # Gold greenfield: physical model file must exist
         if zone == "gold" and self.mode == "greenfield":
@@ -671,13 +743,41 @@ class PipelineGate:
                                     f"CAB decision '{entry['decision_id']}' is PENDING — "
                                     f"human approval required before spec completion"
                                 )
-                    except Exception:
-                        pass
+                    except (json.JSONDecodeError, OSError) as e:
+                        # A corrupt/unreadable CAB index must NOT silently pass —
+                        # that would skip the PENDING-decision gate entirely.
+                        issues.append(
+                            f"CAB index could not be read ({index_path}): {e}. "
+                            f"Cannot verify there are no PENDING CAB decisions."
+                        )
 
         # Warehouse population: verify tables exist in the persistent Iceberg catalog
         issues.extend(self._validate_warehouse_population(zone))
 
         return issues
+
+    def _has_dq_rules_tagged_for_spec(self, dq_rules_dir: Path) -> bool:
+        """Whether any file under dq_rules_dir carries >= 1 rule tagged for this spec.
+
+        Multi-table specs file DQ rules per-table rather than under the spec's
+        own filename, so the fast filename check alone false-fails them. The
+        real convention tags the file's top-level "spec" key; a per-rule
+        "spec" tag is also accepted for files that tag at the rule level.
+        """
+        import json as _json
+
+        if not dq_rules_dir.exists():
+            return False
+        for path in dq_rules_dir.glob("*.json"):
+            try:
+                data = _json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            if data.get("spec") == self.spec:
+                return True
+            if any(rule.get("spec") == self.spec for rule in data.get("rules", [])):
+                return True
+        return False
 
     def _validate_warehouse_population(self, zone: Zone) -> list[str]:
         """Verify that the pipeline has written tables to the persistent warehouse.
@@ -697,9 +797,18 @@ class PipelineGate:
             return issues
 
         try:
-            from brightsmith.infra.iceberg_setup import get_catalog
+            from brightsmith.infra.iceberg_setup import (
+                WarehouseRelocationError,
+                get_catalog,
+            )
 
-            catalog = get_catalog(WAREHOUSE_PATH, CATALOG_PATH)
+            try:
+                catalog = get_catalog(WAREHOUSE_PATH, CATALOG_PATH)
+            except WarehouseRelocationError as exc:
+                # Moved/cloned warehouse — surface the loud failure as a blocking
+                # issue with the repair command rather than reporting empty tables.
+                issues.append(str(exc))
+                return issues
             namespaces = [ns[0] for ns in catalog.list_namespaces()]
 
             if zone not in namespaces:
@@ -800,7 +909,7 @@ class PipelineGate:
                     f"{from_zone}→{to_zone} transition"
                 )
 
-            # insight-manager required at base→consumable and consumable→ai_ready
+            # insight-manager required at silver→gold and gold→mcp
             if from_zone in ("silver", "gold"):
                 im = steps.get("insight-manager", {})
                 if im.get("status") != "COMPLETED" and "insight-manager" not in skipped:
@@ -808,6 +917,22 @@ class PipelineGate:
                         f"[{gate.spec}] @insight-manager report not completed for "
                         f"{from_zone}→{to_zone} transition"
                     )
+
+        # Every data contract on a source-zone table must be 'active' — a draft contract
+        # means the data product it governs is not yet stamped, so the next zone must not
+        # build on it. (deprecated is a deliberate retirement state and does not block.)
+        from brightsmith.infra.contract import list_contracts
+
+        for contract in list_contracts():
+            table = str(contract.get("table", ""))
+            if not table.startswith(f"{from_zone}."):
+                continue
+            status = contract.get("status", "?")
+            if status != "active":
+                issues.append(
+                    f"[{contract.get('name', table)}] contract for {table} is "
+                    f"'{status}', must be 'active' before {from_zone}→{to_zone} transition"
+                )
 
         return (len(issues) == 0, issues)
 
@@ -885,12 +1010,12 @@ class PipelineGate:
             })
 
         if fmt == "json":
-            return json.dumps({"audit_date": datetime.now(timezone.utc).isoformat(), "specs": specs}, indent=2)
+            return json.dumps({"audit_date": datetime.now(UTC).isoformat(), "specs": specs}, indent=2)
 
         # Markdown format
         lines = [
             "# Pipeline Audit Report",
-            f"**Date:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+            f"**Date:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
             f"**Specs:** {len(specs)}",
             "",
         ]
@@ -948,7 +1073,7 @@ class PipelineGate:
             ]
             if steps_with_hash:
                 lines.append("### Output Integrity")
-                for name, info in steps_with_hash:
+                for _name, info in steps_with_hash:
                     output_path = PROJECT_ROOT / info["output"]
                     current = _hash_file(output_path)
                     recorded = info["output_hash"]
@@ -987,6 +1112,7 @@ def main() -> None:
     comp_p.add_argument("spec", help="Spec name")
     comp_p.add_argument("step", help="Step name")
     comp_p.add_argument("--output", default="", help="Path to output artifact")
+    comp_p.add_argument("--finding", default=None, help="End-of-step summary recorded with completion")
 
     # skip
     skip_p = subparsers.add_parser("skip", help="Record step skip with justification")
@@ -1064,7 +1190,7 @@ def _cmd_check(args: argparse.Namespace) -> None:
 
 def _cmd_complete(args: argparse.Namespace) -> None:
     gate = PipelineGate(args.spec)
-    gate.complete_step(args.step, output=args.output)
+    gate.complete_step(args.step, output=args.output, finding=args.finding)
     print(f"Recorded completion: '{args.step}' → COMPLETED")
 
 
@@ -1083,11 +1209,11 @@ def _cmd_approve(args: argparse.Namespace) -> None:
     gate.record_approval(
         artifact=args.artifact,
         decision=args.decision,
-        decided_by=getattr(args, "by"),
+        decided_by=args.by,
         notes=args.notes,
         document=args.document,
     )
-    print(f"Recorded approval: '{args.artifact}' → {args.decision} by {getattr(args, 'by')}")
+    print(f"Recorded approval: '{args.artifact}' → {args.decision} by {args.by}")
 
 
 def _cmd_validate(args: argparse.Namespace) -> None:
