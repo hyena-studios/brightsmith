@@ -26,7 +26,7 @@ Brightsmith is a domain-agnostic AI agent data pipeline framework that transform
 - Governance artifacts: `governance/`
 - Data models: `governance/models/` (conceptual, logical, physical)
 - DQ rules: `governance/dq-rules/` (JSON rule definitions with SQL + thresholds)
-- DQ results: `governance/dq-results/` (timestamped execution results)
+- DQ results: governance database tables `dq_runs` / `dq_rule_results`, written only by `dq_runner run` (`python -m brightsmith.infra.dq_runner results --spec <spec>` shows the latest real run). JSON files in `governance/dq-results/` are imported, never authoritative.
 - DQ scorecards: `governance/dq-scorecards/` (markdown scorecards from real execution)
 - Domain context: `governance/domain-context.md` (canonical domain knowledge for all agents)
 - Business glossary: `governance/business-glossary.json`
@@ -67,7 +67,7 @@ Before starting spec work, read the workflow document for the relevant zone:
 - DQ rules follow a lifecycle: `PROPOSED → APPROVED → ACTIVE`. Rules must be executed against real Iceberg data via `python -m brightsmith.infra.dq_runner run`. P0 failures block spec completion.
 - DQ rule approval respects `REQUIRE_HUMAN_APPROVAL` — when False, proposed rules auto-advance to approved
 - DQ scorecards must be generated from real execution results (`python -m brightsmith.infra.dq_runner scorecard`), not test results
-- @governance-reviewer post-implementation check verifies: DQ rules exist, rules have been executed (results file exists), no P0 failures in latest results
+- @governance-reviewer post-implementation check verifies: DQ rules exist, rules have been executed (`dq_runner results --spec <spec>` shows a real run), no P0 failures in that latest real run
 - Zone transformers MUST use the idempotent promote pattern (`from brightsmith.infra.promote import promote`) — no bare `append_data()` for derived tables. Re-running with the same data must produce 0 new rows.
 - Every derived table row gets a deterministic `record_id` via `compute_grain_id(row, grain_fields, prefix)` from `brightsmith.infra.grain`. Same input → same hash → dedup skips it.
 - Grain fields are defined once per table and used everywhere: promote dedup, DQ uniqueness rules, data contracts, golden dataset filters.

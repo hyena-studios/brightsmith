@@ -16,11 +16,14 @@ def get_concept_mappings_dir() -> Path | None:
 
     Returns None if the manifest doesn't exist or doesn't specify
     a concept_mappings path — the normalizer will operate in discovery mode.
+    A manifest that exists but cannot be loaded raises: silently dropping to
+    discovery mode would ignore the project's curated mappings.
     """
+    from brightsmith.domain_loader import load_manifest
+
     try:
-        from brightsmith.domain_loader import load_manifest
         manifest = load_manifest()
-        return manifest.hints.concept_mappings
-    except (FileNotFoundError, Exception) as e:
-        logger.info("No domain manifest or concept_mappings hint: %s", e)
+    except FileNotFoundError as e:
+        logger.info("No domain manifest; concept normalization in discovery mode: %s", e)
         return None
+    return manifest.hints.concept_mappings

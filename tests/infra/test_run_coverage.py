@@ -393,6 +393,55 @@ def test_run_pipeline_contract_violation_after_success_is_a_warning():
     assert result.status == "SUCCESS_WITH_WARNINGS"
 
 
+def _run_with_golden(golden):
+    """run_pipeline with a green zone and the given golden outcome (a
+    GoldenResult, or an exception for _verify_golden_datasets to raise)."""
+    golden_patch = (
+        patch("brightsmith.run._verify_golden_datasets", side_effect=golden)
+        if isinstance(golden, Exception)
+        else patch("brightsmith.run._verify_golden_datasets", return_value=golden)
+    )
+    with (
+        patch("brightsmith.run._load_zone_registry"),
+        patch("brightsmith.run._preflight_relocation"),
+        patch("brightsmith.run._execute_zone_module", return_value={"rows_promoted": 1, "rows_skipped": 0}),
+        patch("brightsmith.run._run_dq_for_zone", return_value=(True, 1, 0, [])),
+        patch("brightsmith.run._verify_contracts_for_zone", return_value=(1, 0)),
+        golden_patch,
+    ):
+        return run_pipeline(zones=["bronze"])
+
+
+def test_golden_mismatch_fails_the_run():
+    """Measured by the 2026-09-08 audit: golden 0/10 MATCH with green zones
+    exited 0, while the README said mismatches block completion."""
+    result = _run_with_golden(GoldenResult(checked=10, passed=9, failed=1, pass_rate=90.0))
+    assert result.status == "GOLDEN_FAILURE"
+    assert result.exit_code == run_mod.EXIT_GOLDEN_FAILURE == 5
+
+
+def test_golden_verification_crash_is_a_recorded_failure_not_a_traceback():
+    result = _run_with_golden(ValueError("could not convert string to float: 'Low'"))
+    assert result.status == "GOLDEN_FAILURE"
+    assert result.exit_code == run_mod.EXIT_GOLDEN_FAILURE
+    assert "float" in result.golden_datasets.error
+    assert result.to_dict()["golden_datasets"]["error"] == result.golden_datasets.error
+    assert result.completed_at  # finalize ran, so a run record can be written
+
+
+def test_golden_all_match_stays_success():
+    result = _run_with_golden(GoldenResult(checked=3, passed=3, failed=0, pass_rate=100.0))
+    assert (result.status, result.exit_code) == ("SUCCESS", run_mod.EXIT_SUCCESS)
+
+
+def test_golden_failure_outranks_contract_warning():
+    result = PipelineResult()
+    result.add_zone_result("gold", ZoneResult(zone="gold", status="SUCCESS", contracts_violated=1))
+    result.golden_datasets = GoldenResult(checked=1, passed=0, failed=1)
+    result.finalize()
+    assert result.exit_code == run_mod.EXIT_GOLDEN_FAILURE
+
+
 def test_run_pipeline_dq_p0_failure_fails_zone_and_stops():
     with (
         patch("brightsmith.run._load_zone_registry"),

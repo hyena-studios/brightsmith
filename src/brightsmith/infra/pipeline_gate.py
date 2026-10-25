@@ -391,8 +391,14 @@ class PipelineGate:
         # never carries "output_tables" at all -- nothing ever writes that key
         # into the state dict. Carry both forward from the registry instead of
         # emitting the empty default on every single step event.
-        zone = self._state.get("zone", "") or _last_known_value(self.spec, "zone") or ""
-        output_tables = self._state.get("output_tables", []) or _last_known_value(self.spec, "output_tables") or []
+        raw_zone = self._state.get("zone")
+        zone = raw_zone if isinstance(raw_zone, str) and raw_zone else _last_known_value(self.spec, "zone") or ""
+        raw_output_tables = self._state.get("output_tables")
+        output_tables = (
+            raw_output_tables
+            if isinstance(raw_output_tables, list) and all(isinstance(table, str) for table in raw_output_tables)
+            else _last_known_value(self.spec, "output_tables") or []
+        )
         write_spec_registry(
             spec_name=self.spec,
             zone=zone,

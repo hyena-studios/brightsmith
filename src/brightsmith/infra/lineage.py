@@ -22,6 +22,8 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pyarrow as pa
 from pyiceberg.schema import Schema
@@ -36,6 +38,9 @@ from pyiceberg.types import (
 
 from brightsmith import config
 from brightsmith.infra.iceberg_setup import get_catalog, get_or_create_table
+
+if TYPE_CHECKING:
+    from pyiceberg.catalog import Catalog
 
 logger = logging.getLogger(__name__)
 
@@ -103,15 +108,62 @@ def build_column_lineage(mappings: list[ColumnMapping]) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _get_lineage_table():
-    """Lazily create and return the governance.lineage_events table."""
-    catalog = get_catalog(config.GOVERNANCE_WAREHOUSE, config.CATALOG_PATH)
+def _is_project_catalog(catalog: Catalog) -> bool:
+    uri = str(catalog.properties.get("uri", ""))
+    return uri.removeprefix("sqlite:///") == str(Path(config.CATALOG_PATH).resolve())
+
+
+def _get_lineage_table(catalog: Catalog | None = None):
+    """Lazily create and return the governance.lineage_events table.
+
+    With no ``catalog`` (or the project's own catalog) the table lives in the
+    project's governance warehouse. Any other catalog gets its own lineage
+    table, so a write into a scratch or test catalog never leaves events in
+    the project's catalog (2026-09-08 audit §6: 584 pytest fixture events
+    reached a consumer's shipped catalog this way).
+    """
+    if catalog is None or _is_project_catalog(catalog):
+        catalog = get_catalog(config.GOVERNANCE_WAREHOUSE, config.CATALOG_PATH)
     return get_or_create_table(catalog, "governance", "lineage_events", LINEAGE_EVENTS_SCHEMA)
 
 
-def _write_event(record: dict) -> None:
+def _read_lineage_arrow() -> pa.Table:
+    """All lineage events in the project catalog, as Arrow.
+
+    A catalog with no lineage table yet reads as zero events. Reading never
+    creates the table, so status and verify commands leave the catalog as
+    they found it (2026-09-08 audit Phase 0 item 7).
+    """
+    from pyiceberg.io.pyarrow import schema_to_pyarrow
+
+    from brightsmith.infra.iceberg_setup import load_table_if_exists
+
+    catalog = get_catalog(config.GOVERNANCE_WAREHOUSE, config.CATALOG_PATH)
+    table = load_table_if_exists(catalog, "governance", "lineage_events")
+    if table is None:
+        return schema_to_pyarrow(LINEAGE_EVENTS_SCHEMA).empty_table()
+    return table.scan().to_arrow()
+
+
+def _emit(record: dict, catalog: Catalog | None, strict: bool) -> None:
+    """Write ``record``; on failure raise when ``strict``, otherwise log a warning."""
+    try:
+        _write_event(record, catalog)
+    except Exception:
+        if strict:
+            raise
+        logger.warning(
+            "Failed to emit lineage %s for %s", record["event_type"], record["job_name"], exc_info=True
+        )
+        return
+    logger.debug(
+        "Lineage %s emitted for %s (run_id=%s)", record["event_type"], record["job_name"], record["run_id"]
+    )
+
+
+def _write_event(record: dict, catalog: Catalog | None = None) -> None:
     """Write a single event record to the lineage_events table."""
-    table = _get_lineage_table()
+    table = _get_lineage_table(catalog)
     from pyiceberg.io.pyarrow import schema_to_pyarrow
 
     arrow_schema = schema_to_pyarrow(table.schema())
@@ -134,14 +186,18 @@ def emit_start(
     producer: str,
     spec_reference: str | None = None,
     agent_id: str | None = None,
+    catalog: Catalog | None = None,
+    strict: bool = False,
 ) -> str:
     """Emit a START event. Returns run_id for pairing with COMPLETE/FAIL.
 
-    Fault-tolerant: logs a warning and returns run_id even if write fails.
+    ``catalog`` is the catalog the job wrote into; events land beside it (see
+    :func:`_get_lineage_table`). With ``strict=False`` (default) a failed write
+    logs a warning and the run_id is still returned; ``strict=True`` raises.
     """
     run_id = str(uuid.uuid4())
-    try:
-        _write_event({
+    _emit(
+        {
             "event_id": str(uuid.uuid4()),
             "run_id": run_id,
             "event_type": "START",
@@ -162,10 +218,10 @@ def emit_start(
             "spec_reference": spec_reference,
             "agent_id": agent_id,
             "transformation_steps": None,
-        })
-        logger.debug("Lineage START emitted for %s (run_id=%s)", job_name, run_id)
-    except Exception:
-        logger.warning("Failed to emit lineage START for %s", job_name, exc_info=True)
+        },
+        catalog,
+        strict,
+    )
     return run_id
 
 
@@ -182,10 +238,12 @@ def emit_complete(
     dq_p0_passed: bool | None = None,
     duration_ms: int | None = None,
     transformation_steps: list[dict] | None = None,
+    catalog: Catalog | None = None,
+    strict: bool = False,
 ) -> None:
-    """Emit a COMPLETE event. Fault-tolerant: logs warning on failure."""
-    try:
-        _write_event({
+    """Emit a COMPLETE event. See :func:`emit_start` for ``catalog``/``strict``."""
+    _emit(
+        {
             "event_id": str(uuid.uuid4()),
             "run_id": run_id,
             "event_type": "COMPLETE",
@@ -206,10 +264,10 @@ def emit_complete(
             "spec_reference": None,
             "agent_id": None,
             "transformation_steps": json.dumps(transformation_steps) if transformation_steps else None,
-        })
-        logger.debug("Lineage COMPLETE emitted for %s (run_id=%s)", job_name, run_id)
-    except Exception:
-        logger.warning("Failed to emit lineage COMPLETE for %s", job_name, exc_info=True)
+        },
+        catalog,
+        strict,
+    )
 
 
 def emit_fail(
@@ -219,10 +277,12 @@ def emit_fail(
     producer: str,
     error_message: str,
     duration_ms: int | None = None,
+    catalog: Catalog | None = None,
+    strict: bool = False,
 ) -> None:
-    """Emit a FAIL event. Fault-tolerant: logs warning on failure."""
-    try:
-        _write_event({
+    """Emit a FAIL event. See :func:`emit_start` for ``catalog``/``strict``."""
+    _emit(
+        {
             "event_id": str(uuid.uuid4()),
             "run_id": run_id,
             "event_type": "FAIL",
@@ -243,10 +303,10 @@ def emit_fail(
             "spec_reference": None,
             "agent_id": None,
             "transformation_steps": None,
-        })
-        logger.debug("Lineage FAIL emitted for %s (run_id=%s)", job_name, run_id)
-    except Exception:
-        logger.warning("Failed to emit lineage FAIL for %s", job_name, exc_info=True)
+        },
+        catalog,
+        strict,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -259,13 +319,12 @@ def _read_all_events() -> list[dict]:
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
         if arrow_table.num_rows == 0:
             return []
         with duckdb.connect() as con:
             rows = con.sql("SELECT * FROM arrow_table ORDER BY event_time DESC").fetchall()
-        columns = [f.name for f in table.schema().fields]
+        columns = arrow_table.schema.names
         return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception:
         logger.warning("Could not read lineage events", exc_info=True)
@@ -284,8 +343,7 @@ def query_lineage_events(
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
         if arrow_table.num_rows == 0:
             return []
         with duckdb.connect() as con:
@@ -297,7 +355,7 @@ def query_lineage_events(
                 ORDER BY event_time DESC
                 LIMIT $3
             """, params=[table_name, event_type, limit]).fetchall()
-        columns = [f.name for f in table.schema().fields]
+        columns = arrow_table.schema.names
         return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception:
         logger.warning("Could not query lineage events for %s", table_name, exc_info=True)
@@ -318,8 +376,7 @@ def query_downstream_consumers(
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
         if arrow_table.num_rows == 0:
             return []
         # Search for table_name in the JSON array string of input_tables
@@ -333,7 +390,7 @@ def query_downstream_consumers(
                 ORDER BY event_time DESC
                 LIMIT $2
             """, params=[pattern, limit]).fetchall()
-        columns = [f.name for f in table.schema().fields]
+        columns = arrow_table.schema.names
         return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception:
         logger.warning("Could not query downstream consumers for %s", table_name, exc_info=True)
@@ -359,8 +416,7 @@ def cmd_status() -> None:
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
     except Exception as e:
         print(f"No lineage events table found: {e}")
         return
@@ -405,8 +461,7 @@ def cmd_history(job_name: str) -> None:
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
     except Exception as e:
         print(f"No lineage events table found: {e}")
         return
@@ -445,8 +500,7 @@ def cmd_graph() -> None:
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
     except Exception as e:
         print(f"No lineage events table found: {e}")
         return
@@ -512,8 +566,7 @@ def cmd_generate_docs() -> None:
     import duckdb
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
     except Exception as e:
         print(f"No lineage events table found: {e}")
         return
@@ -696,8 +749,7 @@ def cmd_verify(spec_name: str) -> int:
     checks: list[tuple[str, bool, str]] = []  # (label, passed, detail)
 
     try:
-        table = _get_lineage_table()
-        arrow_table = table.scan().to_arrow()
+        arrow_table = _read_lineage_arrow()
     except Exception:
         print("[FAIL] Cannot access lineage_events table")
         return 1

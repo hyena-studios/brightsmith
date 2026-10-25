@@ -14,8 +14,14 @@ from typing import Any
 
 import duckdb
 import pyarrow as pa
+from pyiceberg.catalog import Catalog
 from pyiceberg.catalog.sql import SqlCatalog
-from pyiceberg.exceptions import NamespaceAlreadyExistsError, TableAlreadyExistsError
+from pyiceberg.exceptions import (
+    NamespaceAlreadyExistsError,
+    NoSuchNamespaceError,
+    NoSuchTableError,
+    TableAlreadyExistsError,
+)
 from pyiceberg.io.pyarrow import schema_to_pyarrow
 from pyiceberg.schema import Schema
 from pyiceberg.table import Table
@@ -49,11 +55,13 @@ def detect_relocation(
 ) -> list[tuple[str, str, str]]:
     """Scan the SQLite catalog for relocated metadata rows.
 
-    A row is "relocated" when its ``metadata_location`` is an ABSOLUTE path whose
-    file does NOT exist on disk AND whose prefix is not under the current project
-    root. Relative paths (resolved against CWD) and rows whose file exists are NOT
-    flagged — this keeps fresh/in-place warehouses, new tables, and committed
-    relative warehouses from raising.
+    A row is "relocated" when its ``metadata_location`` is an ABSOLUTE path that
+    lives under neither the current project root nor the catalog's own data
+    directory. Whether the file exists is deliberately NOT consulted: a copied
+    project whose original is still on disk has every metadata file present, and
+    used to be waved through — then read and wrote the ORIGINAL warehouse
+    silently (2026-09-08 audit §2 P0). Relative paths (resolved against CWD) are
+    never flagged, so fresh, in-place, and committed-relative warehouses pass.
 
     Returns the list of offending ``(namespace, table, metadata_location)`` rows.
     """
@@ -82,15 +90,53 @@ def detect_relocation(
     finally:
         con.close()
 
-    offending: list[tuple[str, str, str]] = []
-    for ns, table_name, meta_loc in rows:
-        if not meta_loc or not os.path.isabs(meta_loc):
-            continue  # relative paths resolve against CWD — not a relocation
-        if os.path.exists(meta_loc):
-            continue  # file is present — in-place, fine
-        if not _path_under(meta_loc, root):
-            offending.append((ns, table_name, meta_loc))
-    return offending
+    roots = _allowed_roots(root, db)
+    return [
+        (ns, table_name, meta_loc)
+        for ns, table_name, meta_loc in rows
+        if _is_foreign(meta_loc, roots)
+    ]
+
+
+def _allowed_roots(project_root: str, catalog_path: Path, *extra: str | Path) -> list[str]:
+    """Directories a correctly-rooted ``metadata_location`` may live under.
+
+    The project root, the catalog's own directory, the configured data and
+    governance warehouses, and any warehouse the caller is explicitly opening.
+    A candidate that is the filesystem root or an ANCESTOR of the project root
+    is dropped: it would admit a sibling copy of the project (a catalog at
+    ``<root>/catalog.db`` once made ``<root>/..`` an allowed root) or switch the
+    guard off entirely.
+    """
+    candidates = [
+        project_root,
+        Path(catalog_path).parent,
+        config.WAREHOUSE_PATH,
+        config.GOVERNANCE_WAREHOUSE,
+        *extra,
+    ]
+    root = os.path.realpath(project_root)
+    roots: list[str] = []
+    for c in candidates:
+        r = os.path.realpath(c)
+        if r == os.sep or (r != root and _path_under(root, r)):
+            continue
+        roots.append(r)
+    return roots
+
+
+def _is_foreign(meta_loc: str | None, roots: list[str]) -> bool:
+    """True if ``meta_loc`` points outside every allowed root.
+
+    Relative paths resolve against the working directory (how committed
+    relative warehouses work) and are foreign only if they climb out of it.
+    """
+    if not meta_loc:
+        return False
+    if not os.path.isabs(meta_loc):
+        return os.path.normpath(meta_loc).split(os.sep)[0] == os.pardir
+    resolved = os.path.realpath(meta_loc)
+    return not any(_path_under(meta_loc, r) or _path_under(resolved, r) for r in roots)
 
 
 def list_catalog_table_locations(
@@ -163,11 +209,12 @@ def _relocation_message(offending: list[tuple[str, str, str]]) -> str:
     sample = offending[0]
     return (
         f"Iceberg warehouse looks relocated: {len(offending)} catalog row(s) point at "
-        f"metadata files that do not exist on disk.\n"
+        f"metadata outside this project.\n"
         f"  Baked prefix(es): {', '.join(prefixes)}\n"
         f"  Current project root: {cfg.PROJECT_ROOT}\n"
         f"  Example: {sample[0]}.{sample[1]} -> {sample[2]}\n"
-        f"Reads would silently return EMPTY results. Repair the baked paths with:\n"
+        f"Reads would silently return EMPTY results, or read and write another copy "
+        f"of the warehouse. Repair the baked paths with:\n"
         f"    {RELOCATE_COMMAND}\n"
         f"(or commit relative paths with: python -m brightsmith.infra.relocate --relative)"
     )
@@ -198,9 +245,14 @@ def _normalize_identifier(identifier: Any) -> tuple[str, str] | None:
     return ".".join(parts[:-1]), parts[-1]
 
 
-def _assert_table_not_relocated(catalog_path: str | Path, identifier: Any) -> None:
-    """Raise if the SPECIFIC table's metadata file is missing because of a foreign
-    baked prefix. Narrow by design: only the table being loaded is checked."""
+def _assert_table_not_relocated(
+    catalog_path: str | Path,
+    identifier: Any,
+    warehouse_path: str | Path | None = None,
+) -> None:
+    """Raise if the SPECIFIC table's metadata path carries a foreign baked prefix,
+    whether or not that file still exists. Narrow by design: only the table being
+    loaded is checked."""
     norm = _normalize_identifier(identifier)
     if norm is None:
         return
@@ -232,13 +284,9 @@ def _assert_table_not_relocated(catalog_path: str | Path, identifier: Any) -> No
     if not row:
         return
     meta_loc = row[0]
-    if not meta_loc or not os.path.isabs(meta_loc):
-        return  # relative — resolves against CWD
-    if os.path.exists(meta_loc):
-        return  # present — fine
-    if _path_under(meta_loc, root):
-        return  # missing but correctly rooted — not a relocation
-    raise WarehouseRelocationError(_relocation_message([(namespace, table_name, meta_loc)]))
+    extra = [warehouse_path] if warehouse_path is not None else []
+    if _is_foreign(meta_loc, _allowed_roots(root, db, *extra)):
+        raise WarehouseRelocationError(_relocation_message([(namespace, table_name, meta_loc)]))
 
 
 # Process-wide catalog cache. Building a SqlCatalog spins up a SQLAlchemy engine
@@ -302,7 +350,7 @@ def get_catalog(warehouse_path: str | Path, catalog_path: str | Path) -> SqlCata
     _orig_load_table = catalog.load_table
 
     def _guarded_load_table(identifier, *args, **kwargs):
-        _assert_table_not_relocated(catalog_path, identifier)
+        _assert_table_not_relocated(catalog_path, identifier, warehouse_path)
         return _orig_load_table(identifier, *args, **kwargs)
 
     catalog.load_table = _guarded_load_table  # type: ignore[method-assign]
@@ -310,7 +358,7 @@ def get_catalog(warehouse_path: str | Path, catalog_path: str | Path) -> SqlCata
     return catalog
 
 
-def get_or_create_table(catalog: SqlCatalog, namespace: str, table_name: str, schema: Schema) -> Table:
+def get_or_create_table(catalog: Catalog, namespace: str, table_name: str, schema: Schema) -> Table:
     """Get an existing Iceberg table or create it, creating the namespace if needed."""
     try:
         catalog.create_namespace(namespace)
@@ -324,6 +372,37 @@ def get_or_create_table(catalog: SqlCatalog, namespace: str, table_name: str, sc
         return catalog.load_table(identifier)
 
 
+def load_table_if_exists(catalog: Catalog, namespace: str, table_name: str) -> Table | None:
+    """Load a table, or return None if it (or its namespace) does not exist.
+
+    The read-path counterpart of :func:`get_or_create_table`: status and
+    validation commands use it so that looking at a catalog never adds tables
+    to it (a read-only command once created ``governance.agent_activity`` in a
+    consumer's committed catalog — 2026-09-08 audit §3).
+    """
+    try:
+        return catalog.load_table(f"{namespace}.{table_name}")
+    except (NoSuchTableError, NoSuchNamespaceError):
+        return None
+
+
+def add_missing_columns(table: Table, schema: Schema) -> Table:
+    """Add any column in ``schema`` that ``table`` lacks (write path only).
+
+    Lets a framework upgrade add an optional column to a table that an older
+    version created, instead of failing every write with an unknown-key error.
+    Runs only when a declared column is missing; ``union_by_name`` may then
+    also apply a safe type promotion (e.g. int to long) to a declared column.
+    """
+    existing = {f.name for f in table.schema().fields}
+    if all(f.name in existing for f in schema.fields):
+        return table
+    with table.update_schema() as update:
+        update.union_by_name(schema)
+    table.refresh()
+    return table
+
+
 def append_data(table: Table, records: list[dict], strict: bool = True) -> int:
     """Append records to an Iceberg table. Returns the new snapshot ID.
 
@@ -335,6 +414,20 @@ def append_data(table: Table, records: list[dict], strict: bool = True) -> int:
             which would otherwise be silently dropped (and the schema field they
             were meant to populate silently filled with ``None``). Pass
             ``strict=False`` for the legacy lax behaviour (extra keys ignored).
+    """
+    arrow_table = records_to_arrow(table, records, strict=strict)
+    table.append(arrow_table)
+    table.refresh()
+    return list(table.snapshots())[-1].snapshot_id
+
+
+def records_to_arrow(table: Table, records: list[dict], strict: bool = True) -> pa.Table:
+    """Coerce ``records`` to an Arrow table in ``table``'s schema.
+
+    Shared by :func:`append_data` and ``promote``'s conflict check, so a record is
+    compared in exactly the types it would be written in (ISO date strings become
+    ``date``, ints widen per the schema, and so on). See :func:`append_data` for
+    ``strict``.
     """
     iceberg_schema = table.schema()
     field_names = {f.name for f in iceberg_schema.fields}
@@ -357,10 +450,7 @@ def append_data(table: Table, records: list[dict], strict: bool = True) -> int:
         columns[field.name] = values
 
     arrow_schema = schema_to_pyarrow(iceberg_schema)
-    arrow_table = pa.table(columns, schema=arrow_schema)
-    table.append(arrow_table)
-    table.refresh()
-    return list(table.snapshots())[-1].snapshot_id
+    return pa.table(columns, schema=arrow_schema)
 
 
 def read_with_duckdb(
@@ -420,6 +510,7 @@ def filter_existing_records(
     """
     if not records:
         return [], 0
+    _require_ids(records, id_field)
 
     # In-batch dedup FIRST: the same id_field value appearing twice in one call
     # must append exactly once. The anti-join below only compares against rows
@@ -451,6 +542,20 @@ def filter_existing_records(
     new_records = result.to_pylist()
     skipped = len(records) - len(new_records)
     return new_records, skipped
+
+
+def _require_ids(records: list[dict], id_field: str) -> None:
+    """Reject records whose ``id_field`` is missing or null.
+
+    SQL ``NULL = NULL`` never matches, so a null id defeats the anti-join and the
+    same row is appended again on every run (2026-09-08 audit §2 P0).
+    """
+    missing = sum(1 for r in records if r.get(id_field) is None)
+    if missing:
+        raise ValueError(
+            f"{missing} of {len(records)} record(s) have no '{id_field}'. Every derived "
+            f"row needs a grain id: compute_grain_id(row, grain_fields, prefix)."
+        )
 
 
 def get_snapshots(table: Table) -> list[dict]:

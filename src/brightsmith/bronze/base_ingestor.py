@@ -273,6 +273,7 @@ class BaseIngestor(ABC):
                 producer="BaseIngestor",
                 spec_reference=spec_reference,
                 agent_id=agent_id,
+                catalog=table.catalog,
             )
 
             # Get latest snapshot ID
@@ -289,6 +290,7 @@ class BaseIngestor(ABC):
                 snapshot_id=snapshot_id,
                 row_count=total_new,
                 skipped_duplicates=total_skipped,
+                catalog=table.catalog,
             )
         except Exception:
             logger.warning("Failed to emit lineage event for %s", self.source.name, exc_info=True)

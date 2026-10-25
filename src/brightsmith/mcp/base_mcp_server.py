@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+from pyiceberg.exceptions import NoSuchTableError
 
 from brightsmith.infra.iceberg_setup import get_catalog, list_catalog_table_locations
 
@@ -648,6 +649,31 @@ class BaseMCPServer:
             con.install_extension("iceberg")
             con.load_extension("iceberg")
 
+            # Load through PyIceberg first. A catalog can legitimately contain
+            # data and governance tables under different warehouse roots, so
+            # the allowlist must be derived from every verified table location
+            # rather than only from the server's primary data warehouse.
+            loaded_tables: list[tuple[str, str, Any]] = []
+            allowed_roots = {str(self.warehouse_path.resolve())}
+            for ns, tbl in current:
+                full_id = f"{ns}.{tbl}"
+                try:
+                    iceberg_table = self.catalog.load_table(full_id)
+                    table_root = self._trusted_table_root(iceberg_table.metadata_location)
+                    if table_root is None:
+                        logger.warning(
+                            "query_iceberg: not serving %s: its metadata (%s) is outside the data and "
+                            "governance warehouses",
+                            full_id, iceberg_table.metadata_location,
+                        )
+                        continue
+                    allowed_roots.add(table_root)
+                    loaded_tables.append((full_id, f"{ns}_{tbl}", iceberg_table))
+                except (OSError, NoSuchTableError) as e:
+                    # Missing metadata file, or a catalog row dropped between
+                    # listing and loading: that one table is not queryable.
+                    logger.warning("query_iceberg: skipping view for %s: %s", full_id, e)
+
             # `iceberg_scan()` views are lazy: the file reads they need happen
             # when the view is *queried*, not when it is created. A blanket
             # `enable_external_access=false` blocks those reads unconditionally,
@@ -661,18 +687,14 @@ class BaseMCPServer:
             # else (read_csv, read_parquet outside the warehouse, COPY, …)
             # stays blocked. Verified empirically against the pinned DuckDB
             # 1.5.0 (uv.lock) — see docs/technical-audit-2026-07-02.md sketch A.
-            warehouse_root = str(self.warehouse_path.resolve())
-            con.execute("SET allowed_directories = ?", [[warehouse_root]])
+            con.execute("SET allowed_directories = ?", [sorted(allowed_roots)])
             # Disable all other file-system access (read_csv, COPY TO, read_parquet, …).
             # Pragma name verified against DuckDB 1.5.0 (uv.lock).
             con.execute("SET enable_external_access=false")
 
             registry: dict[str, str] = {}
-            for ns, tbl in current:
-                full_id = f"{ns}.{tbl}"
-                view_name = f"{ns}_{tbl}"
+            for full_id, view_name, iceberg_table in loaded_tables:
                 try:
-                    iceberg_table = self.catalog.load_table(full_id)
                     metadata_path = iceberg_table.metadata_location
                     con.execute(
                         f"CREATE VIEW IF NOT EXISTS {view_name} AS "
@@ -698,6 +720,24 @@ class BaseMCPServer:
             self._view_registry = registry
             self._table_locations_seen = current
             return con
+
+    def _trusted_table_root(self, metadata_location: str) -> str | None:
+        """The table directory to open to DuckDB, or None if it is not trusted.
+
+        The allowlist is granted to untrusted (LLM-written) SQL, so a table's
+        directory is admitted only when it lies strictly inside the server's
+        data warehouse or the configured governance warehouse. Otherwise a
+        crafted catalog row (say, a relative ``evil.metadata.json`` at the
+        project root) would open the whole project to ``read_csv``.
+        """
+        from brightsmith import config
+
+        table_root = Path(metadata_location).resolve().parent.parent
+        for warehouse in (self.warehouse_path, Path(config.GOVERNANCE_WAREHOUSE)):
+            base = warehouse.resolve()
+            if table_root != base and table_root.is_relative_to(base):
+                return str(table_root)
+        return None
 
     def close_query_connection(self) -> None:
         """Close and drop the cached persistent query connection, if any.

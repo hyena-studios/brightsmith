@@ -138,6 +138,20 @@ def test_assigning_derived_path_overrides_only_that_path(restore_config, tmp_pat
     assert before_warehouse == cfg.WAREHOUSE_PATH  # untouched
 
 
+@pytest.mark.parametrize(("name", "value"), [("REQUIRE_HUMAN_APPROVAL", False), ("CONFIDENCE_FLOOR", 0.9)])
+def test_assigning_a_scalar_keeps_path_overrides(restore_config, tmp_path, name, value):
+    """Toggling approval used to re-derive every path from PROJECT_ROOT, silently
+    discarding a CATALOG_PATH override — so a test that toggled it wrote into
+    the repo's own catalog (2026-10-24 governance review)."""
+    cfg = restore_config
+    cfg.CATALOG_PATH = tmp_path / "scratch.db"
+
+    setattr(cfg, name, value)
+
+    assert getattr(cfg, name) == value
+    assert tmp_path / "scratch.db" == cfg.CATALOG_PATH
+
+
 def test_monkeypatch_does_not_leak_stale_value(restore_config, tmp_path, monkeypatch):
     """monkeypatch.setattr on config + undo must not shadow the live config.
 

@@ -8,7 +8,7 @@ import sys
 from brightsmith.infra.governance.migration import cmd_migrate
 from brightsmith.infra.governance.queries import (
     _TABLE_CONFIGS,
-    _get_governance_table,
+    _find_governance_table,
     get_governance_summary,
 )
 from brightsmith.infra.governance.sync import sync_from_files
@@ -100,7 +100,10 @@ def cmd_query(table_name: str) -> None:
         sys.exit(1)
 
     try:
-        table = _get_governance_table(table_name)
+        table = _find_governance_table(table_name)
+        if table is None:
+            print(f"governance.{table_name}: 0 rows (table not created yet)")
+            return
         arrow_table = table.scan().to_arrow()
         if arrow_table.num_rows == 0:
             print(f"governance.{table_name}: 0 rows")

@@ -7,10 +7,14 @@ _query_table), GovernanceReadError, and all get_* query functions.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from brightsmith.infra.governance.schemas import _GRAIN_PREFIXES, _TABLE_CONFIGS
 from brightsmith.infra.governance.serializers import normalize_table_name
 from brightsmith.infra.grain import compute_grain_id
+
+if TYPE_CHECKING:
+    from pyiceberg.table import Table
 
 logger = logging.getLogger(__name__)
 
@@ -20,17 +24,34 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _get_governance_table(table_name: str):
-    """Lazily create and return a governance Iceberg table."""
+def _governance_catalog(table_name: str):
     from brightsmith.config import CATALOG_PATH, GOVERNANCE_WAREHOUSE
-    from brightsmith.infra.iceberg_setup import get_catalog, get_or_create_table
+    from brightsmith.infra.iceberg_setup import get_catalog
 
     if table_name not in _TABLE_CONFIGS:
         raise ValueError(f"Unknown governance table: {table_name}")
+    return get_catalog(GOVERNANCE_WAREHOUSE, CATALOG_PATH)
 
+
+def _get_governance_table(table_name: str) -> Table:
+    """Return a governance table for writing, creating it if needed and adding
+    any column a newer framework version declares."""
+    from brightsmith.infra.iceberg_setup import add_missing_columns, get_or_create_table
+
+    catalog = _governance_catalog(table_name)
     schema, _ = _TABLE_CONFIGS[table_name]
-    catalog = get_catalog(GOVERNANCE_WAREHOUSE, CATALOG_PATH)
-    return get_or_create_table(catalog, "governance_product", table_name, schema)
+    return add_missing_columns(get_or_create_table(catalog, "governance_product", table_name, schema), schema)
+
+
+def _find_governance_table(table_name: str) -> Table | None:
+    """Return a governance table for reading, or None if it was never written.
+
+    Never creates anything: a read-only command once added a table to a
+    consumer's committed catalog (2026-09-08 audit Phase 0 item 7).
+    """
+    from brightsmith.infra.iceberg_setup import load_table_if_exists
+
+    return load_table_if_exists(_governance_catalog(table_name), "governance_product", table_name)
 
 
 def _write_records(table_name: str, records: list[dict]) -> dict:
@@ -58,7 +79,11 @@ def _write_records(table_name: str, records: list[dict]) -> dict:
         record["record_id"] = compute_grain_id(grain_row, grain_fields, prefix=prefix)
 
     table = _get_governance_table(table_name)
-    return promote(table, records)
+    # Governance rows keep first-write-wins semantics: a re-sync stamps a new
+    # updated_at, and edited source files are not yet propagated as updates.
+    # on_conflict="skip" makes that explicit; the result's "conflicts" count
+    # now shows how many writes were dropped instead of hiding them as skips.
+    return promote(table, records, on_conflict="skip", ignore_fields=("updated_at",))
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +119,9 @@ def _query_table(table_name: str, sql: str, params: list | None = None) -> list[
     import duckdb
 
     try:
-        table = _get_governance_table(table_name)
+        table = _find_governance_table(table_name)
+        if table is None:
+            return []  # never written: genuinely no data, and the catalog stays untouched
         arrow_table = table.scan().to_arrow()
         if arrow_table.num_rows == 0:
             return []
@@ -141,9 +168,16 @@ def get_dq_runs(spec_name: str | None = None, limit: int = 20) -> list[dict]:
 
 
 def get_latest_dq_run(spec_name: str) -> dict | None:
-    """Get the most recent DQ run for a spec."""
-    results = get_dq_runs(spec_name, limit=1)
-    return results[0] if results else None
+    """Get the most recent REAL DQ run for a spec.
+
+    Shadow (chaos) and imported runs are skipped: a chaos run used to become
+    the spec's "latest" result and overwrite its score (2026-09-08 audit §3).
+    Rows written before the ``mode`` column existed read as real.
+    """
+    for run in get_dq_runs(spec_name, limit=100):
+        if run.get("mode") in (None, "real"):
+            return run
+    return None
 
 
 def get_dq_rule_results(run_id: str) -> list[dict]:

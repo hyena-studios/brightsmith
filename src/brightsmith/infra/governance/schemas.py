@@ -60,6 +60,9 @@ DQ_RUNS_SCHEMA = Schema(
     NestedField(field_id=17, name="duration_ms", field_type=IntegerType(), required=False),
     NestedField(field_id=18, name="result_file_path", field_type=StringType(), required=False),
     NestedField(field_id=19, name="updated_at", field_type=TimestamptzType(), required=True),
+    # real | shadow | imported. Only "real" runs feed scores and gates; NULL is
+    # a row written before the column existed and is read as "real".
+    NestedField(field_id=20, name="mode", field_type=StringType(), required=False),
 )
 
 DQ_RULE_RESULTS_SCHEMA = Schema(
@@ -77,6 +80,7 @@ DQ_RULE_RESULTS_SCHEMA = Schema(
     NestedField(field_id=12, name="execution_time_ms", field_type=IntegerType(), required=False),
     NestedField(field_id=13, name="error_message", field_type=StringType(), required=False),
     NestedField(field_id=14, name="executed_at", field_type=TimestamptzType(), required=True),
+    NestedField(field_id=15, name="mode", field_type=StringType(), required=False),
 )
 
 PIPELINE_EVENTS_SCHEMA = Schema(

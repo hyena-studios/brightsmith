@@ -23,13 +23,13 @@ Raw JSON/CSV/API  →  ⛏️ Bronze  →  ⚒️ Silver  →  🥇 Gold  →  �
 
 You have a raw data source — an API, a directory of files, a database — and you want AI agents to answer questions about it reliably. Between those two points sits the work nobody budgets for: profiling the data, normalizing identifiers, writing quality rules, documenting business terms, tracking lineage, and versioning contracts so that when an agent quotes a number, the number is right and you can prove where it came from.
 
-Most pipeline frameworks assume you do that work by hand and know the domain upfront. Brightsmith inverts both assumptions: **25 specialized AI agents do the data engineering**, and the framework **discovers the domain from the data itself** — profiling it, interviewing you about what it found, and writing a canonical domain-context document every downstream agent reads. The output is a set of Apache Iceberg tables with executable quality rules, machine-readable contracts, column-level lineage, and an MCP server that serves the data to any AI client with governance metadata attached to every response.
+Most pipeline frameworks assume you do that work by hand and know the domain upfront. Brightsmith inverts both assumptions: **26 specialized AI agents do the data engineering**, and the framework **discovers the domain from the data itself** — profiling it, interviewing you about what it found, and writing a canonical domain-context document every downstream agent reads. The output is a set of Apache Iceberg tables with executable quality rules, machine-readable contracts, column-level lineage, and an MCP server that serves the data to any AI client with governance metadata attached to every response.
 
 Brightsmith was extracted from a production SEC EDGAR financial pipeline and field-tested by [FutureProof](https://github.com/jcernauske/futureproof-data), an education/career-outcomes product built on 8 federal data sources. Same rigor, any data.
 
 ## Status
 
-**Alpha (0.4.x), actively developed.** The core pipeline, governance database, and MCP zone are functional and tested (825 tests, CI-gated lint/type/coverage, plus a wheel-install smoke test that scaffolds and runs a project from scratch on every push). Interfaces may still change between minor versions — see [Roadmap and known limitations](#roadmap-and-known-limitations).
+**Alpha (0.5.x), actively developed.** The core pipeline, governance database, and MCP zone are functional and tested (more than 850 tests, CI-gated lint/type/coverage, plus a wheel-install smoke test that scaffolds and runs a project from scratch on every push). Interfaces may still change between minor versions — see [Roadmap and known limitations](#roadmap-and-known-limitations).
 
 Maintainer: [Jeff Cernauske](https://github.com/jcernauske) · Issues: [GitHub issue tracker](https://github.com/hyena-studios/brightsmith/issues)
 
@@ -130,9 +130,19 @@ python -m brightsmith.run --validate-only   # DQ + contracts, no writes
 python -m brightsmith.run --headless-ready  # readiness diagnostic
 ```
 
-Exit codes distinguish DQ failures (1), transform errors (2), contract violations (3), and config errors (4) — scheduler-friendly.
+Exit codes distinguish DQ failures (1), transform errors (2), contract violations (3), config errors (4), and golden-dataset mismatches (5) — scheduler-friendly.
 
 This exact journey — wheel install, scaffold, ingest, MCP query — runs on every push as [`scripts/consumer_journey_smoke.sh`](scripts/consumer_journey_smoke.sh), so the Quickstart is CI-verified, not aspirational.
+
+### See the proof
+
+The repository ships a reproducible consumer journey that builds the wheel, installs it outside the checkout, scaffolds a clean project, ingests fixture data into Iceberg, and queries the result through the MCP-facing API:
+
+```bash
+bash scripts/consumer_journey_smoke.sh
+```
+
+See the [end-to-end proof guide](docs/demo.md) for what this demonstrates, the expected output, and a short screen-recording script. It is a correctness demonstration, not a performance benchmark.
 
 ## Configuration
 
@@ -231,7 +241,7 @@ brightsmith/
 ├── docs/workflows/           Zone pipeline playbooks
 ├── docs/specs/               Spec-driven development record
 ├── governance/               Shipped templates + your project's artifacts
-└── tests/                    825 tests, by zone + integration + fixtures
+└── tests/                    850+ tests, by zone + integration + fixtures
 ```
 
 ## Testing
@@ -250,7 +260,7 @@ CI runs all four on Python 3.11 and 3.12, plus a warehouse-relocation guard. Two
 - **Governance database compaction is manual.** Snapshot expiration is documented (above) but not scheduled automatically; automation is planned.
 - **MCP row-level security is deferred.** The SQL surface is read-only and injection-hardened, but per-user entitlements wait until non-localhost deployment is a real use case.
 - **The agent pipeline requires Claude Code.** Headless mode covers execution and validation, but domain *discovery* (EDA interview, context synthesis) is agent-only today.
-- **Breaking change in unreleased 0.5:** DQ rules without a `status` field now default to `proposed` instead of executing immediately. Migration: add `"status": "active"` to existing rule files or run `python -m brightsmith.infra.dq_runner approve <rule-ids>`.
+- **Breaking change in 0.5:** DQ rules without a `status` field now default to `proposed` instead of executing immediately. Migration: add `"status": "active"` to existing rule files or run `python -m brightsmith.infra.dq_runner approve <rule-ids>`.
 - **Multi-table sources are dedup-grain-uniform.** A `tables:` source shares one dedup grain across its tables; per-table grains are planned.
 
 ## Contributing

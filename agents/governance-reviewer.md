@@ -77,8 +77,8 @@ After implementation, verify every applicable item:
 
 - [ ] **Lineage:** OpenLineage events exist in `governance/lineage/` for every transformation in this spec
 - [ ] **DQ Rules:** Data quality rules exist in `governance/dq-rules/` for every new or modified table
-- [ ] **DQ Execution:** Rules have been executed against real Iceberg data (`governance/dq-results/` has results for this spec)
-- [ ] **DQ P0 Gate:** No P0 failures in latest execution results (check `p0_passed` in results JSON)
+- [ ] **DQ Execution:** Rules have been executed against real Iceberg data — `python -m brightsmith.infra.dq_runner results --spec <spec>` shows a run. This reads the governance database and returns only real runs; JSON files in `governance/dq-results/` are imports and do not count as execution evidence.
+- [ ] **DQ P0 Gate:** No P0 failures in that latest real run (`p0_passed` in the `dq_runner results` output)
 - [ ] **DQ Scorecard:** Scorecard produced from real execution results (not test-based) in `governance/dq-scorecards/`
 - [ ] **CDE/PII Tags:** New or modified fields have `is_cde`/`is_pii` flags set in their data contracts at `governance/data-contracts/`
 - [ ] **Data Dictionary:** New or modified fields have entries in `governance/data-dictionary.json`

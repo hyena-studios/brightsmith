@@ -75,7 +75,7 @@ Save column lineage to `governance/lineage/{spec-slug}-columns.json`. The `gener
 
 The framework auto-emits runtime lineage events:
 - `BaseIngestor.ingest()` emits START/COMPLETE for bronze zone
-- `promote()` emits START/COMPLETE for silver/gold zones
+- `promote()` emits START/COMPLETE for silver/gold zones **only when called with `spec_name=`**; without it no promote event is written. A lineage write failure raises when `spec_name` is given. Events land in the same catalog as the promoted table.
 - `emit_start()` and `emit_complete()` accept optional `spec_reference`, `agent_id`, and `transformation_steps` params
 
 Your job is to VERIFY these events exist, not to create them. If events are missing, flag it — the implementation agent needs to add emission calls.

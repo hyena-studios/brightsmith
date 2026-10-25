@@ -60,17 +60,12 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     # pipeline_gate.py — warehouse validation: any catalog/table-read error
     # becomes a blocking validation issue, so the spec cannot be marked COMPLETE.
     ("pipeline_gate.py", "_validate_warehouse_population"): "table/catalog errors become blocking validation issues",
-    # promote.py — by-design fault-tolerant lineage emission (explicitly OUT of
-    # WP-2.1 scope; lineage is observability, never a data-correctness gate).
-    ("promote.py", "promote"): "by-design fault-tolerant lineage emission (out of scope)",
     # base_ingestor.py — by-design fault-tolerant lineage emission (explicitly
     # OUT of WP-2.1 scope).
     ("base_ingestor.py", "_emit_lineage"): "by-design fault-tolerant lineage emission (out of scope)",
     # --- M2.3: lineage.py (observability module — never a data-correctness gate) ---
-    # Lineage EMISSION wrappers: same by-design fault-tolerance as promote/base_ingestor.
-    ("lineage.py", "emit_start"): "fault-tolerant lineage emission (observability, not a gate)",
-    ("lineage.py", "emit_complete"): "fault-tolerant lineage emission (observability, not a gate)",
-    ("lineage.py", "emit_fail"): "fault-tolerant lineage emission (observability, not a gate)",
+    # Emission goes through lineage._emit, which re-raises under strict=True
+    # (promote with a spec name) and so is not flagged.
     # Lineage READ helpers: a read failure yields an empty result AND logs with
     # exc_info. Downstream `cmd_verify` treats missing lineage as a P0 BLOCK, so a
     # swallowed read fails conservatively (blocks) — it can never become a false pass.
@@ -150,11 +145,38 @@ def _handler_reraises(handler: ast.ExceptHandler) -> bool:
     return False
 
 
-def _is_broad(handler: ast.ExceptHandler) -> bool:
-    """True for ``except Exception`` and bare ``except:`` handlers."""
-    if handler.type is None:
-        return True
-    return isinstance(handler.type, ast.Name) and handler.type.id == "Exception"
+_BROAD_NAMES = {"Exception", "BaseException"}
+
+
+def _broad_aliases(tree: ast.AST) -> set[str]:
+    """Names bound to Exception/BaseException in this module, plus the names themselves.
+
+    Catches ``E = Exception`` and ``from builtins import Exception as E``.
+    """
+    names = set(_BROAD_NAMES)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and _names_broad(node.value, names):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.ImportFrom) and node.module == "builtins":
+            names.update(a.asname or a.name for a in node.names if a.name in _BROAD_NAMES)
+    return names
+
+
+def _names_broad(expr: ast.expr | None, broad: set[str]) -> bool:
+    """True if ``expr`` is (or, for a tuple, contains) a broad exception class."""
+    if isinstance(expr, ast.Name):
+        return expr.id in broad
+    if isinstance(expr, ast.Attribute):  # builtins.Exception
+        return expr.attr in _BROAD_NAMES
+    if isinstance(expr, ast.Tuple):  # (FileNotFoundError, Exception)
+        return any(_names_broad(e, broad) for e in expr.elts)
+    return False
+
+
+def _is_broad(handler: ast.ExceptHandler, broad: set[str] = _BROAD_NAMES) -> bool:
+    """True for bare ``except:`` and any handler that catches Exception or
+    BaseException, by name, alias, dotted name, or inside a tuple."""
+    return handler.type is None or _names_broad(handler.type, broad)
 
 
 def _enclosing_function(path_to_node: list[ast.AST]) -> str:
@@ -172,9 +194,10 @@ def _collect_broad_handlers(
     If ``restrict_to`` is given, only handlers inside those functions count.
     """
     results: list[tuple[str, int, bool]] = []
+    broad = _broad_aliases(tree)
 
     def visit(node: ast.AST, stack: list[ast.AST]) -> None:
-        if isinstance(node, ast.ExceptHandler) and _is_broad(node):
+        if isinstance(node, ast.ExceptHandler) and _is_broad(node, broad):
             func = _enclosing_function(stack)
             if restrict_to is None or func in restrict_to:
                 results.append((func, node.lineno, _handler_reraises(node)))
@@ -241,3 +264,38 @@ def test_allowlist_entries_are_real():
                 seen.add((path.name, func))
     stale = set(ALLOWLIST) - seen
     assert not stale, f"Allowlist entries no longer match any handler: {stale}"
+
+
+def test_broad_handler_detection_has_no_bypass_forms():
+    """The 2026-09-08 audit found four forms the guard missed; one was live."""
+    src = """
+import builtins
+from builtins import Exception as Alias
+E = Exception
+
+def tuple_form():
+    try: pass
+    except (FileNotFoundError, Exception): pass
+
+def base_form():
+    try: pass
+    except BaseException: pass
+
+def dotted_form():
+    try: pass
+    except builtins.Exception: pass
+
+def assigned_alias():
+    try: pass
+    except E: pass
+
+def imported_alias():
+    try: pass
+    except Alias: pass
+
+def narrow_is_fine():
+    try: pass
+    except (OSError, ValueError): pass
+"""
+    flagged = {func for func, _line, _reraises in _collect_broad_handlers(ast.parse(src), None)}
+    assert flagged == {"tuple_form", "base_form", "dotted_form", "assigned_alias", "imported_alias"}

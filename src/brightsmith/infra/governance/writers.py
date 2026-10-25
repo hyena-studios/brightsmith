@@ -11,6 +11,8 @@ from brightsmith.infra.governance.serializers import normalize_table_name, norma
 
 logger = logging.getLogger(__name__)
 
+DQ_RUN_MODES = frozenset({"real", "shadow", "imported"})
+
 
 # ---------------------------------------------------------------------------
 # Write functions
@@ -86,8 +88,16 @@ def write_dq_run(
     p1_failed: int | None = None,
     duration_ms: int | None = None,
     result_file_path: str | None = None,
+    mode: str = "real",
 ) -> dict:
-    """Write a DQ run summary row."""
+    """Write a DQ run summary row.
+
+    ``mode`` is ``"real"`` for a run against the live tables, ``"shadow"`` for a
+    chaos run against shadow tables, and ``"imported"`` for a result file synced
+    from disk. Only real runs count toward scores, gates and the spec registry.
+    """
+    if mode not in DQ_RUN_MODES:
+        raise ValueError(f"mode must be one of {sorted(DQ_RUN_MODES)}, not {mode!r}")
     now = datetime.now(UTC)
     record = {
         "run_id": run_id,
@@ -108,17 +118,19 @@ def write_dq_run(
         "duration_ms": duration_ms,
         "result_file_path": result_file_path,
         "updated_at": now,
+        "mode": mode,
     }
     return _write_records("dq_runs", [record])
 
 
-def write_dq_rule_results(run_id: str, spec_name: str, results: list[dict]) -> dict:
+def write_dq_rule_results(run_id: str, spec_name: str, results: list[dict], mode: str = "real") -> dict:
     """Write individual DQ rule results for a run.
 
     Args:
         run_id: FK to dq_runs.
         spec_name: FK to spec_registry.
         results: List of result dicts from dq_runner (rule_id, category, passed, etc.).
+        mode: Same meaning as in :func:`write_dq_run`.
     """
     records = []
     for r in results:
@@ -142,6 +154,7 @@ def write_dq_rule_results(run_id: str, spec_name: str, results: list[dict]) -> d
             "execution_time_ms": r.get("execution_time_ms"),
             "error_message": r.get("error"),
             "executed_at": executed_at,
+            "mode": mode,
         })
     return _write_records("dq_rule_results", records)
 

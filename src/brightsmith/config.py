@@ -235,20 +235,21 @@ def configure(
 # ``config.DQ_RULES_DIR = tmp``). We expose them as live views onto _CONFIG by
 # swapping this module's class for one that intercepts attribute access:
 #   * reads resolve from the current snapshot
-#   * writing a PRIMARY input (project_root/name/approval/floor) recomputes the
-#     derived paths, exactly like configure() — so ``config.PROJECT_ROOT = x``
-#     can never leave WAREHOUSE_PATH/DQ_RULES_DIR/... pointing at the old root
-#   * writing a DERIVED path (e.g. DQ_RULES_DIR) overrides just that one field
-#     (single-path test-override semantics)
+#   * writing PROJECT_ROOT recomputes the derived paths, exactly like
+#     configure() — so ``config.PROJECT_ROOT = x`` can never leave
+#     WAREHOUSE_PATH/DQ_RULES_DIR/... pointing at the old root
+#   * writing anything else — a derived path (e.g. DQ_RULES_DIR), or a scalar
+#     like REQUIRE_HUMAN_APPROVAL — changes just that one field. Scalars used to
+#     re-derive every path too, silently discarding path overrides: a test that
+#     toggled approval wrote into the repo's own catalog.
 # Because managed names never become real module __dict__ entries, monkeypatch +
 # undo never leaves a stale value shadowing the live config.
 # ---------------------------------------------------------------------------
 
-# Primary inputs to _derive(); assigning any of these must recompute the derived
-# paths so the snapshot stays internally consistent (fixes A1 asymmetry).
-_PRIMARY_FIELDS = frozenset({
-    "project_root", "project_name", "require_human_approval", "confidence_floor",
-})
+# The only _derive() input that paths are computed from; assigning it must
+# recompute the derived paths so the snapshot stays internally consistent
+# (fixes A1 asymmetry).
+_PRIMARY_FIELDS = frozenset({"project_root"})
 
 
 class _ConfigModule(ModuleType):

@@ -19,3 +19,11 @@ from brightsmith.infra.governance.enterprise import *  # noqa: F403
 from brightsmith.infra.governance.exporters import *  # noqa: F403
 from brightsmith.infra.governance.migration import *  # noqa: F403
 from brightsmith.infra.governance.product import *  # noqa: F403
+
+if __name__ == "__main__":
+    # `python -m brightsmith.infra.governance_db <command>` is the documented
+    # CLI. Without this guard it imported the façade and exited 0 having done
+    # nothing — sync, export and status were all silent no-ops.
+    from brightsmith.infra.governance.cli import main
+
+    main()

@@ -389,7 +389,7 @@ class TestExecuteSqlRule:
             "spec": "test",
         }
         result = execute_sql_rule(rule, con_with_data)
-        expected_keys = {"rule_id", "spec", "category", "passed", "raw_value", "threshold", "detail", "violations", "execution_time_ms", "error", "executed_at"}
+        expected_keys = {"rule_id", "spec", "category", "priority", "passed", "raw_value", "threshold", "detail", "violations", "execution_time_ms", "error", "executed_at"}
         assert expected_keys == set(result.keys())
 
 
@@ -560,6 +560,31 @@ class TestRunRulesIntegration:
         assert result["rules_total"] == 3  # INT-SKIP is proposed, excluded
         assert result["run_id"] is not None
         assert result["executed_at"] is not None
+
+    def test_unloadable_table_fails_its_rules_with_the_load_error(self, iceberg_env):
+        """A table that cannot be loaded used to be skipped with `pass`; its rules
+        then failed with DuckDB's generic missing-view error, hiding the cause."""
+        rules = {
+            "spec": "missing-table",
+            "rules": [{
+                "rule_id": "MISS-001",
+                "category": "Validity",
+                "priority": "P0",
+                "description": "References a table that does not exist",
+                "sql": "SELECT COUNT(*) FROM silver.no_such_table",
+                "threshold": "result = 0",
+                "status": "active",
+            }],
+        }
+        (iceberg_env["rules_dir"] / "missing-table.json").write_text(json.dumps(rules))
+        with patch("brightsmith.infra.dq_runner.DQ_RULES_DIR", iceberg_env["rules_dir"]), \
+             patch("brightsmith.infra.dq_runner.DQ_RESULTS_DIR", iceberg_env["results_dir"]):
+            result = run_rules(spec="missing-table", catalog=iceberg_env["catalog"])
+
+        [rule] = result["results"]
+        assert rule["passed"] is False
+        assert "silver.no_such_table" in rule["error"]
+        assert result["p0_passed"] is False
 
     def test_run_rules_detects_duplicate_fact_ids(self, iceberg_env):
         """INT-002 (uniqueness) should fail -- we inserted a duplicate F1."""

@@ -258,7 +258,7 @@ class TestLineageAttribution:
 
         ingestor.ingest(
             warehouse_path=tmp_workspace["warehouse"],
-            catalog_path=tmp_workspace["catalog"],
+            catalog_path=config.CATALOG_PATH,  # the project catalog: lineage lands beside the data
             spec_reference="docs/specs/raw-ingest-statements.md",
             agent_id="@document-extractor",
         )
@@ -278,13 +278,34 @@ class TestLineageAttribution:
 
         ingestor.ingest(
             warehouse_path=tmp_workspace["warehouse"],
-            catalog_path=tmp_workspace["catalog"],
+            catalog_path=config.CATALOG_PATH,
         )
 
         events = query_lineage_events("bronze.test_data", event_type="START")
         assert len(events) == 1
         assert events[0]["spec_reference"] is None
         assert events[0]["agent_id"] is None
+
+
+    def test_ingest_into_other_catalog_keeps_lineage_out_of_project_catalog(
+        self, tmp_workspace, gov_warehouse
+    ):
+        """Lineage used to go to config.CATALOG_PATH whatever catalog the data
+        went to — how pytest fixture events reached a consumer's shipped
+        catalog (2026-09-08 audit §6)."""
+        from brightsmith.infra.iceberg_setup import get_catalog, read_with_duckdb
+        from brightsmith.infra.lineage import _get_lineage_table
+
+        test_data = {1: [{"id": 1, "name": "alpha", "value": "100"}]}
+        source = _make_source_config(entities={1: "Entity A"})
+        ingestor = SimpleIngestor(source, _make_manifest(source), test_data)
+
+        ingestor.ingest(warehouse_path=tmp_workspace["warehouse"], catalog_path=tmp_workspace["catalog"])
+
+        assert query_lineage_events("bronze.test_data") == []
+        scratch = get_catalog(tmp_workspace["warehouse"], tmp_workspace["catalog"])
+        events = read_with_duckdb(_get_lineage_table(scratch))
+        assert {e["event_type"] for e in events} == {"START", "COMPLETE"}
 
 
 # --- Dedup ---

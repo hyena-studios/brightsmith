@@ -220,3 +220,130 @@ def test_empty_or_absent_warehouse_does_not_raise(tmp_path, monkeypatch):
     # And the CLI no-ops cleanly.
     proc = _cli(root, "--check")
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+# --- 8. a COPY whose original still exists must raise, not share the original ---
+
+
+@pytest.fixture
+def copied_warehouse(tmp_path, monkeypatch):
+    """Seed at root A, copy (not move) to root B, leave config pointed at B.
+
+    Every metadata file the copy's catalog points at still exists — under A.
+    The pre-2026-09-08 guard only fired on a missing file, so this case read
+    and wrote A's warehouse with no warning (audit §2 P0).
+    """
+    root_a = tmp_path / "A"
+    root_b = tmp_path / "B"
+    _point_config(monkeypatch, root_a)
+    _seed(root_a)
+    shutil.copytree(root_a, root_b)
+    _point_config(monkeypatch, root_b)
+    return {"root_a": root_a, "root_b": root_b}
+
+
+def _data_files(root: Path) -> list[Path]:
+    return sorted((root / "data" / "bronze" / "iceberg_warehouse").rglob("*.parquet"))
+
+
+def test_copied_warehouse_load_raises(copied_warehouse):
+    catalog = get_catalog(cfg.WAREHOUSE_PATH, cfg.CATALOG_PATH)
+    with pytest.raises(WarehouseRelocationError) as exc:
+        catalog.load_table("bronze.facts")
+    assert str(copied_warehouse["root_a"]) in str(exc.value)
+
+
+def test_copied_warehouse_never_writes_into_original(copied_warehouse):
+    before = _data_files(copied_warehouse["root_a"])
+    catalog = get_catalog(cfg.WAREHOUSE_PATH, cfg.CATALOG_PATH)
+    with pytest.raises(WarehouseRelocationError):
+        table = get_or_create_table(catalog, "bronze", "facts", SCHEMA)
+        append_data(table, [{"company_id": "COMP_D", "metric": "revenue", "value": 1.0}])
+    assert _data_files(copied_warehouse["root_a"]) == before
+
+
+def test_copied_warehouse_check_cli_exits_nonzero(copied_warehouse):
+    proc = _cli(copied_warehouse["root_b"], "--check")
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+
+
+def test_copied_warehouse_detected_by_blanket_scan(copied_warehouse):
+    from brightsmith.infra.iceberg_setup import detect_relocation
+
+    offending = detect_relocation(cfg.CATALOG_PATH, project_root=copied_warehouse["root_b"])
+    assert [(ns, t) for ns, t, _ in offending] == [("bronze", "facts")]
+
+
+def test_copied_warehouse_apply_repairs(copied_warehouse):
+    relocate.run(relocate.APPLY)
+    before = _data_files(copied_warehouse["root_a"])
+    catalog = get_catalog(cfg.WAREHOUSE_PATH, cfg.CATALOG_PATH)
+    table = catalog.load_table("bronze.facts")
+    assert sorted(r["company_id"] for r in read_with_duckdb(table)) == ORIGINAL_IDS
+    append_data(table, [{"company_id": "COMP_D", "metric": "revenue", "value": 1.0}])
+    assert _data_files(copied_warehouse["root_a"]) == before
+
+
+# --- 9. the committed fixture: a warehouse that MUST fail the check ---
+
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "relocated_project"
+
+
+def test_committed_fixture_fails_check():
+    """CI's `relocate --check` ran against a checkout with nothing under data/
+    and could never fail (2026-09-08 audit §7 P0). This fixture is the
+    warehouse it now runs against, read-only."""
+    proc = _cli(FIXTURE, "--check")
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "/srv/original-project" in proc.stdout
+
+
+def test_committed_fixture_is_repairable(tmp_path, monkeypatch):
+    root = tmp_path / "proj"
+    shutil.copytree(FIXTURE, root)
+    assert _cli(root, "--apply").returncode == 0
+    assert _cli(root, "--check").returncode == 0
+    _point_config(monkeypatch, root)
+    table = get_catalog(cfg.WAREHOUSE_PATH, cfg.CATALOG_PATH).load_table("bronze.facts")
+    assert sorted(r["id"] for r in read_with_duckdb(table)) == ["a", "b"]
+
+
+def test_catalog_at_project_root_still_catches_sibling_clone(tmp_path, monkeypatch):
+    """With the catalog at <root>/catalog.db, the catalog-derived allowed root
+    used to be <root>/.., which contains every sibling copy (staff review)."""
+    root_a, root_b = tmp_path / "A", tmp_path / "B"
+    monkeypatch.setattr(cfg, "PROJECT_ROOT", root_a)
+    monkeypatch.setattr(cfg, "WAREHOUSE_PATH", root_a / "wh")
+    monkeypatch.setattr(cfg, "GOVERNANCE_WAREHOUSE", root_a / "gov")
+    table = get_or_create_table(get_catalog(root_a / "wh", root_a / "catalog.db"), "bronze", "facts", SCHEMA)
+    append_data(table, BATCH_1)
+    shutil.copytree(root_a, root_b)
+    monkeypatch.setattr(cfg, "PROJECT_ROOT", root_b)
+    monkeypatch.setattr(cfg, "WAREHOUSE_PATH", root_b / "wh")
+    monkeypatch.setattr(cfg, "GOVERNANCE_WAREHOUSE", root_b / "gov")
+    from brightsmith.infra.iceberg_setup import reset_catalog_cache
+
+    reset_catalog_cache()
+    with pytest.raises(WarehouseRelocationError):
+        get_catalog(root_b / "wh", root_b / "catalog.db").load_table("bronze.facts")
+
+
+def test_allowed_roots_never_include_filesystem_root_or_project_ancestors(tmp_path, monkeypatch):
+    from brightsmith.infra.iceberg_setup import _allowed_roots
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.setattr(cfg, "WAREHOUSE_PATH", project / "data" / "wh")
+    monkeypatch.setattr(cfg, "GOVERNANCE_WAREHOUSE", project / "data" / "gov")
+    roots = _allowed_roots(str(project), Path("/catalog.db"), tmp_path)
+    assert os.sep not in roots
+    assert os.path.realpath(tmp_path) not in roots
+    assert os.path.realpath(project) in roots
+
+
+def test_relative_path_escaping_upward_is_foreign():
+    from brightsmith.infra.iceberg_setup import _is_foreign
+
+    assert _is_foreign("../other/data/x.metadata.json", [])
+    assert not _is_foreign("data/bronze/x.metadata.json", [])
+    assert not _is_foreign("data/../data/x.metadata.json", [])

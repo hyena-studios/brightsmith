@@ -53,7 +53,7 @@ class SourceConfig:
     O*NET's 7-table bulk extract, field evidence: futureproof-data's
     ``onet.yaml``) declare ``tables:`` instead — a list of names, or a
     mapping keyed by table name carrying per-table metadata (per-table
-    metadata itself is not consumed by this loader). ``table`` is always
+    metadata other than ``dedup_grain`` is not consumed by this loader). ``table`` is always
     populated (the first entry of ``tables`` for back-compat with existing
     single-table callers); ``tables`` always holds the full list, and
     defaults to ``[table]`` when not passed explicitly (back-compat for
@@ -183,6 +183,42 @@ def _resolve_table_names(data: dict, source_config_path: Path) -> list[str]:
     return names
 
 
+def _resolve_dedup_grain(data: dict, table_names: list[str], source_config_path: Path) -> list[str]:
+    """Return the grain for the source's primary table, requiring one per table.
+
+    A missing grain used to default to ``[]``, which silently disabled dedup:
+    every re-run appended the whole source again (2026-09-08 audit §2 P0). A
+    top-level ``dedup_grain:`` covers every table; a ``tables:`` mapping may
+    instead give each table its own ``dedup_grain``.
+
+    Raises:
+        ValueError: No non-empty grain is declared for some table.
+    """
+    top = data.get("dedup_grain")
+    if isinstance(top, str):
+        # list("id") would silently become ["i", "d"]
+        raise ValueError(
+            f"Source config {source_config_path}: dedup_grain must be a list of column "
+            f"names, got the string {top!r}. Write dedup_grain: [{top}]."
+        )
+    if top:
+        return list(top)
+
+    tables = data.get("tables")
+    per_table = {
+        name: (meta or {}).get("dedup_grain") for name, meta in tables.items()
+    } if isinstance(tables, dict) else {}
+    missing = [name for name in table_names if not per_table.get(name)]
+    if missing:
+        raise ValueError(
+            f"Source config {source_config_path}: no dedup_grain for table(s) {missing}. "
+            f"Declare the columns that identify one source fact, either as a top-level "
+            f"'dedup_grain:' list or per table under 'tables:'. Without a grain every "
+            f"re-run appends the full source again."
+        )
+    return list(per_table[table_names[0]] or [])
+
+
 def _load_source_config(source_entry: dict, project_root: Path) -> SourceConfig:
     """Load a source config from its YAML file."""
     source_config_path = _resolve_path(source_entry.get("source_config"), project_root)
@@ -209,7 +245,7 @@ def _load_source_config(source_entry: dict, project_root: Path) -> SourceConfig:
         tables=table_names,
         fetch=data.get("fetch", {}),
         entities=entities,
-        dedup_grain=data.get("dedup_grain", []),
+        dedup_grain=_resolve_dedup_grain(data, table_names, source_config_path),
         cache_dir=_resolve_path(data.get("cache_dir", "data/raw/json_cache"), project_root)
         or project_root / "data/raw/json_cache",
         fetcher_path=source_entry.get("fetcher"),

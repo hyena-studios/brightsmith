@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
+from typing import Literal, overload
 
 from brightsmith.infra.governance.model_writers import (
     write_model_columns,
@@ -48,7 +49,18 @@ def _last_known_status(spec_name: str) -> str | None:
     return rows[0]["status"] if rows else None
 
 
-def _last_known_value(spec_name: str, field: str) -> str | list[str] | None:
+@overload
+def _last_known_value(spec_name: str, field: Literal["zone"]) -> str | None: ...
+
+
+@overload
+def _last_known_value(spec_name: str, field: Literal["output_tables"]) -> list[str] | None: ...
+
+
+def _last_known_value(
+    spec_name: str,
+    field: Literal["zone", "output_tables"],
+) -> str | list[str] | None:
     """Look up the spec's most recent non-empty ``zone`` or ``output_tables``.
 
     Deliberately a different doctrine from ``_last_known_status`` above. A
@@ -74,6 +86,18 @@ def _last_known_value(spec_name: str, field: str) -> str | list[str] | None:
         return None
     value = rows[0][field]
     return json.loads(value) if field == "output_tables" else value
+
+
+def _string_value(value: object, fallback: str = "") -> str:
+    """Return a string artifact value, falling back for malformed JSON data."""
+    return value if isinstance(value, str) and value else fallback
+
+
+def _string_list_value(value: object, fallback: list[str] | None = None) -> list[str]:
+    """Return a validated string list, falling back for malformed JSON data."""
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return value
+    return fallback or []
 
 
 # ---------------------------------------------------------------------------
@@ -146,12 +170,15 @@ def _sync_dq_results() -> dict:
                 errored = data.get("rules_errored", sum(1 for r in rules if r.get("error")))
                 score = (passed / total * 100) if total > 0 else 0.0
 
-                # p0_passed can be bool or string like "PASSED"
+                # p0_passed can be bool or string like "PASSED". A file that
+                # does not say is NOT a pass: the runner never writes these
+                # files, so whatever is here was written by hand or by another
+                # tool, and silence used to read as "P0 PASS" (audit §3 P0).
                 p0_raw = data.get("p0_passed") or data.get("p0_gate")
                 if isinstance(p0_raw, str):
                     p0_passed = p0_raw.upper() in ("PASSED", "PASS", "TRUE")
                 else:
-                    p0_passed = bool(p0_raw) if p0_raw is not None else True
+                    p0_passed = bool(p0_raw)
 
                 result = write_dq_run(
                     run_id=run_id, spec_name=spec, table_name=table_name,
@@ -159,11 +186,12 @@ def _sync_dq_results() -> dict:
                     rules_failed=failed, rules_errored=errored, score_pct=score,
                     p0_passed=p0_passed,
                     result_file_path=str(path.relative_to(PROJECT_ROOT)),
+                    mode="imported",
                 )
                 dq_synced += result.get("promoted", 0)
 
                 # Individual rule results
-                rule_results = write_dq_rule_results(run_id, spec, rules)
+                rule_results = write_dq_rule_results(run_id, spec, rules, mode="imported")
                 dq_rules_synced += rule_results.get("promoted", 0)
             except Exception:
                 logger.warning("Failed to sync DQ results from %s", path, exc_info=True)
@@ -231,8 +259,11 @@ def _sync_pipeline_state() -> dict:
                 completed = sum(1 for s in steps.values() if s.get("status") == "COMPLETED")
                 total_steps = len(steps)
                 spec_status = data.get("status") or _last_known_status(spec) or "IN_PROGRESS"
-                zone = zone or _last_known_value(spec, "zone") or ""
-                output_tables = data.get("output_tables", []) or _last_known_value(spec, "output_tables") or []
+                zone = _string_value(zone, _last_known_value(spec, "zone") or "")
+                output_tables = _string_list_value(
+                    data.get("output_tables"),
+                    _last_known_value(spec, "output_tables"),
+                )
 
                 result = write_spec_registry(
                     spec_name=spec, zone=zone, status=spec_status,
@@ -309,7 +340,8 @@ def _sync_glossary() -> dict:
 # 5. Enrich spec_registry with DQ scores and governance completeness flags
 #    by cross-referencing the data we just synced
 def _enrich_spec_registry() -> dict:
-    from brightsmith.config import DQ_RESULTS_DIR, PIPELINE_STATE_DIR, PROJECT_ROOT
+    from brightsmith.config import PIPELINE_STATE_DIR, PROJECT_ROOT
+    from brightsmith.infra.governance.queries import get_latest_dq_run
 
     enriched = 0
     if PIPELINE_STATE_DIR.exists():
@@ -317,35 +349,27 @@ def _enrich_spec_registry() -> dict:
             try:
                 data = json.loads(path.read_text())
                 spec = data.get("spec", path.stem.replace("-pipeline", ""))
-                zone = data.get("zone", "") or _last_known_value(spec, "zone") or ""
-                output_tables = data.get("output_tables", []) or _last_known_value(spec, "output_tables") or []
+                zone = _string_value(data.get("zone"), _last_known_value(spec, "zone") or "")
+                output_tables = _string_list_value(
+                    data.get("output_tables"),
+                    _last_known_value(spec, "output_tables"),
+                )
 
-                # DQ scores from latest results file
+                # DQ scores from the latest REAL run in the governance DB.
+                # Result files on disk are imports (hand-written or from another
+                # tool) and never set the spec's score or P0 status: a file with
+                # failing rules and no p0_passed field used to land here as a
+                # P0 PASS (2026-09-08 audit §3; governance review of Phase 0).
                 dq_kwargs: dict = {}
-                if DQ_RESULTS_DIR.exists():
-                    dq_files = sorted(DQ_RESULTS_DIR.glob(f"{spec}-*.json"), reverse=True)
-                    dq_files = [f for f in dq_files if "-ack-" not in f.name]
-                    if dq_files:
-                        dq_data = json.loads(dq_files[0].read_text())
-                        total = (dq_data.get("rules_total")
-                                 or dq_data.get("rules_executed")
-                                 or dq_data.get("total_rules")
-                                 or 0)
-                        passed = dq_data.get("rules_passed") or dq_data.get("passed") or 0
-                        failed = dq_data.get("rules_failed") or dq_data.get("failed") or 0
-                        # p0_passed can be bool or string like "PASSED"
-                        p0_raw = dq_data.get("p0_passed") or dq_data.get("p0_gate")
-                        if isinstance(p0_raw, str):
-                            p0_passed = p0_raw.upper() in ("PASSED", "PASS", "TRUE")
-                        else:
-                            p0_passed = bool(p0_raw) if p0_raw is not None else True
-                        dq_kwargs = {
-                            "dq_score_pct": (passed / total * 100) if total > 0 else 0.0,
-                            "dq_rules_total": total,
-                            "dq_rules_passing": passed,
-                            "dq_rules_failing": failed,
-                            "dq_p0_passed": p0_passed,
-                        }
+                latest = get_latest_dq_run(spec)
+                if latest:
+                    dq_kwargs = {
+                        "dq_score_pct": latest["score_pct"],
+                        "dq_rules_total": latest["rules_total"],
+                        "dq_rules_passing": latest["rules_passed"],
+                        "dq_rules_failing": latest["rules_failed"],
+                        "dq_p0_passed": latest["p0_passed"],
+                    }
 
                 # Governance completeness flags
                 contracts_dir_path = PROJECT_ROOT / "governance" / "data-contracts"

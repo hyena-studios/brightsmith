@@ -786,3 +786,78 @@ class TestQueryConnectionLifecycle:
         server.close_query_connection()
         assert server._query_con is None
         server.close_query_connection()  # idempotent second call
+
+
+class TestQueryAllowlistAcrossWarehouses:
+    """allowed_directories is built from every loaded table's own location, so
+    a catalog holding data and governance tables in different warehouses can
+    serve both, while files outside those tables stay unreadable."""
+
+    @staticmethod
+    def _table(catalog, namespace, name, rows):
+        from pyiceberg.schema import Schema
+        from pyiceberg.types import NestedField, StringType
+
+        from brightsmith.infra.iceberg_setup import append_data, get_or_create_table
+
+        table = get_or_create_table(catalog, namespace, name, Schema(NestedField(1, "v", StringType(), required=False)))
+        append_data(table, rows)
+
+    def _two_warehouse_server(self, tmp_path, monkeypatch):
+        import brightsmith.config as cfg
+        from brightsmith.infra.iceberg_setup import get_catalog
+
+        monkeypatch.setattr(cfg, "GOVERNANCE_WAREHOUSE", tmp_path / "gov_wh")
+        catalog_path = tmp_path / "catalog.db"
+        self._table(get_catalog(tmp_path / "data_wh", catalog_path), "gold", "facts", [{"v": "data"}])
+        self._table(get_catalog(tmp_path / "gov_wh", catalog_path), "governance", "notes", [{"v": "gov"}])
+        return ConcreteServer(warehouse_path=tmp_path / "data_wh", catalog_path=catalog_path)
+
+    def test_tables_in_a_second_warehouse_are_queryable(self, tmp_path, monkeypatch):
+        server = self._two_warehouse_server(tmp_path, monkeypatch)
+        assert server.query_iceberg("SELECT v FROM gold_facts") == [{"v": "data"}]
+        assert server.query_iceberg("SELECT v FROM governance_notes") == [{"v": "gov"}]
+
+    def test_sibling_files_outside_table_roots_stay_blocked(self, tmp_path, monkeypatch):
+        server = self._two_warehouse_server(tmp_path, monkeypatch)
+        secret = tmp_path / "gov_wh" / "secret.csv"
+        secret.write_text("k\nleaked\n")
+        result = server.query_iceberg(f"SELECT * FROM read_csv('{secret}')")
+        assert len(result) == 1 and "error" in result[0], result
+
+    def test_table_dropped_after_listing_is_skipped_not_fatal(self, tmp_path, monkeypatch):
+        from pyiceberg.exceptions import NoSuchTableError
+
+        server = self._two_warehouse_server(tmp_path, monkeypatch)
+        real_load = server.catalog.load_table
+
+        def load(identifier, *a, **k):
+            if identifier == "governance.notes":
+                raise NoSuchTableError(identifier)
+            return real_load(identifier, *a, **k)
+
+        monkeypatch.setattr(server.catalog, "load_table", load)
+        assert server.query_iceberg("SELECT v FROM gold_facts") == [{"v": "data"}]
+
+    def test_crafted_catalog_row_cannot_widen_file_access(self, tmp_path, monkeypatch):
+        """Staff review exploit: a catalog row pointing at a metadata file
+        outside the warehouses made its directory readable to client SQL."""
+        import shutil
+        import sqlite3
+
+        from brightsmith.infra.iceberg_setup import reset_catalog_cache
+
+        server = self._two_warehouse_server(tmp_path, monkeypatch)
+        evil = tmp_path / "evil.metadata.json"
+        shutil.copy(server.catalog.load_table("gold.facts").metadata_location, evil)
+        con = sqlite3.connect(tmp_path / "catalog.db")
+        con.execute("UPDATE iceberg_tables SET metadata_location = ? WHERE table_name = 'notes'", (str(evil),))
+        con.commit()
+        con.close()
+        (tmp_path / "secrets.csv").write_text("k\nSECRET\n")
+        reset_catalog_cache()
+
+        server = ConcreteServer(warehouse_path=tmp_path / "data_wh", catalog_path=tmp_path / "catalog.db")
+        result = server.query_iceberg(f"SELECT * FROM read_csv('{tmp_path / 'secrets.csv'}')")
+        assert len(result) == 1 and "error" in result[0], result
+        assert server.query_iceberg("SELECT v FROM gold_facts") == [{"v": "data"}]

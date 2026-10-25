@@ -46,3 +46,6 @@ governance/dq-scorecards/
 governance/insights/
 governance/approvals/
 governance/cab-decisions/
+
+# Committed fixture: a warehouse with a foreign baked prefix (relocate CI check)
+!tests/fixtures/relocated_project/**/data/

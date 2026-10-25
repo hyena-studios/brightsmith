@@ -38,6 +38,7 @@ EXIT_DQ_FAILURE = 1
 EXIT_TRANSFORM_ERROR = 2
 EXIT_CONTRACT_VIOLATION = 3
 EXIT_CONFIG_ERROR = 4
+EXIT_GOLDEN_FAILURE = 5
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +115,7 @@ class GoldenResult:
     passed: int = 0
     failed: int = 0
     pass_rate: float = 0.0
+    error: str = ""
 
 
 @dataclass
@@ -154,6 +156,11 @@ class PipelineResult:
             else:
                 self.status = "FAILED"
                 self.exit_code = EXIT_DQ_FAILURE
+        elif self.golden_datasets.failed or self.golden_datasets.error:
+            # A known-correct reference value came back wrong (or could not be
+            # checked). The data is wrong, so this outranks a contract warning.
+            self.status = "GOLDEN_FAILURE"
+            self.exit_code = EXIT_GOLDEN_FAILURE
         elif any(z.contracts_violated > 0 for z in self.zones.values()):
             self.status = "SUCCESS_WITH_WARNINGS"
             self.exit_code = EXIT_CONTRACT_VIOLATION
@@ -187,6 +194,7 @@ class PipelineResult:
                 "passed": self.golden_datasets.passed,
                 "failed": self.golden_datasets.failed,
                 "pass_rate": self.golden_datasets.pass_rate,
+                "error": self.golden_datasets.error,
             },
         }
 
@@ -568,8 +576,13 @@ def run_pipeline(
         zr.status = "SUCCESS"
         result.add_zone_result(zone, zr)
 
-    # 5. Golden dataset verification
-    result.golden_datasets = _verify_golden_datasets()
+    # 5. Golden dataset verification. A crash here (malformed golden file,
+    #    non-numeric value) used to escape as a traceback with no run record;
+    #    it is now a GOLDEN_FAILURE like a mismatch.
+    try:
+        result.golden_datasets = _verify_golden_datasets()
+    except Exception as e:
+        result.golden_datasets = GoldenResult(error=f"{type(e).__name__}: {e}")
 
     result.finalize()
     return result
@@ -894,9 +907,11 @@ def _print_summary(result: PipelineResult) -> None:
         for w in zr.warnings:
             print(f"    Warning: {w}")
 
-    if result.golden_datasets.checked:
-        gr = result.golden_datasets
+    gr = result.golden_datasets
+    if gr.checked:
         print(f"\n  Golden datasets: {gr.passed}/{gr.checked} ({gr.pass_rate:.0f}%)")
+    if gr.error:
+        print(f"\n  Golden datasets: verification failed: {gr.error}")
 
 
 def _cmd_headless_ready() -> None:

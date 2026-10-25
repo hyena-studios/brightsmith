@@ -9,7 +9,36 @@ Brightsmith uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-24
+
 _Remediation batch driven by `docs/technical-audit-2026-07-02.md`. Round 1 closed every Critical/High finding (C1, H1, H2, H4, H5). Round 2 (this batch) closes the remaining Definition-of-done items: consumer-journey CI, `pipeline_gate.py`/`run.py` coverage (H3), read-path scalability across every hot path including contract verification (M1/M6), DQ rules executing exactly once per pipeline run (M2), DQ rule lifecycle enforcement — **BREAKING** (M3), the SessionStart hook (M8), and governance-DB/hygiene documentation (M5/L5)._
+
+### Open-source readiness
+
+- Added a contributor guide, private vulnerability-reporting policy, and reproducible end-to-end proof guide.
+- CI now runs for agent and skill changes and enforces the repository's measured coverage floor instead of only printing a report.
+- Added standard Python package authorship, license, classifier, keyword, and project-URL metadata.
+- Hardened registry carry-forward against malformed pipeline-state `zone` and `output_tables` values while restoring a zero-error Pyright gate.
+
+### Silent failures made loud (2026-09-08 audit, Phase 0)
+
+Each of these used to report a wrong result exactly like a correct one. Spec: `docs/specs/consumer-audit-phase0-silent-failures.md`.
+
+- **BREAKING — `promote()` no longer discards corrections.** A record whose grain already exists with different values used to return `skipped`, identical to a healthy re-run. It now raises `PromoteConflictError` by default and writes nothing. Pass `on_conflict="replace"` to overwrite (delete and append in one catalog commit) or `on_conflict="skip"` to keep the stored values; either way the result reports `conflicts` separately from identical `skipped` rows. Run-stamp columns (`promoted_at`, `ingested_at`, `load_date`, plus any `ignore_fields`) are excluded from the comparison. Governance-table writes keep first-write-wins and now report how many writes they dropped.
+- **BREAKING — every source must declare `dedup_grain`.** A missing or empty grain silently disabled bronze dedup, so every re-run appended the whole source again. It is now a manifest load error. Multi-table sources may instead declare a grain per table under `tables:`; every table must have one, and `BaseIngestor` dedups its primary (first) table with that table's grain. `promote()` and `filter_existing_records()` reject records with a null id for the same reason.
+- **The relocation guard catches copies.** A copied project whose original still existed read and wrote the original's warehouse, because the guard only fired when a metadata file was missing. It now fires on any absolute path outside the project, whether or not the file exists.
+- **Promote lineage is written.** `promote()` read `table.identifier`, which PyIceberg does not have, and swallowed the error, so no promote event was recorded since March. Lineage now lands in the table's own catalog (so test and scratch catalogs never write into the project's), and a failure raises when a `spec_name` is given. `emit_start`/`emit_complete`/`emit_fail` take `catalog=` and `strict=`.
+- **BREAKING — golden-dataset failures fail the headless run** with exit code 5 (`GOLDEN_FAILURE`). A verification crash is recorded as a failure instead of escaping as a traceback with no run record.
+- **BREAKING — DQ results say what produced them.** `dq_runs` and `dq_rule_results` gain a `mode` column (`real`, `shadow`, `imported`), added to existing tables on first write. Chaos runs no longer overwrite a spec's score or become its latest result. Result files synced from `governance/dq-results/` are recorded as `imported` and never set a spec's score or P0 status (the registry now takes both from the latest real run); a missing `p0_passed` is no longer read as a pass. Rule results carry their own `priority`, and the scorecard uses it, so a metadata lookup miss can no longer print "P0 Gate: PASS" for a failing P0. A failure whose priority is unknown blocks.
+- **A DQ rule against a table that cannot load reports the load error** instead of DuckDB's generic missing-view message.
+- **Read-only commands no longer create tables.** Governance, enterprise and lineage reads return empty results for tables that were never written instead of creating them.
+- **`python -m brightsmith.infra.governance_db <command>` runs again.** The module had no entry point after the governance package split, so `status`, `sync`, `export` and `migrate` exited 0 having done nothing.
+- **The no-swallowed-exceptions guard has no known bypass.** It now catches tuples containing `Exception`, `BaseException`, dotted names and aliases. The live instance (concept-normalization manifest loading) now only falls back to discovery mode when the manifest is missing.
+- **The relocation CI step can fail.** It ran against a checkout with nothing under `data/`. It now runs against a committed fixture warehouse baked at `/srv/original-project` and requires exit 1.
+- **The MCP query connection serves tables from every warehouse in the catalog.** DuckDB's `allowed_directories` is built from each loaded table's own location rather than only the primary warehouse, so governance tables in a separate warehouse are queryable while other files stay blocked. A table dropped between listing and loading is skipped.
+- **Config scalars no longer reset path overrides.** Assigning `config.REQUIRE_HUMAN_APPROVAL` (or `CONFIDENCE_FLOOR`) re-derived every path from `PROJECT_ROOT`, discarding any `CATALOG_PATH`/warehouse override. Tests are now isolated to scratch warehouses, and the suite fails if it writes into the repo's own `data/`.
+- **The MCP allowlist only admits table directories inside the data or governance warehouse**, so a crafted catalog row cannot open other files to client SQL.
+- `brightsmith.__version__` exists, and a test fails when pyproject, the plugin manifest, the marketplace entry and the CHANGELOG disagree.
 
 ### Added
 
@@ -163,5 +192,8 @@ Initial public release with Iceberg-authoritative governance and zone naming.
 
 ---
 
+[Unreleased]: https://github.com/hyena-studios/brightsmith/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/hyena-studios/brightsmith/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/hyena-studios/brightsmith/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hyena-studios/brightsmith/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hyena-studios/brightsmith/releases/tag/v0.2.0

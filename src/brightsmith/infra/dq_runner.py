@@ -75,7 +75,7 @@ def load_rules(spec: str | None = None) -> list[dict]:
         for rule in data.get("rules", []):
             rule.setdefault("spec", file_spec)
             rule.setdefault("tables", tables)
-            # BREAKING (audit finding M3/W5, CHANGELOG [Unreleased]): a rule
+            # BREAKING (audit finding M3/W5, CHANGELOG 0.5.0): a rule
             # that omits `status` used to default to "active" and bypass the
             # PROPOSED -> APPROVED -> ACTIVE lifecycle entirely. It now
             # defaults to "proposed" like any freshly-authored rule — see
@@ -313,6 +313,7 @@ def execute_sql_rule(rule: dict, con: duckdb.DuckDBPyConnection) -> dict:
             "rule_id": rule_id,
             "spec": rule.get("spec"),
             "category": rule.get("category"),
+            "priority": rule.get("priority", "P3"),
             "passed": passed,
             "raw_value": raw_value,
             "threshold": threshold,
@@ -323,20 +324,25 @@ def execute_sql_rule(rule: dict, con: duckdb.DuckDBPyConnection) -> dict:
             "executed_at": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
-        elapsed = int((time.monotonic() - start) * 1000)
-        return {
-            "rule_id": rule_id,
-            "spec": rule.get("spec"),
-            "category": rule.get("category"),
-            "passed": False,
-            "raw_value": None,
-            "threshold": threshold,
-            "detail": None,
-            "violations": None,
-            "execution_time_ms": elapsed,
-            "error": str(e),
-            "executed_at": datetime.now(UTC).isoformat(),
-        }
+        return _errored_result(rule, str(e), int((time.monotonic() - start) * 1000))
+
+
+def _errored_result(rule: dict, error: str, elapsed_ms: int = 0) -> dict:
+    """An errored rule is a FAILED rule (decision D3), with the cause recorded."""
+    return {
+        "rule_id": rule["rule_id"],
+        "spec": rule.get("spec"),
+        "category": rule.get("category"),
+        "priority": rule.get("priority", "P3"),
+        "passed": False,
+        "raw_value": None,
+        "threshold": rule["threshold"],
+        "detail": None,
+        "violations": None,
+        "execution_time_ms": elapsed_ms,
+        "error": error,
+        "executed_at": datetime.now(UTC).isoformat(),
+    }
 
 
 def _register_iceberg_views(
@@ -492,24 +498,30 @@ def run_rules(
             if ref not in all_table_refs:
                 all_table_refs.append(ref)
 
-    # Create DuckDB connection with iceberg extension for iceberg_scan()
-    # Tables that can't be loaded (e.g., in test environments) are skipped —
-    # rules referencing them will get individual SQL errors instead of crashing
+    # Create DuckDB connection with iceberg extension for iceberg_scan().
+    # A table that can't be loaded fails every rule that references it, with the
+    # load error as the rule's error — not a generic "view does not exist" from
+    # DuckDB that hides why (2026-09-08 audit Phase 0 item 8).
     con = duckdb.connect()
     try:
         con.install_extension("iceberg")
         con.load_extension("iceberg")
+        unloadable: dict[tuple[str, str], str] = {}
         for ref in all_table_refs:
             try:
                 _register_iceberg_views(con, [ref], catalog, shadow=shadow)
-            except RuntimeError:
-                pass  # Rule will fail with a SQL error when it references this table
+            except RuntimeError as e:
+                unloadable[ref] = str(e)
 
         # Execute each rule
         results = []
         for rule in sql_rules:
-            # Rewrite SQL to use view names
             table_refs = _extract_table_refs(rule["sql"])
+            missing = [unloadable[ref] for ref in table_refs if ref in unloadable]
+            if missing:
+                results.append(_errored_result(rule, "; ".join(missing)))
+                continue
+            # Rewrite SQL to use view names
             rewritten_sql = _rewrite_sql(rule["sql"], table_refs)
             rule_copy = {**rule, "sql": rewritten_sql}
             result = execute_sql_rule(rule_copy, con)
@@ -519,11 +531,12 @@ def run_rules(
 
     # Build run summary
     run_id = str(uuid.uuid4())[:8]
-    p0_results = [r for r in results if _get_rule_priority(r["rule_id"], sql_rules) == "P0"]
+    p0_results = [r for r in results if r["priority"] == "P0"]
 
     run_result = {
         "run_id": run_id,
         "spec": spec,
+        "mode": "shadow" if shadow else "real",
         "executed_at": datetime.now(UTC).isoformat(),
         "rules_total": len(results),
         "rules_passed": sum(1 for r in results if r["passed"]),
@@ -536,14 +549,6 @@ def run_rules(
     _write_governance_results(run_result, sql_rules)
 
     return run_result
-
-
-def _get_rule_priority(rule_id: str, rules: list[dict]) -> str:
-    """Look up a rule's priority from the rules list."""
-    for r in rules:
-        if r["rule_id"] == rule_id:
-            return r.get("priority", "P3")
-    return "P3"
 
 
 def _write_governance_results(run_result: dict, rules: list[dict]) -> None:
@@ -567,13 +572,13 @@ def _write_governance_results(run_result: dict, rules: list[dict]) -> None:
     errored = run_result.get("rules_errored", 0)
     score = (passed / total * 100) if total > 0 else 0.0
 
-    p0_results = [r for r in run_result.get("results", []) if _get_rule_priority(r["rule_id"], rules) == "P0"]
-    p1_results = [r for r in run_result.get("results", []) if _get_rule_priority(r["rule_id"], rules) == "P1"]
+    mode = run_result.get("mode", "real")
+    p0_results = [r for r in run_result.get("results", []) if r.get("priority") == "P0"]
+    p1_results = [r for r in run_result.get("results", []) if r.get("priority") == "P1"]
 
     enriched_results = []
     for result in run_result.get("results", []):
         enriched = {**result}
-        enriched["priority"] = _get_rule_priority(result["rule_id"], rules)
         rule_def = next((rule for rule in rules if rule["rule_id"] == result["rule_id"]), {})
         enriched.setdefault("description", rule_def.get("description", ""))
         enriched_results.append(enriched)
@@ -594,10 +599,13 @@ def _write_governance_results(run_result: dict, rules: list[dict]) -> None:
         p1_total=len(p1_results),
         p1_failed=sum(1 for r in p1_results if not r.get("passed")),
         duration_ms=sum(r.get("execution_time_ms", 0) for r in run_result.get("results", [])),
+        mode=mode,
     )
-    write_dq_rule_results(run_id, spec, enriched_results)
+    write_dq_rule_results(run_id, spec, enriched_results, mode=mode)
 
-    if spec != "all":
+    # A shadow (chaos) run measures the rules against corrupted copies; it says
+    # nothing about the real tables, so it must never move the spec's score.
+    if spec != "all" and mode == "real":
         # The registry's own latest status (e.g. a staff-engineer-authored
         # COMPLETE) is the only place a terminal status can come from — carry
         # it forward instead of hardcoding IN_PROGRESS, or every DQ run would
